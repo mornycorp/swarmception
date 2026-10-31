@@ -104,11 +104,24 @@ pub struct FileError {
     pub message: String,
 }
 
+/// An event that names an issue, with the instance that logged it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueEvent {
+    pub t: Timestamp,
+    pub instance: String,
+    pub issue: u64,
+    pub kind: Kind,
+    pub sub: Option<String>,
+    pub note: Option<String>,
+}
+
 /// Every agent instance's activity.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Activity {
     /// By machine, then name, then instance.
     pub agents: Vec<Agent>,
+    /// Every issue event of every file, oldest first (a file's own order kept at a tie).
+    pub issue_events: Vec<IssueEvent>,
     /// The first and last event's times; none with no events.
     pub extent: Option<(Timestamp, Timestamp)>,
     pub errors: Vec<FileError>,
@@ -126,7 +139,23 @@ impl Activity {
         agents.sort_by(|a, b| (&a.machine, &a.name, first_start(a), &a.instance).cmp(&(&b.machine, &b.name, first_start(b), &b.instance)));
         let errors =
             files.iter().flat_map(|f| f.errors.iter().map(|e| FileError { instance: f.instance.clone(), line: e.line, message: e.message.clone() })).collect();
-        Self { agents, extent, errors }
+        let mut issue_events: Vec<IssueEvent> = files
+            .iter()
+            .flat_map(|f| {
+                f.events.iter().filter_map(|e| {
+                    let issue = e.kind.issue()?;
+                    Some(IssueEvent { t: e.t, instance: f.instance.clone(), issue, kind: e.kind.clone(), sub: e.sub.clone(), note: e.note.clone() })
+                })
+            })
+            .collect();
+        issue_events.sort_by_key(|e| e.t);
+        Self { agents, issue_events, extent, errors }
+    }
+
+    /// The agent instance `instance`.
+    #[must_use]
+    pub fn agent(&self, instance: &str) -> Option<&Agent> {
+        self.agents.iter().find(|a| a.instance == instance)
     }
 
     /// How many events there are.
@@ -316,7 +345,7 @@ fn read_sub(agent: &mut Agent, reading: &mut Reading, event: &Event) {
     }
 }
 
-fn stop_reason(reason: &swarmception_model::StopReason) -> String {
+pub(crate) fn stop_reason(reason: &swarmception_model::StopReason) -> String {
     use swarmception_model::StopReason;
     match reason {
         StopReason::Handoff => "handoff".into(),

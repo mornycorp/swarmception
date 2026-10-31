@@ -8,10 +8,12 @@
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+pub mod merges;
 pub mod time;
 
 use serde::{Deserialize, Serialize};
 
+pub use merges::{MainMerge, parse_merge};
 pub use time::Timestamp;
 
 /// The newest version of the format this reader knows.
@@ -227,7 +229,7 @@ struct Raw {
 }
 
 /// `text` cut to [`MAX_TEXT`] bytes at a character boundary.
-fn capped(text: String) -> String {
+pub(crate) fn capped(text: String) -> String {
     if text.len() <= MAX_TEXT {
         return text;
     }

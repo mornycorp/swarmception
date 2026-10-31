@@ -29,21 +29,13 @@ const NANOS: i64 = 1_000_000_000;
 #[must_use]
 pub const fn colour(style: Style) -> Colour {
     match style {
-        Style::WorkerSession => Colour::rgb(0x4c, 0x8b, 0xd6),
-        Style::CoordinatorSession => Colour::rgb(0x8e, 0x6c, 0xd4),
-        Style::OtherSession => Colour::rgb(0x7a, 0x8a, 0x99),
-        Style::Paused => Colour::rgb(0xb8, 0xb8, 0xb8),
-        Style::Work => Colour::rgb(0x3f, 0xa7, 0x6b),
-        Style::Gate => Colour::rgb(0x23, 0xa4, 0xa8),
-        Style::GateFailed | Style::ReadyFailed | Style::Sendback => Colour::rgb(0xd6, 0x45, 0x45),
-        Style::GateStopped => Colour::rgb(0x9a, 0x9a, 0x9a),
-        Style::Ready => Colour::rgb(0xe0, 0xa1, 0x2e),
-        Style::Sub => Colour::rgb(0xc9, 0x7b, 0xb8),
-        Style::Claim => Colour::rgb(0x35, 0x74, 0xc4),
-        Style::Submit => Colour::rgb(0x2f, 0x9e, 0x5a),
-        Style::Merge => Colour::rgb(0x7d, 0x4f, 0xc9),
-        Style::Release => Colour::rgb(0xe0, 0x7b, 0x2e),
-        Style::Stop | Style::Other => Colour::rgb(0x80, 0x80, 0x80),
+        Style::MainMerge => Colour::rgb(0x5b, 0x3f, 0xa8),
+        Style::Merged => Colour::rgb(0x8e, 0x6c, 0xd4),
+        Style::Claimed => Colour::rgb(0x6f, 0x9f, 0xd8),
+        Style::Working => Colour::rgb(0x3f, 0xa7, 0x6b),
+        Style::Waiting => Colour::rgb(0xe0, 0xa1, 0x2e),
+        Style::SentBack => Colour::rgb(0xd6, 0x45, 0x45),
+        Style::Stopped => Colour::rgb(0x9a, 0x9a, 0x9a),
     }
 }
 
@@ -237,9 +229,9 @@ mod tests {
     #[test]
     fn every_row_is_a_track_and_every_time_an_item() {
         let activity = Activity::of(&sample());
-        let rows = rows(&activity, RowsSpec::default());
+        let rows = rows(&activity, &[], RowsSpec::default());
         let built = build(&rows, true).unwrap();
-        assert_eq!(built.data.tracks().len(), 1 + 3 * 5);
+        assert_eq!(built.data.tracks().len(), 2 + 2);
         assert_eq!(built.times.len() as u64, built.data.item_count());
         assert_eq!(built.origin.to_string(), "2026-10-31T03:00:00Z");
         assert!(built.scales[0].scale().is_some());
@@ -248,17 +240,17 @@ mod tests {
     #[test]
     fn a_bar_ends_at_its_end() {
         let activity = Activity::of(&sample());
-        let rows = rows(&activity, RowsSpec::default());
+        let rows = rows(&activity, &[], RowsSpec::default());
         let built = build(&rows, false).unwrap();
         let scale = built.scales[0].scale().unwrap().clone();
         let tree = built.data.tracks();
-        let sessions = tree.ids().find(|&id| tree.get(id).unwrap().key() == "w/mini/worker-2/sessions").unwrap();
-        let ranges = built.data.ranges(sessions).unwrap();
-        let RangeExtent::Items { first, last } = ranges[0].extent else { panic!() };
+        let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "t/170").unwrap();
+        let ranges = built.data.ranges(ticket).unwrap();
+        let RangeExtent::Items { first, last } = ranges[1].extent else { panic!() };
         let span = scale.range_span(first, last).unwrap();
-        assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:06Z");
-        assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:10:00Z", "up to the pause");
-        assert_eq!(built.data.range_tooltip(sessions, 0)[0], "worker-2 (worker) · mini-79ba63");
+        assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:25Z");
+        assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:06:43Z", "up to the submit");
+        assert_eq!(built.data.range_tooltip(ticket, 1)[0], "#170 · PR #173");
     }
 
     #[test]

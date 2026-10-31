@@ -50,6 +50,11 @@ pub struct StatusResult {
     /// Agent instances: one file each.
     pub instances: usize,
     pub tickets: usize,
+    /// Tickets merged, and merge commits on main (none when the repository has no main).
+    pub merged: usize,
+    pub main_merges: usize,
+    /// The main ref read.
+    pub main: Option<String>,
     pub events: usize,
     pub first: Option<Timestamp>,
     pub last: Option<Timestamp>,
@@ -75,6 +80,9 @@ fn status(session: &Session) -> StatusResult {
     status.instances = activity.agents.len();
     let issues = activity.agents.iter().flat_map(|a| a.work.iter().map(|w| w.issue).chain(a.marks.iter().filter_map(|m| m.issue)));
     status.tickets = issues.collect::<BTreeSet<_>>().len();
+    status.merged = activity.issue_events.iter().filter(|e| e.kind.name() == "merge").map(|e| e.issue).collect::<BTreeSet<_>>().len();
+    status.main_merges = loaded.tracking.merges.len();
+    status.main.clone_from(&loaded.tracking.main);
     status.events = activity.events();
     status.first = activity.extent.map(|(first, _)| first);
     status.last = activity.extent.map(|(_, last)| last);
