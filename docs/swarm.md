@@ -67,20 +67,27 @@ step 4), after folding the batch into `docs/gaps.md`:
 
 `.github/workflows/ci.yml` runs `cargo xtask ci`. The rules it keeps:
 
-- No run on draft PRs or on the `tracking` branch; one when a PR is marked ready, on each push to
-  a ready PR, and on `main`. A new run of a ref cancels the one still going.
+- **Once a day, on `main`** (owner, 2026-10-31): a schedule at 03:17 UTC, and by hand with
+  `gh workflow run ci --repo mornycorp/swarmception`. No run on pushes, PRs or `tracking`:
+  workers' `ci --changed` and the coordinator's local gate are what merges rest on. CI is the
+  daily check on Linux. A PR's `prwatch` therefore reports no checks; `land` has none to cancel.
+- **A red daily run** is `main` red: the coordinator files a `main-red` issue (the run, what broke,
+  the merges since the last green run) and nothing merges until it is fixed
+  ([the swarm protocol](swarm-protocol.md#the-coordinators-loop) step 3).
 - **Fetching Swarm Core:** it is a private repository, so the job points its URL at a read-only
   token before cargo runs: a fine-grained token with **Contents: read** on
   `mornycorp/swarm-core` **and `mornycorp/swarm-timeline`** (the timeline widget is a private
-  git dependency too), stored as this repository's `SWARM_CORE_TOKEN` secret (its owner makes
-  it, once).
+  git dependency too), the organisation's `SWARM_CORE_TOKEN` secret (visible to its private
+  repositories; its owner keeps it).
 - **Branch protection on `main`:** no required status checks, since the coordinator's local gate
-  is the check before a merge, and `land` cancels a PR's runs when it lands it (a required check
-  would block the merge). Require PRs, and allow merge commits.
+  is the check before a merge. Require PRs, and allow merge commits.
 - Nothing merges while `main`'s CI is red.
+- **The coordinator** checks the latest daily run each batch (`gh run list --repo
+  mornycorp/swarmception --workflow ci --limit 1`).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | CI runs once a day on `main` (owner), not on pushes or PRs |
 | 2026-10-31 | major | First version, from swarm-core's template |

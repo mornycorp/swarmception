@@ -31,6 +31,9 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
   `cargo xtask capacity` shows room (the swarm protocol's default; change it here).
 - **Merging:** only the coordinator merges, on the local gate
   ([the swarm protocol](swarm-protocol.md#the-coordinators-loop)).
+- **GitHub CI runs once a day**, on `main`, not on every push or PR, as for the other swarms.
+  Local gates decide merges; a red daily run is `main` red
+  ([swarm.md › What CI runs](swarm.md#what-ci-runs)). (owner, 2026-10-31)
 
 ## Decisions
 
@@ -48,4 +51,5 @@ None yet.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | CI once a day on `main` (owner) |
 | 2026-10-31 | major | First version, from swarm-core's template |
