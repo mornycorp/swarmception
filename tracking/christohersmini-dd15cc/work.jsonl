@@ -4,3 +4,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-7045615","t":"2026-10-31T22:10:30Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-7045615","t":"2026-10-31T22:11:08Z"}
 {"event":"submit","issue":1,"mr":4,"t":"2026-10-31T22:11:15Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #4 (#1); capacity=3 free=14.1; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-4","t":"2026-10-31T22:11:35Z"}
