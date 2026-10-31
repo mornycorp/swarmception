@@ -1,0 +1,14 @@
+[package]
+name = "swarmception-cli"
+description = "Swarmception's engine headless: list and run its commands, JSON out"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swarmception-engine = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

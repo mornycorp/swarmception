@@ -1,0 +1,20 @@
+[package]
+name = "swarmception-engine"
+description = "Swarmception's session and typed command registry: every action and query is a command"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swarmception-model = { workspace = true }
+swarmception-domain = { workspace = true }
+swarmception-source = { workspace = true }
+timeline-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+serde_path_to_error = { workspace = true }
+
+[lints]
+workspace = true

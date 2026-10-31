@@ -1,0 +1,23 @@
+[package]
+name = "swarmception-ui"
+description = "Swarmception's egui shell: menus, toolbar and panes over the engine's commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+egui = { workspace = true }
+timeline-egui = { workspace = true }
+timeline-engine = { workspace = true }
+swarmception-engine = { workspace = true }
+swarmception-domain = { workspace = true }
+swarmception-model = { workspace = true }
+serde = { workspace = true }
+schemars = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

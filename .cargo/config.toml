@@ -1,0 +1,5 @@
+[alias]
+xtask = "run -q -p xtask --"
+
+[net]
+git-fetch-with-cli = true

@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+# `cargo run -- --repo <path>` runs the app.
+default-members = ["apps/app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+publish = false
+
+[workspace.dependencies]
+# The swarm tooling (claims, tracking, the gates, stack and land), pinned by revision.
+swarm-core = { git = "https://github.com/mornycorp/swarm-core.git", rev = "d4a0194e666a88681a1123a0cfa882fda16f2a0b" }
+# The timeline widget (its model, engine and egui widget), pinned by revision.
+timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
+timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
+timeline-egui = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+schemars = "1"
+serde_path_to_error = "0.1"
+egui = "0.37"
+eframe = "0.37"
+swarmception-model = { path = "crates/model" }
+swarmception-domain = { path = "crates/domain" }
+swarmception-source = { path = "crates/source" }
+swarmception-engine = { path = "crates/engine" }
+swarmception-ui = { path = "crates/ui" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"

@@ -1,0 +1,32 @@
+//! The registry: every command, one line each.
+
+use std::sync::LazyLock;
+
+use crate::command::Entry;
+use crate::{engine_cmds, repo_cmds, rows_cmds};
+
+static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
+    vec![
+        Entry::of::<engine_cmds::Commands>(),
+        Entry::of::<repo_cmds::Open>(),
+        Entry::of::<repo_cmds::Reload>(),
+        Entry::of::<repo_cmds::Fetch>(),
+        Entry::of::<repo_cmds::Status>(),
+        Entry::of::<rows_cmds::Get>(),
+        Entry::of::<rows_cmds::Set>(),
+        Entry::of::<rows_cmds::List>(),
+        Entry::of::<rows_cmds::TimeAt>(),
+    ]
+});
+
+/// Every command, in the registry's order.
+#[must_use]
+pub fn all() -> &'static [Entry] {
+    &REGISTRY
+}
+
+/// The command `id`.
+#[must_use]
+pub fn find(id: &str) -> Option<&'static Entry> {
+    REGISTRY.iter().find(|e| e.id == id)
+}

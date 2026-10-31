@@ -1,0 +1,16 @@
+[package]
+name = "swarmception"
+description = "Swarmception: a swarm's activity on a timeline, from its tracking branch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+eframe = { workspace = true }
+swarmception-ui = { workspace = true }
+swarmception-engine = { workspace = true }
+swarmception-domain = { workspace = true }
+
+[lints]
+workspace = true
