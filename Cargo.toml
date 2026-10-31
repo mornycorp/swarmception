@@ -14,9 +14,9 @@ publish = false
 # The swarm tooling (claims, tracking, the gates, stack and land), pinned by revision.
 swarm-core = { git = "https://github.com/mornycorp/swarm-core.git", rev = "d4a0194e666a88681a1123a0cfa882fda16f2a0b" }
 # The timeline widget (its model, engine and egui widget), pinned by revision.
-timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
-timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
-timeline-egui = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "708f1468a9e0d3696b8a0f7b0fff7d899edb94b4" }
+timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "a603fbae89fc2d1ccac8a5c7f22b552be79b6fde" }
+timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "a603fbae89fc2d1ccac8a5c7f22b552be79b6fde" }
+timeline-egui = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "a603fbae89fc2d1ccac8a5c7f22b552be79b6fde" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"

@@ -4,7 +4,8 @@
 //! from its time to the next one's, so a bar is the run of items from its start up to its end,
 //! and the Unit scale (every item the same width) reads as event order with idle time cut out.
 //! Positions are nanoseconds from [`Built::origin`], the first time floored to the hour, so the
-//! ruler's hour ticks fall on the hours of the clock.
+//! ruler's hour ticks fall on the hours of the clock; the data's clock epoch is that origin, so a
+//! Clock ruler reads the `Time` scale as the time of day (UTC).
 
 use std::collections::BTreeMap;
 
@@ -43,6 +44,8 @@ pub const fn colour(style: Style) -> Colour {
 #[derive(Debug, Clone, Default)]
 pub struct SwarmData {
     data: MemoryData,
+    /// Position 0 of the `Time` scale, in nanoseconds from the Unix epoch.
+    clock_epoch: Option<i64>,
     range_tips: BTreeMap<(TrackId, usize), Vec<String>>,
     instant_tips: BTreeMap<(TrackId, usize), Vec<String>>,
 }
@@ -84,7 +87,7 @@ pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     times.sort_unstable();
     times.dedup();
     let origin = Timestamp(times.first().map_or(0, |t| t.0.div_euclid(3_600) * 3_600));
-    let mut built = SwarmData::default();
+    let mut built = SwarmData { clock_epoch: Some(origin.0.saturating_mul(NANOS)), ..SwarmData::default() };
     let category = built.data.add_category(Colour::rgb(0x80, 0x80, 0x80))?;
     for _ in &times {
         built.data.push_item(Item { category, importance: Importance::default(), selectable: true })?;
@@ -217,6 +220,10 @@ impl TimelineData for SwarmData {
     fn show_when_empty(&self, track: TrackId) -> bool {
         self.data.show_when_empty(track)
     }
+
+    fn clock_epoch(&self) -> Option<i64> {
+        self.clock_epoch
+    }
 }
 
 #[cfg(test)]
@@ -234,6 +241,7 @@ mod tests {
         assert_eq!(built.data.tracks().len(), 2 + 2);
         assert_eq!(built.times.len() as u64, built.data.item_count());
         assert_eq!(built.origin.to_string(), "2026-10-31T03:00:00Z");
+        assert_eq!(built.data.clock_epoch(), Some(built.origin.0 * 1_000_000_000), "position 0 is the origin, as a Clock ruler reads it");
         assert!(built.scales[0].scale().is_some());
     }
 
