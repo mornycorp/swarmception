@@ -8,3 +8,4 @@
 {"event":"merge","issue":1,"mr":4,"sub":"gate-4","t":"2026-10-31T22:12:12Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #4","sub":"gate-4","t":"2026-10-31T22:12:18Z"}
 {"event":"stop","issue":1,"reason":"done","t":"2026-10-31T22:12:32Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #7 (#5); capacity=3 free=15.4; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-7","t":"2026-10-31T22:24:28Z"}
