@@ -73,7 +73,7 @@ fn open_a_repo_and_list_its_rows() {
     assert_eq!((status.main, status.main_merges), (None, 0), "no main branch");
     let list: ListResult = call(&mut session, "rows.list", "");
     let names: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::name).collect();
-    assert_eq!(names, ["Merges to main", "Tickets merged", "#7 · PR #8"]);
+    assert_eq!(names, ["Merges to main", "Tickets merged", "Tickets 1"]);
     assert!(session.widget_timeline().unwrap().is_some());
 
     let before = session.revision();

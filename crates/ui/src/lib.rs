@@ -225,8 +225,8 @@ impl Shell {
             }
             ui.separator();
             let mut spec = self.spec;
-            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("A row per ticket, in the order they began");
-            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / ticket");
+            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("Tickets packed onto shared rows, in the order they began");
+            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / its rows");
             ui.separator();
             ui.toggle_value(&mut spec.collapse, icons::COLLAPSE).on_hover_text("Collapse: leave out rows with nothing in them");
             if spec != self.spec {

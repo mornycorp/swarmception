@@ -1,10 +1,12 @@
 //! The rows the timeline shows (the owner's directions): what happened to tickets. At the top,
-//! every merge onto `main` (its merge commits), then every ticket's merge, then a row per ticket
-//! of its stretches: claimed, working, waiting for merge, sent back, stopped. The tickets are
-//! flat, in the order they began, or grouped by the worker that held them last (machine /
-//! worker / ticket); collapsed, rows with nothing in them are left out. Each row's bars and pins
-//! carry their label, their style and their tooltip lines: what the timeline draws is what this
-//! answers.
+//! every merge onto `main` (its merge commits), then every ticket's merge, then the tickets'
+//! stretches (claimed, working, waiting for merge, sent back, stopped), packed onto shared rows:
+//! taken in the order they began, each ticket goes on the first row it doesn't overlap, so
+//! tickets that didn't run at once share a row. They are packed all together (flat), or within
+//! each worker that held them last (machine / worker / its rows), never across workers;
+//! collapsed, rows with nothing in them are left out. Each row's bars and pins carry their label
+//! (a bar names its ticket), their style and their tooltip lines: what the timeline draws is
+//! what this answers.
 
 use std::collections::BTreeMap;
 
@@ -19,10 +21,10 @@ use crate::tickets::{Phase, Stretch, Ticket, tickets};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Grouping {
-    /// A row per ticket, in the order they began.
+    /// Every ticket packed onto shared rows, in the order they began.
     #[default]
     Flat,
-    /// Machine / worker / ticket, by the worker that held each ticket last.
+    /// Machine / worker / its packed rows, by the worker that held each ticket last.
     Workers,
 }
 
@@ -131,6 +133,8 @@ impl Node {
 /// The keys of the two rows at the top.
 pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";
+/// The flat view's packed rows are keyed `tickets/1`, `tickets/2`, …
+pub const TICKETS_KEY: &str = "tickets";
 
 /// The rows of `activity` and the merges onto main, as `spec` asks.
 #[must_use]
@@ -141,7 +145,7 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
         Node::Instants { key: MERGED_KEY.into(), name: "Tickets merged".into(), pins: merged_pins(&tickets) },
     ];
     match spec.grouping {
-        Grouping::Flat => rows.extend(tickets.iter().map(ticket_row)),
+        Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY)),
         Grouping::Workers => rows.extend(by_workers(activity, &tickets)),
     }
     if spec.collapse { collapsed(rows) } else { rows }
@@ -160,27 +164,77 @@ fn collapsed(nodes: Vec<Node>) -> Vec<Node> {
         .collect()
 }
 
-/// Machine / worker / ticket; tickets no worker held go last, under "no worker".
+/// Machine / worker / its packed rows; tickets no worker held go last, under "no worker".
 fn by_workers(activity: &Activity, tickets: &[Ticket]) -> Vec<Node> {
-    let mut machines: BTreeMap<String, BTreeMap<String, Vec<Node>>> = BTreeMap::new();
+    let mut machines: BTreeMap<String, BTreeMap<String, Vec<&Ticket>>> = BTreeMap::new();
     let mut unheld = Vec::new();
     for ticket in tickets {
         match ticket.worker.as_deref().and_then(|w| activity.agent(w)) {
-            Some(agent) => machines.entry(agent.machine.clone()).or_default().entry(agent.name.clone()).or_default().push(ticket_row(ticket)),
-            None => unheld.push(ticket_row(ticket)),
+            Some(agent) => machines.entry(agent.machine.clone()).or_default().entry(agent.name.clone()).or_default().push(ticket),
+            None => unheld.push(ticket),
         }
     }
     let mut groups: Vec<Node> = machines
         .into_iter()
         .map(|(machine, workers)| {
-            let children = workers.into_iter().map(|(name, rows)| Node::Group { key: format!("w/{machine}/{name}"), name, children: rows }).collect();
+            let children = workers
+                .into_iter()
+                .map(|(name, held)| {
+                    let key = format!("w/{machine}/{name}");
+                    Node::Group { children: packed(&held, &key), key, name }
+                })
+                .collect();
             Node::Group { key: format!("w/{machine}"), name: machine, children }
         })
         .collect();
+    let unheld = packed(&unheld, "w/-");
     if !unheld.is_empty() {
         groups.push(Node::Group { key: "w/-".into(), name: "no worker".into(), children: unheld });
     }
     groups
+}
+
+/// Where a ticket's bars run: its first stretch's start to its last one's end. `touches` when
+/// its last bar is an instant, which the timeline draws over the item at its end, so a ticket
+/// starting then would overlap it.
+struct Extent {
+    start: Timestamp,
+    end: Timestamp,
+    touches: bool,
+}
+
+impl Extent {
+    fn of(ticket: &Ticket) -> Option<Self> {
+        let (first, last) = (ticket.stretches.first()?, ticket.stretches.last()?);
+        Some(Self { start: first.start, end: last.end, touches: last.start == last.end })
+    }
+
+    /// Whether `next`, which starts no earlier, clashes with this.
+    fn clashes(&self, next: &Self) -> bool {
+        next.start < self.end || (next.start == self.end && self.touches)
+    }
+}
+
+/// The tickets packed onto rows `<key>/1`, `<key>/2`, …: taken in the order their bars start,
+/// each on the first row whose last ticket it doesn't overlap, a new row only when none fits
+/// (first fit by start, the fewest rows for intervals). A later ticket never moves an earlier
+/// one, so the rows keep their keys as the swarm goes on. Tickets with no stretches have no bars
+/// and take no row.
+fn packed(tickets: &[&Ticket], key: &str) -> Vec<Node> {
+    let mut placed: Vec<(Extent, &Ticket)> = tickets.iter().filter_map(|t| Extent::of(t).map(|e| (e, *t))).collect();
+    placed.sort_by_key(|(e, t)| (e.start, t.issue));
+    let mut rows: Vec<(Extent, Vec<Bar>)> = Vec::new();
+    for (extent, ticket) in placed {
+        let bars = ticket.stretches.iter().map(|s| stretch_bar(ticket, s));
+        match rows.iter_mut().find(|(last, _)| !last.clashes(&extent)) {
+            Some(row) => {
+                row.1.extend(bars);
+                row.0 = extent;
+            }
+            None => rows.push((extent, bars.collect())),
+        }
+    }
+    rows.into_iter().zip(1..).map(|((_, bars), n)| Node::Ranges { key: format!("{key}/{n}"), name: format!("Tickets {n}"), bars }).collect()
 }
 
 /// A duration as a person reads it: `1 h 05 min`, `3 min 20 s`, `12 s`.
@@ -217,11 +271,6 @@ fn milestones(ticket: &Ticket) -> Vec<String> {
     lines
 }
 
-fn ticket_row(ticket: &Ticket) -> Node {
-    let bars = ticket.stretches.iter().map(|s| stretch_bar(ticket, s)).collect();
-    Node::Ranges { key: format!("t/{}", ticket.issue), name: ticket.title(), bars }
-}
-
 fn stretch_bar(ticket: &Ticket, stretch: &Stretch) -> Bar {
     let phase = stretch.phase.name();
     let span = if stretch.open {
@@ -233,7 +282,7 @@ fn stretch_bar(ticket: &Ticket, stretch: &Stretch) -> Bar {
     tooltip.extend(stretch.note.iter().cloned());
     tooltip.push(String::new());
     tooltip.extend(milestones(ticket));
-    Bar { start: stretch.start, end: stretch.end, label: phase.to_owned(), style: stretch.phase.into(), open: stretch.open, tooltip }
+    Bar { start: stretch.start, end: stretch.end, label: format!("#{} {phase}", ticket.issue), style: stretch.phase.into(), open: stretch.open, tooltip }
 }
 
 fn merged_pins(tickets: &[Ticket]) -> Vec<Pin> {
@@ -295,10 +344,10 @@ mod tests {
     }
 
     #[test]
-    fn main_then_merged_then_a_row_a_ticket() {
+    fn main_then_merged_then_the_packed_tickets() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
-        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "#168", "#170 · PR #173"]);
+        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "Tickets 1", "Tickets 2"], "#168 runs on past #170, so they can't share");
         let Node::Instants { pins, .. } = &rows[0] else { panic!() };
         assert_eq!(pins.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), ["PR #173", "PR #174"]);
         assert_eq!(pins[0].tooltip[2], "merged #170");
@@ -309,12 +358,14 @@ mod tests {
     }
 
     #[test]
-    fn a_tickets_bars_are_its_stretches() {
+    fn a_tickets_bars_are_its_stretches_and_name_it() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
         let Node::Ranges { bars, key, .. } = &rows[3] else { panic!() };
-        assert_eq!(key, "t/170");
+        assert_eq!(key, "tickets/2");
         assert_eq!(bars.iter().map(|b| b.style).collect::<Vec<_>>(), [Style::Claimed, Style::Working, Style::Waiting]);
+        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 claimed", "#170 working", "#170 waiting for merge"]);
+        assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
         assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
         assert!(bars[1].tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bars[1].tooltip);
     }
@@ -323,14 +374,121 @@ mod tests {
     fn grouped_by_worker() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { grouping: Grouping::Workers, ..RowsSpec::default() });
-        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "mini", "  worker-1", "    #168", "  worker-2", "    #170 · PR #173"]);
+        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1"]);
+        let keys: Vec<&str> = rows.iter().flat_map(Node::leaves).map(Node::key).collect();
+        assert_eq!(keys, ["main", "merged", "w/mini/worker-1/1", "w/mini/worker-2/1"]);
     }
 
     #[test]
     fn collapse_leaves_out_empty_rows() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { collapse: true, ..RowsSpec::default() });
-        assert_eq!(shape(&rows), ["Tickets merged", "#168", "#170 · PR #173"], "no merges onto main read");
+        assert_eq!(shape(&rows), ["Tickets merged", "Tickets 1", "Tickets 2"], "no merges onto main read");
+    }
+
+    /// `worker`'s session on `machine`, then a `work` and a `release` of each ticket: its one
+    /// stretch, from `from` to `to` (minutes past 01:00).
+    fn worker(instance: &str, machine: &str, name: &str, tickets: &[(u64, u32, u32)]) -> swarmception_model::AgentFile {
+        let at = |m: u32| format!("2026-10-31T{:02}:{:02}:00Z", 1 + m / 60, m % 60);
+        let mut lines = vec![format!(r#"{{"event":"session.start","format":3,"machine":"{machine}","name":"{name}","role":"worker","t":"{}"}}"#, at(0))];
+        for &(issue, from, to) in tickets {
+            lines.push(format!(r#"{{"event":"work","issue":{issue},"t":"{}"}}"#, at(from)));
+            lines.push(format!(r#"{{"event":"release","issue":{issue},"t":"{}"}}"#, at(to)));
+        }
+        swarmception_model::parse_file(instance, &lines.join("\n"))
+    }
+
+    /// Each leaf's key, and the tickets its bars name, in order.
+    fn packing(nodes: &[Node]) -> Vec<(String, Vec<u64>)> {
+        nodes
+            .iter()
+            .flat_map(Node::leaves)
+            .filter_map(|leaf| match leaf {
+                Node::Ranges { key, bars, .. } => {
+                    let mut issues: Vec<u64> = bars.iter().filter_map(|b| b.label.strip_prefix('#')?.split(' ').next()?.parse().ok()).collect();
+                    issues.dedup();
+                    Some((key.clone(), issues))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// No two tickets on a row overlap: in order, each starts no earlier than the one before ends.
+    fn assert_no_overlap(nodes: &[Node]) {
+        for leaf in nodes.iter().flat_map(Node::leaves) {
+            let Node::Ranges { key, bars, .. } = leaf else { continue };
+            let mut spans: Vec<(String, Timestamp, Timestamp)> = Vec::new();
+            for bar in bars {
+                let issue = bar.label.split(' ').next().unwrap_or_default().to_owned();
+                match spans.last_mut() {
+                    Some(last) if last.0 == issue => last.2 = bar.end,
+                    _ => spans.push((issue, bar.start, bar.end)),
+                }
+            }
+            for pair in spans.windows(2) {
+                assert!(pair[1].1 >= pair[0].2, "{key}: {} overlaps {}", pair[1].0, pair[0].0);
+            }
+        }
+    }
+
+    #[test]
+    fn first_fit_by_start() {
+        // #3 starts as #1 ends, so it shares #1's row; #4 starts as #2 ends; #5 fits on neither.
+        let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30), (4, 20, 25), (5, 12, 15)])];
+        let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
+        assert_eq!(packing(&rows), [("tickets/1", vec![1, 3]), ("tickets/2", vec![2, 4]), ("tickets/3", vec![5])].map(|(k, v)| (k.to_owned(), v)));
+        assert_eq!(shape(&rows)[2..], ["Tickets 1", "Tickets 2", "Tickets 3"]);
+        assert_no_overlap(&rows);
+    }
+
+    #[test]
+    fn an_instant_at_a_rows_end_is_a_clash() {
+        // #1 is an instant at 01:40 (its work released at once), drawn over that item: #2,
+        // starting then, can't share its row; #3, a minute later, can.
+        let files = [worker("m-1", "mini", "worker-1", &[(1, 40, 40), (2, 40, 50), (3, 41, 45)])];
+        let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
+        assert_eq!(packing(&rows), [("tickets/1", vec![1, 3]), ("tickets/2", vec![2])].map(|(k, v)| (k.to_owned(), v)));
+    }
+
+    #[test]
+    fn by_worker_packs_within_each_worker_only() {
+        // On mini, worker-1's tickets and worker-2's take turns, so flat they share a row; by
+        // worker, each worker's rows hold only its own.
+        let files = [
+            worker("m-1", "mini", "worker-1", &[(1, 0, 10), (3, 20, 30)]),
+            worker("m-2", "mini", "worker-2", &[(2, 10, 20), (4, 30, 40), (5, 35, 45)]),
+            worker("b-1", "box", "worker-1", &[(6, 0, 50)]),
+        ];
+        let activity = Activity::of(&files);
+        let flat = rows(&activity, &[], RowsSpec::default());
+        assert_eq!(packing(&flat), [("tickets/1", vec![1, 2, 3, 4]), ("tickets/2", vec![6]), ("tickets/3", vec![5])].map(|(k, v)| (k.to_owned(), v)));
+        let by = rows(&activity, &[], RowsSpec { grouping: Grouping::Workers, ..RowsSpec::default() });
+        assert_eq!(
+            packing(&by),
+            [("w/box/worker-1/1", vec![6]), ("w/mini/worker-1/1", vec![1, 3]), ("w/mini/worker-2/1", vec![2, 4]), ("w/mini/worker-2/2", vec![5])]
+                .map(|(k, v)| (k.to_owned(), v))
+        );
+        assert_eq!(
+            shape(&by)[2..],
+            ["box", "  worker-1", "    Tickets 1", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1", "    Tickets 2"]
+        );
+        assert_no_overlap(&flat);
+        assert_no_overlap(&by);
+    }
+
+    #[test]
+    fn keys_hold_across_loads() {
+        let before = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30)])];
+        let after = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30), (4, 31, 40), (5, 32, 35)])];
+        let load = |files: &[swarmception_model::AgentFile]| rows(&Activity::of(files), &[], RowsSpec::default());
+        assert_eq!(load(&before), load(&before), "the same events, the same rows");
+        let (before, after) = (packing(&load(&before)), packing(&load(&after)));
+        for (key, issues) in &before {
+            let later = after.iter().find(|(k, _)| k == key).map(|(_, i)| i);
+            assert!(later.is_some_and(|later| later.starts_with(issues)), "{key} held {issues:?}, then {later:?}");
+        }
+        assert_eq!(after.len(), 2, "#4 and #5 fill the rows there are");
     }
 
     #[test]
