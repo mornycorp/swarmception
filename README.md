@@ -3,8 +3,9 @@
 A tool for looking at swarm behaviour: it reads any swarm's `tracking` branch (the events every
 agent of a [swarm-core](https://github.com/mornycorp/swarm-core) swarm logs) and its `main`, and
 shows what happened to its tickets on [swarm-timeline](https://github.com/mornycorp/swarm-timeline)'s
-timeline: every merge onto `main`, every ticket's merge, and a row per ticket from its claim
-through its work to its merge, flat or by worker, collapsed or not.
+timeline: every merge onto `main`, every ticket's merge, and each ticket from its claim
+through its work to its merge, packed onto shared rows (a ticket on the first row it doesn't
+overlap), flat or by worker, collapsed or not.
 
 ```sh
 cargo run -- --repo ../swarm-timeline

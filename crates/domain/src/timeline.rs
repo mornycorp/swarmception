@@ -244,7 +244,7 @@ mod tests {
         let built = build(&rows, false).unwrap();
         let scale = built.scales[0].scale().unwrap().clone();
         let tree = built.data.tracks();
-        let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "t/170").unwrap();
+        let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
         let ranges = built.data.ranges(ticket).unwrap();
         let RangeExtent::Items { first, last } = ranges[1].extent else { panic!() };
         let span = scale.range_span(first, last).unwrap();
