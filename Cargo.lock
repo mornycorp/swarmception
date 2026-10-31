@@ -3343,12 +3343,12 @@ dependencies = [
 [[package]]
 name = "timeline-core"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=708f1468a9e0d3696b8a0f7b0fff7d899edb94b4#708f1468a9e0d3696b8a0f7b0fff7d899edb94b4"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=a603fbae89fc2d1ccac8a5c7f22b552be79b6fde#a603fbae89fc2d1ccac8a5c7f22b552be79b6fde"
 
 [[package]]
 name = "timeline-egui"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=708f1468a9e0d3696b8a0f7b0fff7d899edb94b4#708f1468a9e0d3696b8a0f7b0fff7d899edb94b4"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=a603fbae89fc2d1ccac8a5c7f22b552be79b6fde#a603fbae89fc2d1ccac8a5c7f22b552be79b6fde"
 dependencies = [
  "egui",
  "schemars",
@@ -3361,7 +3361,7 @@ dependencies = [
 [[package]]
 name = "timeline-engine"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=708f1468a9e0d3696b8a0f7b0fff7d899edb94b4#708f1468a9e0d3696b8a0f7b0fff7d899edb94b4"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=a603fbae89fc2d1ccac8a5c7f22b552be79b6fde#a603fbae89fc2d1ccac8a5c7f22b552be79b6fde"
 dependencies = [
  "schemars",
  "serde",
