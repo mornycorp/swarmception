@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (batch 1: tickets, packed rows, the clock, the macOS menu) · **Target:** M1
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,28 +19,46 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G1 The ruler reads clock time](#g1-the-ruler-reads-clock-time) | open | | 3–6 h |
+| 1 | [G10 The macOS View menu holds the system's tab items](#g10-the-macos-view-menu-holds-the-systems-tab-items) | open | #9 | 0.5–1 h |
 | 2 | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | open | | 4–8 h |
 | 3 | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | open | | 3–6 h |
-| 4 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
-| 5 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
-| 6 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 7 | [G7 Tickets carry their titles](#g7-tickets-carry-their-titles) | open | | 2–4 h |
-| 8 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
-| 9 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | open | | 8–16 h |
+| 4 | [G11 An abandoned ticket runs on to the last event](#g11-an-abandoned-ticket-runs-on-to-the-last-event) | open | | 1–2 h |
+| 5 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
+| 6 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
+| 7 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 8 | [G7 Tickets carry their titles](#g7-tickets-carry-their-titles) | open | | 2–4 h |
+| 9 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| 10 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | open | | 8–16 h |
+| — | [G1 The ruler reads clock time](#g1-the-ruler-reads-clock-time) | done | #2 | |
+
+## G10 The macOS View menu holds the system's tab items
+
+- **Missing:** macOS adds Show Tab Bar and Show All Tabs to a menu titled View; Swarmception has
+  one window and no tabs (found in #3, PR #6).
+- **Left:** automatic window tabbing off before the menu bar is built (#9).
+- **Evidence:** `apps/app/src/mac_menu.rs`.
+- **Estimate:** 0.5–1 agent-hours.
+
+## G11 An abandoned ticket runs on to the last event
+
+- **Missing:** a ticket worked with nothing ending it (no stop, release or merge) stays
+  *working* to the last event of all: on swarm-timeline, #40 for 90,181 s and #132 for 75,495 s,
+  each holding a packed row to the end (measured 2026-10-31, `--repo ../swarm-timeline`).
+- **Left:** end a ticket's open stretch when its worker's session ends (or a coordinator's
+  `session.stop --of` ends it), marked as abandoned rather than open.
+- **Evidence:** `crates/domain/src/tickets.rs`.
+- **Estimate:** 1–2 agent-hours.
 
 ## G1 The ruler reads clock time
 
-- **Missing:** the ruler counts seconds from the axis's origin (`10,000 s`), bars' labels
-  their durations in seconds (`34,744 s`), and the widget's toolbar shows the window in raw
-  nanoseconds. A person reads a swarm by the clock: `03:00`, `1 h 05 min`.
-- **Done:** the status bar shows the window and the pointer in UTC (`timeline.timeAt`); the
-  origin is the first event floored to the hour, so the ruler's hour ticks fall on the hours.
-- **Left:** a host tick-label hook (or a clock domain) in swarm-timeline, then use it here.
-  **Human:** a swarm-timeline issue (the widget is that swarm's).
-- **Evidence:** `crates/domain/src/timeline.rs`, `crates/ui/src/timeline.rs`.
-- **Measured:** none yet.
-- **Estimate:** 3–6 agent-hours, most of it in swarm-timeline.
+- **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
+  reading UTC (`21:00`, `31 Oct` at midnight, every 3 h at fit); the widget's from/to fields and
+  the status bar read `2026-10-30 18:35:57 → 2026-10-31 22:26:46 UTC`; a reload keeps the
+  rulers. The Time ruler (seconds from the origin) stays a choice.
+- **Left elsewhere:** bars' labels give durations in seconds (`#40 working (90,181 s)`): the
+  widget draws them, swarm-timeline#183.
+- **Evidence:** `crates/domain/src/timeline.rs` (`clock_epoch`), `crates/ui/src/timeline.rs`,
+  `crates/ui/tests/timeline_pane.rs`; screenshot checked 2026-10-31.
 
 ## G2 Automation: the control channel and MCP
 
@@ -101,4 +119,5 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | Batch 1: G1 done (#2); G10 (#9) and G11 new; ranking moved |
 | 2026-10-31 | major | First version, from swarm-core's template |
