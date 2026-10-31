@@ -1,5 +1,5 @@
-//! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View), the
-//! toolbar, the panes (the timeline, for now) and the status bar, over the engine's commands.
+//! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View, as data in
+//! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the timeline, for now) and the status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
 //! timeline widget's (`view.fit`, `view.zoom`); what the shell keeps of its own, the panes shown,
 //! is [`UiState`], plain serde data.
@@ -10,6 +10,7 @@
 
 pub mod fonts;
 pub mod icons;
+pub mod menu;
 mod timeline;
 
 use std::path::Path;
@@ -22,6 +23,7 @@ use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
 
+pub use menu::{MenuAction, MenuState};
 pub use timeline::TimelinePane;
 
 /// [`UiState`]'s shape; an older one still reads.
@@ -65,6 +67,8 @@ pub struct Shell {
     spec: RowsSpec,
     /// The last command's error, shown in the status bar until the next succeeds.
     error: Option<String>,
+    /// The app shows the menus in the system menu bar, so the window draws none.
+    native_menu: bool,
 }
 
 impl Shell {
@@ -82,6 +86,7 @@ impl Shell {
             status: StatusResult::default(),
             spec: RowsSpec::default(),
             error: None,
+            native_menu: false,
         };
         if let Some(repo) = repo {
             let result = shell.engine.call::<Open>(OpenParams { path: repo.display().to_string() });
@@ -109,6 +114,43 @@ impl Shell {
     #[must_use]
     pub const fn loading(&self) -> bool {
         self.status.job.is_some()
+    }
+
+    /// Whether the window leaves its menu bar out because the app shows the menus in the system
+    /// menu bar.
+    pub const fn set_native_menu(&mut self, native: bool) {
+        self.native_menu = native;
+    }
+
+    /// What the menus show now.
+    #[must_use]
+    pub fn menu_state(&mut self) -> MenuState {
+        self.sync();
+        MenuState {
+            can_reload: self.status.repo.is_some() && !self.loading(),
+            can_fit: self.timeline.has_data(),
+            timeline: self.ui.panes.timeline,
+            grouping: self.spec.grouping,
+            collapse: self.spec.collapse,
+        }
+    }
+
+    /// Runs a menu item, from the in-window menu or the system menu bar; `ctx` takes Quit.
+    pub fn run_menu(&mut self, ctx: &egui::Context, action: MenuAction) {
+        self.sync();
+        match action {
+            MenuAction::Reload => self.reload(),
+            MenuAction::Fetch => self.fetch(),
+            MenuAction::Quit => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                // The close lands on the next frame: a click in the system menu bar brings none.
+                ctx.request_repaint();
+            }
+            MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
+            MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), collapse: None }),
+            MenuAction::Collapse => self.set_rows(SetRowsParams { grouping: None, collapse: Some(!self.spec.collapse) }),
+            MenuAction::Fit => self.timeline.fit(),
+        }
     }
 
     /// Whether the timeline shows data.
@@ -160,7 +202,9 @@ impl Shell {
     /// Draws the window's frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.sync();
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        if !self.native_menu {
+            egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        }
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         egui::CentralPanel::default().show(ui, |ui| {
@@ -173,44 +217,35 @@ impl Shell {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let state = self.menu_state();
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| self.file_menu(ui));
-            ui.menu_button("View", |ui| self.view_menu(ui));
+            ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::FILE));
+            ui.menu_button("View", |ui| self.menu_items(ui, state, &MenuAction::VIEW));
         });
     }
 
-    fn file_menu(&mut self, ui: &mut egui::Ui) {
-        let can = self.status.repo.is_some() && !self.loading();
-        if ui.add_enabled(can, egui::Button::new(format!("{}  Reload", icons::RELOAD))).clicked() {
-            self.reload();
-            ui.close();
-        }
-        if ui.add_enabled(can, egui::Button::new(format!("{}  Fetch and Reload", icons::FETCH))).clicked() {
-            self.fetch();
-            ui.close();
-        }
-        ui.separator();
-        if ui.button(format!("{}  Quit", icons::QUIT)).clicked() {
-            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-        }
-    }
-
-    fn view_menu(&mut self, ui: &mut egui::Ui) {
-        ui.checkbox(&mut self.ui.panes.timeline, format!("{}  Timeline", icons::TIMELINE));
-        ui.separator();
-        ui.label("Tickets");
-        let mut spec = self.spec;
-        ui.radio_value(&mut spec.grouping, Grouping::Flat, format!("{}  Flat", icons::FLAT));
-        ui.radio_value(&mut spec.grouping, Grouping::Workers, format!("{}  By Worker", icons::WORKERS));
-        ui.separator();
-        ui.checkbox(&mut spec.collapse, format!("{}  Collapse Empty Rows", icons::COLLAPSE));
-        if spec != self.spec {
-            self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
-        }
-        ui.separator();
-        if ui.add_enabled(self.timeline.has_data(), egui::Button::new(format!("{}  Fit", icons::FIT))).clicked() {
-            self.timeline.fit();
-            ui.close();
+    fn menu_items(&mut self, ui: &mut egui::Ui, state: MenuState, items: &[Option<MenuAction>]) {
+        for item in items {
+            let Some(action) = *item else {
+                ui.separator();
+                continue;
+            };
+            if action == MenuAction::Grouping(Grouping::Flat) {
+                ui.label("Tickets");
+            }
+            let label = format!("{}  {}", action.icon(), action.label());
+            let enabled = state.enabled(action);
+            let clicked = match state.checked(action) {
+                Some(checked) if matches!(action, MenuAction::Grouping(_)) => ui.add_enabled(enabled, egui::RadioButton::new(checked, label)).clicked(),
+                Some(mut checked) => ui.add_enabled(enabled, egui::Checkbox::new(&mut checked, label)).clicked(),
+                None => ui.add_enabled(enabled, egui::Button::new(label)).clicked(),
+            };
+            if clicked {
+                self.run_menu(ui.ctx(), action);
+                if action.closes_menu() {
+                    ui.close();
+                }
+            }
         }
     }
 
@@ -305,5 +340,46 @@ mod tests {
         assert_eq!(serde_json::from_str::<UiState>(&text).unwrap(), state);
         assert_eq!(serde_json::from_str::<UiState>("{}").unwrap(), UiState::default());
         assert!(serde_json::from_str::<UiState>(r#"{"nope":1}"#).is_err());
+    }
+
+    #[test]
+    fn menu_items_run_the_same_commands_the_state_shows() {
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, None);
+        let state = shell.menu_state();
+        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, grouping: Grouping::Flat, collapse: false });
+
+        shell.run_menu(&ctx, MenuAction::Timeline);
+        shell.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
+        shell.run_menu(&ctx, MenuAction::Collapse);
+        let state = shell.menu_state();
+        assert!(!state.timeline);
+        assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
+        assert_eq!(state.checked(MenuAction::Collapse), Some(true));
+        assert!(!shell.ui_state().panes.timeline);
+        // What the menu shows is what `rows.get` returns.
+        let spec = shell.engine().call::<GetRows>(NoParams {}).unwrap();
+        assert_eq!((spec.grouping, spec.collapse), (state.grouping, state.collapse));
+
+        shell.run_menu(&ctx, MenuAction::Collapse);
+        assert!(!shell.menu_state().collapse);
+        // No repository: Reload is an error the status bar shows, never a panic.
+        shell.run_menu(&ctx, MenuAction::Reload);
+        assert!(shell.error.is_some());
+    }
+
+    #[test]
+    fn a_native_menu_leaves_the_window_without_one() {
+        // Whether the window drew a "File" menu button.
+        let drawn = |native: bool| {
+            let ctx = egui::Context::default();
+            let mut shell = Shell::new(&ctx, None);
+            shell.set_native_menu(native);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| shell.ui(ui));
+            output.textures_delta.clear();
+            output.shapes.iter().any(|clipped| matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text() == "File"))
+        };
+        assert!(drawn(false));
+        assert!(!drawn(true));
     }
 }
