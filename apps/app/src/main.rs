@@ -4,11 +4,15 @@
 //! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse]
 //! [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]`: `--repo` is any directory in a
 //! swarm's clone (the current directory if not given); `--screenshot` saves the window once the
-//! timeline has drawn, then quits, so agents can check the drawing by eye.
+//! timeline has drawn, then quits, so agents can check the drawing by eye. On macOS the menus are
+//! in the system menu bar ([`mac_menu`]); elsewhere the window draws its own.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
+
+#[cfg(target_os = "macos")]
+mod mac_menu;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -96,7 +100,23 @@ fn main() -> ExitCode {
         if options.rows != SetRowsParams::default() {
             shell.engine().call::<SetRows>(options.rows).map_err(|e| e.to_string())?;
         }
-        Ok(Box::new(App { shell, screenshot: options.screenshot.map(Screenshot::new) }))
+        #[cfg(target_os = "macos")]
+        let menu = match mac_menu::NativeMenu::install(&cc.egui_ctx, &shell.menu_state()) {
+            Ok(menu) => {
+                shell.set_native_menu(true);
+                Some(menu)
+            }
+            Err(e) => {
+                eprintln!("swarmception: no system menu bar ({e}); the window shows its own");
+                None
+            }
+        };
+        Ok(Box::new(App {
+            shell,
+            screenshot: options.screenshot.map(Screenshot::new),
+            #[cfg(target_os = "macos")]
+            menu,
+        }))
     };
     match eframe::run_native("Swarmception", native, Box::new(start)) {
         Ok(()) => ExitCode::SUCCESS,
@@ -110,11 +130,21 @@ fn main() -> ExitCode {
 struct App {
     shell: swarmception_ui::Shell,
     screenshot: Option<Screenshot>,
+    #[cfg(target_os = "macos")]
+    menu: Option<mac_menu::NativeMenu>,
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.menu {
+            menu.run_clicks(&mut self.shell, ui.ctx());
+        }
         self.shell.ui(ui);
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.menu {
+            menu.show(&mut self.shell);
+        }
         if let Some(shot) = &mut self.screenshot {
             let ready = !self.shell.loading() && self.shell.has_timeline();
             shot.step(ui.ctx(), ready);

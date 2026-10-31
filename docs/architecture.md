@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (the menus as data; macOS's system menu bar) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -54,7 +54,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
-  the panes, the grouping, Collapse, Fit), the toolbar (Font Awesome 5's solid face,
+  the panes, the grouping, Collapse, Fit), as data (`menu`: `MenuAction`, `MenuState`) that the
+  in-window bar draws and `Shell::run_menu` runs; on macOS the app puts it in the system menu
+  bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
+  their marks following `Shell::menu_state`; the toolbar (Font Awesome 5's solid face,
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the scale and
   window, and drives the widget through its own commands (`view.fit`, `view.zoom`, `state.set`).
@@ -153,4 +156,5 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | The menus as data; on macOS in the system menu bar (#3) |
 | 2026-10-31 | major | First version, from swarm-core's template |
