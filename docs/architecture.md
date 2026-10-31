@@ -34,14 +34,18 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `LineError` with its number; lines and notes are capped.
 - **L1 `swarmception-domain`**: `activity` reads each instance's sessions (split at its pauses),
   its work on issues, its helper sub-agents (a gate's `rc`, the PRs its note names) and its marks,
-  and applies what another instance ends (`of` on `session.stop` and `release`). `rows` turns the
-  activity into the rows asked for (`RowsSpec`: by workers or tickets, a tree or flat,
-  collapsed); each bar and pin carries its label, style and tooltip. `timeline` builds
+  and applies what another instance ends (`of` on `session.stop` and `release`), and keeps every
+  issue event in time order. `tickets` reads each ticket's life from them: when it was claimed,
+  began, finished (its submit) and merged, and its stretches (claimed, working, waiting for merge,
+  sent back, stopped). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
+  by worker, collapsed), under two rows at the top, the merges onto `main` and the tickets'
+  merges; each bar and pin carries its label, style and tooltip. `timeline` builds
   swarm-timeline's host data (`TimelineData`) from the rows: the axis's items are the distinct
   times, with a `Time` (Spans) scale, positions in nanoseconds from the first time floored to
   the hour. It depends on `timeline-core` (pure) and nothing else of the widget.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
-  else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`;
+  else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
+  `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
   each call with a deadline and capped output, every path checked as an instance id.
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
@@ -50,12 +54,12 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
-  the panes, the rows, the grouping, Collapse, Fit), the toolbar (Font Awesome 5's solid face,
+  the panes, the grouping, Collapse, Fit), the toolbar (Font Awesome 5's solid face,
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the scale and
   window, and drives the widget through its own commands (`view.fit`, `view.zoom`, `state.set`).
   `UiState` (the panes shown) is serde data.
-- **Apps:** `swarmception` (the window; `--repo`, `--rows`, `--grouping`, `--collapse`,
+- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
   `--screenshot`) and `swarmception-cli` (the engine headless: `commands`, `run`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the

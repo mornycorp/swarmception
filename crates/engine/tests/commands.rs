@@ -69,17 +69,19 @@ fn open_a_repo_and_list_its_rows() {
     let path = serde_json::to_string(&dir.display().to_string()).unwrap();
     let status: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
     assert_eq!(status.reference.as_deref(), Some("refs/heads/tracking"));
-    assert_eq!((status.machines, status.workers, status.instances, status.tickets, status.events), (1, 2, 2, 1, 9));
+    assert_eq!((status.machines, status.workers, status.instances, status.tickets, status.merged, status.events), (1, 2, 2, 1, 1, 9));
+    assert_eq!((status.main, status.main_merges), (None, 0), "no main branch");
     let list: ListResult = call(&mut session, "rows.list", "");
-    assert_eq!(list.rows.len(), 1, "one machine");
+    let names: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::name).collect();
+    assert_eq!(names, ["Merges to main", "Tickets merged", "#7 · PR #8"]);
     assert!(session.widget_timeline().unwrap().is_some());
 
     let before = session.revision();
-    let _: serde_json::Value = call(&mut session, "rows.set", r#"{"by":"tickets","grouping":"flat","collapse":true}"#);
+    let _: serde_json::Value = call(&mut session, "rows.set", r#"{"grouping":"workers","collapse":true}"#);
     assert_ne!(session.revision().0, before.0, "new rows, a new generation");
     let list: ListResult = call(&mut session, "rows.list", "");
     let names: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::name).collect();
-    assert_eq!(names, ["#7 · PR #8 / Work", "#7 · PR #8 / Sub-agents", "#7 · PR #8 / Events"]);
+    assert_eq!(names, ["Tickets merged", "mini"], "the empty main row collapsed; the ticket under its worker");
 
     let at: swarmception_engine::rows_cmds::TimeAtResult = call(&mut session, "timeline.timeAt", r#"{"position":60000000000}"#);
     assert_eq!(at.text, "2026-10-31T03:01:00Z");

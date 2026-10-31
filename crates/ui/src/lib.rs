@@ -16,7 +16,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use swarmception_domain::{Grouping, RowsBy, RowsSpec};
+use swarmception_domain::{Grouping, RowsSpec};
 use swarmception_engine::Session;
 use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
@@ -198,18 +198,14 @@ impl Shell {
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         ui.checkbox(&mut self.ui.panes.timeline, format!("{}  Timeline", icons::TIMELINE));
         ui.separator();
-        ui.label("Rows");
+        ui.label("Tickets");
         let mut spec = self.spec;
-        ui.radio_value(&mut spec.by, RowsBy::Workers, format!("{}  Workers", icons::WORKERS));
-        ui.radio_value(&mut spec.by, RowsBy::Tickets, format!("{}  Tickets", icons::TICKETS));
-        ui.separator();
-        ui.label("Grouping");
-        ui.radio_value(&mut spec.grouping, Grouping::Tree, format!("{}  Tree", icons::TREE));
         ui.radio_value(&mut spec.grouping, Grouping::Flat, format!("{}  Flat", icons::FLAT));
+        ui.radio_value(&mut spec.grouping, Grouping::Workers, format!("{}  By Worker", icons::WORKERS));
         ui.separator();
         ui.checkbox(&mut spec.collapse, format!("{}  Collapse Empty Rows", icons::COLLAPSE));
         if spec != self.spec {
-            self.set_rows(SetRowsParams { by: Some(spec.by), grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
+            self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
         }
         ui.separator();
         if ui.add_enabled(self.timeline.has_data(), egui::Button::new(format!("{}  Fit", icons::FIT))).clicked() {
@@ -229,15 +225,12 @@ impl Shell {
             }
             ui.separator();
             let mut spec = self.spec;
-            ui.selectable_value(&mut spec.by, RowsBy::Workers, icons::WORKERS).on_hover_text("Rows by worker: machine / worker / …");
-            ui.selectable_value(&mut spec.by, RowsBy::Tickets, icons::TICKETS).on_hover_text("Rows by ticket: issue / …");
-            ui.separator();
-            ui.selectable_value(&mut spec.grouping, Grouping::Tree, icons::TREE).on_hover_text("Group the rows as a tree");
-            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("Every row at the top, named by its path");
+            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("A row per ticket, in the order they began");
+            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / ticket");
             ui.separator();
             ui.toggle_value(&mut spec.collapse, icons::COLLAPSE).on_hover_text("Collapse: leave out rows with nothing in them");
             if spec != self.spec {
-                self.set_rows(SetRowsParams { by: Some(spec.by), grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
+                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
             }
             ui.separator();
             let has = self.timeline.has_data();
@@ -270,12 +263,12 @@ impl Shell {
                 ui.label(format!("{}  {} @ {short}", icons::BRANCH, reference.trim_start_matches("refs/")));
                 ui.separator();
                 ui.label(format!(
-                    "{}  {} machines · {} workers · {} sessions · {} tickets · {} events",
-                    icons::SERVER,
-                    s.machines,
-                    s.workers,
-                    s.instances,
+                    "{}  {} tickets · {} merged · {} merges to main · {} workers · {} events",
+                    icons::TICKETS,
                     s.tickets,
+                    s.merged,
+                    s.main_merges,
+                    s.workers,
                     s.events
                 ));
             }

@@ -1,10 +1,10 @@
 # Swarmception
 
 A tool for looking at swarm behaviour: it reads any swarm's `tracking` branch (the events every
-agent of a [swarm-core](https://github.com/mornycorp/swarm-core) swarm logs) and shows what each
-agent did on [swarm-timeline](https://github.com/mornycorp/swarm-timeline)'s timeline: sessions,
-work on issues, sub-agents (gates, `ready` checks) and events, with rows by worker or by ticket,
-as a tree or flat, collapsed or not.
+agent of a [swarm-core](https://github.com/mornycorp/swarm-core) swarm logs) and its `main`, and
+shows what happened to its tickets on [swarm-timeline](https://github.com/mornycorp/swarm-timeline)'s
+timeline: every merge onto `main`, every ticket's merge, and a row per ticket from its claim
+through its work to its merge, flat or by worker, collapsed or not.
 
 ```sh
 cargo run -- --repo ../swarm-timeline
@@ -13,8 +13,8 @@ cargo run -- --repo ../swarm-timeline
 | Crate | What |
 |---|---|
 | `swarmception-model` | The tracking format's events, parsed |
-| `swarmception-domain` | Sessions, work, sub-agents and rows from the events; the timeline's data |
-| `swarmception-source` | The tracking branch through git, with deadlines |
+| `swarmception-domain` | Each ticket's life and the rows from the events; the timeline's data |
+| `swarmception-source` | The tracking branch and main's merges through git, with deadlines |
 | `swarmception-engine` | The session and its typed commands |
 | `swarmception-ui` | The egui shell: menus, toolbar, panes |
 | `swarmception`, `swarmception-cli` | The app and the headless CLI |

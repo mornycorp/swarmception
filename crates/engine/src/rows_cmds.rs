@@ -1,9 +1,9 @@
-//! The rows: which (workers or tickets), grouped how (a tree or flat), collapsed or not; the
-//! rows themselves; and the clock time at a position on the timeline's axis.
+//! The rows: grouped how (the tickets flat, or by worker), collapsed or not; the rows
+//! themselves; and the clock time at a position on the timeline's axis.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::{Grouping, Node, RowsBy, RowsSpec};
+use swarmception_domain::{Grouping, Node, RowsSpec};
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
@@ -30,12 +30,11 @@ impl Command for Get {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SetParams {
-    pub by: Option<RowsBy>,
     pub grouping: Option<Grouping>,
     pub collapse: Option<bool>,
 }
 
-/// `rows.set`: rows by workers or tickets, as a tree or flat, collapsed or not.
+/// `rows.set`: the tickets flat or by worker, collapsed or not.
 pub struct Set;
 
 impl Command for Set {
@@ -45,11 +44,7 @@ impl Command for Set {
     type Result = RowsSpec;
 
     fn run(session: &mut Session, params: SetParams) -> Result<RowsSpec, EngineError> {
-        let spec = RowsSpec {
-            by: params.by.unwrap_or(session.spec.by),
-            grouping: params.grouping.unwrap_or(session.spec.grouping),
-            collapse: params.collapse.unwrap_or(session.spec.collapse),
-        };
+        let spec = RowsSpec { grouping: params.grouping.unwrap_or(session.spec.grouping), collapse: params.collapse.unwrap_or(session.spec.collapse) };
         if spec != session.spec {
             session.spec = spec;
             session.rebuild();

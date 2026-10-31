@@ -19,7 +19,7 @@ Run the app on any swarm's clone (any directory in it; the current directory by 
 
 ```sh
 cargo run -- --repo ../swarm-timeline
-cargo run -- --repo ../swarm-timeline --rows tickets --grouping flat --collapse
+cargo run -- --repo ../swarm-timeline --grouping workers --collapse
 cargo run -- --repo ../swarm-timeline --screenshot shot.ppm   # draw, save the window, quit
 ```
 
@@ -27,7 +27,7 @@ The CLI runs the engine headless, one session, one JSON result a line:
 
 ```sh
 cargo run -p swarmception-cli -- commands
-cargo run -p swarmception-cli -- --repo ../swarm-timeline run repo.status rows.set '{"by":"tickets"}' rows.list
+cargo run -p swarmception-cli -- --repo ../swarm-timeline run repo.status rows.set '{"grouping":"workers"}' rows.list
 ```
 
 ## `cargo xtask ci`

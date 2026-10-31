@@ -154,7 +154,7 @@ impl Session {
 
     /// The rows again, from the activity and the spec, and the timeline's data from them.
     pub(crate) fn rebuild(&mut self) {
-        self.rows = self.loaded.as_ref().map(|l| rows(&l.activity, self.spec)).unwrap_or_default();
+        self.rows = self.loaded.as_ref().map(|l| rows(&l.activity, &l.tracking.merges, self.spec)).unwrap_or_default();
         self.built = match build(&self.rows, !self.spec.collapse) {
             Ok(built) => Some(built),
             Err(error) => {

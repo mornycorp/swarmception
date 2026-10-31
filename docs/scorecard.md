@@ -30,9 +30,9 @@ None yet.
 | Id | Target | Status | Evidence |
 |---|---|---|---|
 | TL-1 | Open any swarm's tracking branch with `--repo <path>` | done | `repo.open`; `crates/source` tests; `crates/engine/tests/commands.rs` |
-| TL-2 | Every agent's sessions, work, sub-agents and events on one timeline | done | `crates/domain/src/activity.rs`, `rows.rs` tests; screenshot checked 2026-10-31 |
-| TL-3 | Rows by worker (machine / worker / …) or by ticket | done | `rows.set {by}`; `rows.rs` tests |
-| TL-4 | Rows as a tree or flat | done | `rows.set {grouping}`; `rows.rs` tests |
+| TL-2 | Every ticket's life (claimed, working, waiting, merged) on one timeline, under the merges onto main | done | `crates/domain/src/tickets.rs`, `rows.rs` tests; screenshot checked 2026-10-31 (#1) |
+| TL-3 | Merges onto main, from git | done | `crates/source` and `crates/model/src/merges.rs` tests (#1) |
+| TL-4 | Tickets flat or by worker (machine / worker / ticket) | done | `rows.set {grouping}`; `rows.rs` tests |
 | TL-5 | Collapse: no empty rows | done | `rows.set {collapse}`; `rows.rs` tests |
 | TL-6 | Pan and zoom in time; View menu of panes; Font Awesome toolbar | done | `crates/ui`; screenshots checked 2026-10-31 |
 

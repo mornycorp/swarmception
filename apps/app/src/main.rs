@@ -1,7 +1,7 @@
-//! Swarmception, the desktop app: a swarm's activity on a timeline, read from its repository's
-//! `tracking` branch.
+//! Swarmception, the desktop app: a swarm's tickets on a timeline, read from its repository's
+//! `tracking` branch and `main`.
 //!
-//! `swarmception [--repo <path>] [--rows workers|tickets] [--grouping tree|flat] [--collapse]
+//! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse]
 //! [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]`: `--repo` is any directory in a
 //! swarm's clone (the current directory if not given); `--screenshot` saves the window once the
 //! timeline has drawn, then quits, so agents can check the drawing by eye.
@@ -16,10 +16,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
-use swarmception_domain::{Grouping, RowsBy};
+use swarmception_domain::Grouping;
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--rows workers|tickets] [--grouping tree|flat] [--collapse] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -41,18 +41,11 @@ impl Options {
             let mut value = || args.next().cloned().ok_or_else(|| format!("{arg} needs a value"));
             match arg.as_str() {
                 "--repo" => options.repo = Some(value()?.into()),
-                "--rows" => {
-                    options.rows.by = Some(match value()?.as_str() {
-                        "workers" => RowsBy::Workers,
-                        "tickets" => RowsBy::Tickets,
-                        other => return Err(format!("--rows takes workers or tickets, not {other}")),
-                    });
-                }
                 "--grouping" => {
                     options.rows.grouping = Some(match value()?.as_str() {
-                        "tree" => Grouping::Tree,
                         "flat" => Grouping::Flat,
-                        other => return Err(format!("--grouping takes tree or flat, not {other}")),
+                        "workers" => Grouping::Workers,
+                        other => return Err(format!("--grouping takes flat or workers, not {other}")),
                     });
                 }
                 "--collapse" => options.rows.collapse = Some(true),
@@ -185,12 +178,12 @@ mod tests {
 
     #[test]
     fn options_parse() {
-        let options = parse(&["--repo", "../swarm-timeline", "--rows", "tickets", "--grouping", "flat", "--collapse", "--dark"]).unwrap();
+        let options = parse(&["--repo", "../swarm-timeline", "--grouping", "workers", "--collapse", "--dark"]).unwrap();
         assert_eq!(options.repo, Some(PathBuf::from("../swarm-timeline")));
-        assert_eq!(options.rows, SetRowsParams { by: Some(RowsBy::Tickets), grouping: Some(Grouping::Flat), collapse: Some(true) });
+        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true) });
         assert_eq!(options.theme, Some(egui::Theme::Dark));
         assert!(parse(&["--repo"]).is_err());
-        assert!(parse(&["--rows", "goats"]).is_err());
+        assert!(parse(&["--grouping", "tree"]).is_err());
         assert!(parse(&["--size", "10", "10"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
         assert_eq!(parse(&["--help"]), Err(String::new()));

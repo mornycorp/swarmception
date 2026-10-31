@@ -4,10 +4,10 @@
 # AGENTS.md: guide for AI agents and contributors
 
 Swarmception is a tool for looking at swarm behaviour: a desktop app (Rust, egui/eframe) that
-reads any swarm's `tracking` branch (swarm-core's tracking format) and shows what every agent did
-on [swarm-timeline](https://github.com/mornycorp/swarm-timeline)'s timeline widget, with rows by
-worker (machine / worker / sessions, issues, sub-agents, events) or by ticket, as a tree or flat,
-collapsed or not. It is for the swarms' owner, and for agents studying how a swarm behaved.
+reads any swarm's `tracking` branch (swarm-core's tracking format) and `main`, and shows what
+happened to its tickets on [swarm-timeline](https://github.com/mornycorp/swarm-timeline)'s timeline
+widget: the merges onto `main`, the tickets' merges, and a row per ticket (claimed, working,
+waiting for merge, merged), flat or by worker, collapsed or not. It is for the swarms' owner, and for agents studying how a swarm behaved.
 `cargo run -- --repo <path to a swarm's clone>` starts it.
 It is built by a swarm of agents on [swarm-core](https://github.com/mornycorp/swarm-core)'s
 protocol and commands. Read this file first, then [docs/swarm-protocol.md](docs/swarm-protocol.md)

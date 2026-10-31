@@ -87,9 +87,9 @@ mod tests {
 
     #[test]
     fn runs_commands_on_one_session() {
-        let out = lines(&["run", "rows.set", r#"{"by":"tickets"}"#, "rows.get"]).unwrap();
+        let out = lines(&["run", "rows.set", r#"{"grouping":"workers"}"#, "rows.get"]).unwrap();
         assert_eq!(out.len(), 2);
-        assert!(out[1].contains("\"tickets\""));
+        assert!(out[1].contains("\"workers\""));
         assert_eq!(lines(&["run", "repo.reload"]), Err("disabled".into()));
         assert!(lines(&[]).is_err());
         assert!(lines(&["commands"]).unwrap()[0].contains("repo.open"));

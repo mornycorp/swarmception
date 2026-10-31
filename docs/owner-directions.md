@@ -27,6 +27,13 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 ## How we work
 
+- **Tickets, not every event** (owner, 2026-10-31, #1): the timeline shows when each ticket was
+  claimed, began working, finished working and merged; a row at the top of every merge onto
+  `main`, and under it a row of each ticket's merge onto `main`. It replaces the rows by worker
+  (sessions, sub-agents, events).
+- **Wall clock time** (owner, 2026-10-31, #2): the timeline can show wall-clock time, and shows it.
+- **On a Mac, the menus are in the system menu bar** (owner, 2026-10-31, #3), not inside the
+  window.
 - **Swarm size:** at most three workers per swarm on the owner's desktop, and only while
   `cargo xtask capacity` shows room (the swarm protocol's default; change it here).
 - **Merging:** only the coordinator merges, on the local gate

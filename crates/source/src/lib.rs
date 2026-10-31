@@ -1,7 +1,8 @@
 //! Where the events come from (docs/architecture.md › Layers, L2): a repository's `tracking`
-//! branch, read through `git` (Swarm Core's docs/tracking-format.md › The branch). The reader
-//! takes `refs/remotes/origin/tracking`, else a local `refs/heads/tracking`, and never writes to
-//! it; `fetch` brings the remote's up to date. Every call has a deadline and capped output, and
+//! branch, read through `git` (Swarm Core's docs/tracking-format.md › The branch), and the merge
+//! commits on its `main`. The reader takes `refs/remotes/origin/tracking`, else a local
+//! `refs/heads/tracking` (and `main` the same way, or `master`), and never writes to either;
+//! `fetch` brings the remote's up to date. Every call has a deadline and capped output, and
 //! nothing reaches git's command line unchecked: the paths it reads are the branch's own,
 //! checked as instance ids.
 #![forbid(unsafe_code)]
@@ -15,12 +16,16 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use swarmception_model::{AgentFile, is_instance_id, parse_file};
+use swarmception_model::{AgentFile, MainMerge, is_instance_id, parse_file, parse_merge};
 
 pub use git::{Git, GitError};
 
 /// The refs a reader takes, in order.
 pub const REFS: [&str; 2] = ["refs/remotes/origin/tracking", "refs/heads/tracking"];
+/// The refs whose merge commits are the merges onto main, in order: the first there is read.
+pub const MAIN_REFS: [&str; 4] = ["refs/remotes/origin/main", "refs/heads/main", "refs/remotes/origin/master", "refs/heads/master"];
+/// The most merges onto main read, newest first.
+pub const MAX_MERGES: usize = 100_000;
 /// How long a read may take.
 pub const READ_DEADLINE: Duration = Duration::from_secs(20);
 /// How long a fetch may take.
@@ -72,6 +77,10 @@ pub struct Tracking {
     pub files: Vec<AgentFile>,
     /// Paths under `tracking/` that weren't an agent's file (skipped).
     pub skipped: Vec<String>,
+    /// The main ref read, of [`MAIN_REFS`]: none when the repository has none of them.
+    pub main: Option<String>,
+    /// Its first-parent merge commits, oldest first.
+    pub merges: Vec<MainMerge>,
 }
 
 /// The instance a branch path names, `tracking/<instance>/work.jsonl`.
@@ -91,14 +100,7 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     let top = git.run(&["rev-parse", "--show-toplevel"], None).map_err(|e| SourceError::NotARepo { path: repo.to_path_buf(), message: e.to_string() })?;
     let top = PathBuf::from(String::from_utf8_lossy(&top).trim());
     let git = Git::new(&top, READ_DEADLINE, MAX_BYTES);
-    let (reference, commit) = REFS
-        .iter()
-        .find_map(|r| {
-            let spec = format!("{r}^{{commit}}");
-            let out = git.run(&["rev-parse", "--verify", "--quiet", &spec], None).ok()?;
-            Some(((*r).to_owned(), String::from_utf8_lossy(&out).trim().to_owned()))
-        })
-        .ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
+    let (reference, commit) = first_ref(&git, &REFS).ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
     let listing = git.run(&["ls-tree", "-r", "-z", "--name-only", &commit, "--", "tracking/"], None)?;
     let mut paths = Vec::new();
     let mut skipped = Vec::new();
@@ -111,17 +113,42 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     }
     let texts = git.cat_files(&commit, &paths)?;
     let files = paths.iter().zip(texts).filter_map(|(path, text)| Some(parse_file(instance_of(path)?, &text))).collect();
-    Ok(Tracking { repo: top, reference, commit, files, skipped })
+    let (main, merges) = match first_ref(&git, &MAIN_REFS) {
+        Some((main, head)) => (Some(main), merges(&git, &head)?),
+        None => (None, Vec::new()),
+    };
+    Ok(Tracking { repo: top, reference, commit, files, skipped, main, merges })
 }
 
-/// Fetches the remote's tracking branch into `refs/remotes/origin/tracking`.
+/// The first of `refs` there, and its commit.
+fn first_ref(git: &Git, refs: &[&str]) -> Option<(String, String)> {
+    refs.iter().find_map(|r| {
+        let spec = format!("{r}^{{commit}}");
+        let out = git.run(&["rev-parse", "--verify", "--quiet", &spec], None).ok()?;
+        Some(((*r).to_owned(), String::from_utf8_lossy(&out).trim().to_owned()))
+    })
+}
+
+/// The first-parent merge commits of `head`, oldest first.
+fn merges(git: &Git, head: &str) -> Result<Vec<MainMerge>, SourceError> {
+    let count = format!("--max-count={MAX_MERGES}");
+    let log = git.run(&["log", "--first-parent", "--merges", &count, "--format=%H%x1f%ct%x1f%s", head, "--"], None)?;
+    let mut merges: Vec<MainMerge> = String::from_utf8_lossy(&log).lines().filter_map(parse_merge).collect();
+    merges.reverse();
+    Ok(merges)
+}
+
+/// Fetches the remote's tracking branch into `refs/remotes/origin/tracking`, then its `main`
+/// into `refs/remotes/origin/main` when it has one.
 ///
 /// # Errors
 ///
-/// [`SourceError::Git`] when git fails or runs past its deadline.
+/// [`SourceError::Git`] when git fails or runs past its deadline fetching the tracking branch.
 pub fn fetch(repo: &Path) -> Result<(), SourceError> {
     let git = Git::new(repo, FETCH_DEADLINE, 1024 * 1024);
     git.run(&["fetch", "--quiet", "origin", "+refs/heads/tracking:refs/remotes/origin/tracking"], None)?;
+    // A remote whose main is called something else still has its tracking branch fetched.
+    let _ = git.run(&["fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"], None);
     Ok(())
 }
 
@@ -157,9 +184,20 @@ mod tests {
             let ok = std::process::Command::new("git").current_dir(&dir).args(args).output().unwrap();
             assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
         };
-        run(&["init", "-q", "-b", "tracking"]);
+        let commit = |args: &[&str]| {
+            let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
+            all.extend_from_slice(args);
+            run(&all);
+        };
+        run(&["init", "-q", "-b", "main"]);
+        commit(&["commit", "-q", "--allow-empty", "-m", "start"]);
+        run(&["switch", "-q", "-c", "topic"]);
+        commit(&["commit", "-q", "--allow-empty", "-m", "a change"]);
+        run(&["switch", "-q", "main"]);
+        commit(&["merge", "-q", "--no-ff", "-m", "Merge pull request #7 from them/topic", "topic"]);
+        run(&["switch", "-q", "--orphan", "tracking"]);
         run(&["add", "."]);
-        run(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "events"]);
+        commit(&["commit", "-q", "-m", "events"]);
         dir
     }
 
@@ -172,6 +210,8 @@ mod tests {
         assert_eq!(tracking.files[0].instance, "mini-1");
         assert_eq!(tracking.files[1].errors.len(), 1);
         assert_eq!(tracking.skipped, ["tracking/README.md"]);
+        assert_eq!(tracking.main.as_deref(), Some("refs/heads/main"));
+        assert_eq!(tracking.merges.iter().map(|m| m.pr).collect::<Vec<_>>(), [Some(7)], "the one merge commit, not its parents");
         std::fs::remove_dir_all(dir).ok();
     }
 
