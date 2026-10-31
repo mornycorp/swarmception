@@ -11,3 +11,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #7 (#5); capacity=3 free=15.4; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-7","t":"2026-10-31T22:24:28Z"}
 {"event":"merge","issue":5,"mr":7,"sub":"gate-7","t":"2026-10-31T22:24:43Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #7","sub":"gate-7","t":"2026-10-31T22:24:48Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #6 (#3); capacity=3 free=14.2; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-6","t":"2026-10-31T22:25:26Z"}
