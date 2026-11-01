@@ -5,7 +5,10 @@
 //! - `claim` starts a *claimed* stretch, unless the ticket is already claimed, worked on or waiting;
 //! - `work` starts *working*; `submit` starts *waiting* for the merge;
 //! - `sendback` starts *sent back*, until work begins again;
-//! - `stop` but `done` starts *stopped* (a handoff, a block, a pause); `stop done` changes nothing;
+//! - `stop` but `done` starts *stopped* (a handoff, a block, a pause);
+//! - `stop done` while claimed or worked on ends the stretch and marks the ticket done without a
+//!   merge (its output was something else, such as new issues); after a `submit` it changes
+//!   nothing, as the ticket waits for its merge;
 //! - `release` ends the stretch, and `merge` ends it and marks the ticket merged.
 //!
 //! What nothing ended runs to the last event of all, open.
@@ -68,6 +71,15 @@ pub struct Merged {
     pub sub: Option<String>,
 }
 
+/// A ticket's `stop done` while it was claimed or worked on: it finished without a merge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Done {
+    pub t: Timestamp,
+    /// The instance that stopped it, and the note it gave.
+    pub by: String,
+    pub note: Option<String>,
+}
+
 /// One ticket's life.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ticket {
@@ -79,6 +91,8 @@ pub struct Ticket {
     pub began: Option<Timestamp>,
     pub finished: Option<Timestamp>,
     pub merged: Option<Merged>,
+    /// Its last `stop done` while claimed or worked on: it finished without a merge.
+    pub done: Option<Done>,
     pub stretches: Vec<Stretch>,
     /// The instance that claimed it or worked on it last, not counting a gate's events.
     pub worker: Option<String>,
@@ -88,7 +102,7 @@ pub struct Ticket {
 
 impl Ticket {
     fn new(issue: u64, first: Timestamp) -> Self {
-        Self { issue, pr: None, claimed: None, began: None, finished: None, merged: None, stretches: Vec::new(), worker: None, first }
+        Self { issue, pr: None, claimed: None, began: None, finished: None, merged: None, done: None, stretches: Vec::new(), worker: None, first }
     }
 
     /// `#<issue>`, or `#<issue> · PR #<pr>`.
@@ -140,7 +154,7 @@ impl Ticket {
                 self.enter(Phase::Waiting, event, &[Phase::Waiting]);
             }
             Kind::Sendback { .. } => self.begin(Phase::SentBack, event, event.note.clone()),
-            Kind::Stop { reason, .. } if !matches!(reason, Some(StopReason::Done)) => self.stop(event, reason.as_ref()),
+            Kind::Stop { reason, .. } => self.stop(event, reason.as_ref()),
             Kind::Release { .. } => self.end(event.t),
             Kind::Merge { mr, .. } => {
                 self.end(event.t);
@@ -150,9 +164,16 @@ impl Ticket {
         }
     }
 
-    /// A stop but `done`: the ticket stopped, when it was claimed or worked on.
+    /// A stop, when the ticket was claimed or worked on: `done` ends the stretch and marks it done
+    /// without a merge; any other reason starts *stopped*. Otherwise (waiting, say) nothing.
     fn stop(&mut self, event: &IssueEvent, reason: Option<&StopReason>) {
-        if matches!(self.current(), Some(Phase::Claimed | Phase::Working)) {
+        if !matches!(self.current(), Some(Phase::Claimed | Phase::Working)) {
+            return;
+        }
+        if matches!(reason, Some(StopReason::Done)) {
+            self.end(event.t);
+            self.done = Some(Done { t: event.t, by: event.instance.clone(), note: event.note.clone() });
+        } else {
             let why = reason.map(stop_reason).or_else(|| event.note.clone());
             self.begin(Phase::Stopped, event, why);
         }
@@ -178,7 +199,7 @@ pub fn tickets(activity: &Activity) -> Vec<Ticket> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::activity::tests::sample;
 
@@ -234,5 +255,40 @@ mod tests {
         assert_eq!(phases(&tickets[1]), [Phase::Claimed, Phase::Stopped]);
         assert_eq!(tickets[1].stretches[1].note.as_deref(), Some("blocked"));
         assert!(!tickets[1].stretches[1].open, "the release ended it");
+    }
+
+    /// The events of mc-engine #58 (an architecture review whose output was new issues), then a
+    /// ticket done while only claimed, then a later event the old reading ran both on to.
+    pub(crate) const DONE: &str = r#"{"event":"claim","issue":58,"mr":64,"t":"2026-10-31T12:59:16Z"}
+{"event":"work","issue":58,"t":"2026-10-31T12:59:18Z"}
+{"event":"stop","issue":58,"reason":"done","note":"review filed as #66-#73","t":"2026-10-31T13:06:43Z"}
+{"event":"claim","issue":59,"t":"2026-10-31T13:10:00Z"}
+{"event":"stop","issue":59,"reason":"done","t":"2026-10-31T13:12:00Z"}
+{"event":"work","issue":60,"t":"2026-10-31T22:00:00Z"}"#;
+
+    #[test]
+    fn stop_done_while_worked_on_ends_the_stretch() {
+        let tickets = tickets(&Activity::of(&[swarmception_model::parse_file("m-1", DONE)]));
+        let ticket = &tickets[0];
+        assert_eq!(ticket.stretches.iter().map(|s| s.phase).collect::<Vec<_>>(), [Phase::Claimed, Phase::Working]);
+        let working = &ticket.stretches[1];
+        assert!(!working.open, "the stop ended it");
+        assert_eq!((working.start.to_string(), working.end.to_string()), ("2026-10-31T12:59:18Z".to_owned(), "2026-10-31T13:06:43Z".to_owned()));
+        let done = ticket.done.as_ref().unwrap();
+        assert_eq!((done.t.to_string().as_str(), done.by.as_str(), done.note.as_deref()), ("2026-10-31T13:06:43Z", "m-1", Some("review filed as #66-#73")));
+        assert!(ticket.merged.is_none() && ticket.finished.is_none());
+        let claimed = &tickets[1];
+        assert_eq!(claimed.stretches.len(), 1);
+        assert!(!claimed.stretches[0].open, "done while only claimed ends it too");
+        assert_eq!(claimed.stretches[0].end.to_string(), "2026-10-31T13:12:00Z");
+        assert!(claimed.done.is_some());
+    }
+
+    #[test]
+    fn stop_done_after_a_submit_changes_nothing() {
+        let activity = Activity::of(&sample());
+        let ticket = &tickets(&activity)[1];
+        assert!(ticket.done.is_none(), "the sample's `stop done` comes after #170's submit");
+        assert_eq!(ticket.stretches.last().map(|s| s.phase), Some(Phase::Waiting));
     }
 }
