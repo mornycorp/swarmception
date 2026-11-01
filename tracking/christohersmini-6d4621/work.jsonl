@@ -9,3 +9,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"ready-16e547b","t":"2026-11-01T08:51:54Z"}
 {"event":"submit","issue":18,"mr":19,"t":"2026-11-01T08:51:58Z"}
 {"event":"work","issue":18,"note":"coordinator fixes: keep the timeline selection on hover; grey PR bricks; rebase onto #21","t":"2026-11-01T09:06:31Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-665d273","t":"2026-11-01T09:06:38Z"}
