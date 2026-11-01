@@ -18,7 +18,9 @@
 //! - **Gate runs**: the coordinator's gates ([`Sub::is_gate`]) and the workers' own `ready`
 //!   gates that started in the window. Each passed (`rc=0` in its `sub.stop` note, or no `rc`
 //!   but a `merge` names it as its `sub`), failed (another `rc`, by its note's `cause=…`;
-//!   `unstated` without one) or has no result (still running, or no `rc` and no merge).
+//!   `unstated` without one) or has no result (still running, or no `rc` and no merge: a gate
+//!   that never logged its stop ended at its coordinator's session's end or the next gate's
+//!   start, never finished, #42).
 //!   The pass rate is passed ÷ (passed + failed).
 //! - **Sendbacks**: the `sendback` events in the window, and their count ÷ the tickets landed.
 //! - **Work in progress**: the mean number of tickets *working* (from `work` to its submit,
@@ -62,7 +64,8 @@ pub struct Gates {
     pub runs: usize,
     pub passed: usize,
     pub failed: usize,
-    /// Still running, or ended with no `rc` and no merge naming them.
+    /// Still running, or ended with no `rc` and no merge naming them (a gate that never logged
+    /// its stop among them, #42).
     pub no_result: usize,
     /// Passed ÷ (passed + failed); none when neither.
     pub pass_rate: Option<f64>,

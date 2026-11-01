@@ -52,6 +52,10 @@ pub struct Sub {
     /// The issues its events name, and the pull requests its start note names (`#<m>`).
     pub issues: Vec<u64>,
     pub prs: Vec<u64>,
+    /// A gate that never logged its stop ended where its coordinator's session did, or where the
+    /// next gate began, whichever came first (#42): `never finished: …`, saying which. It has no
+    /// result: neither passed nor failed.
+    pub unfinished: Option<String>,
 }
 
 impl Sub {
@@ -103,9 +107,14 @@ impl Agent {
     /// event, as the tracking format has it, and as statistics' *on shift* reads it.
     #[must_use]
     pub fn session_ended_after(&self, t: Timestamp) -> Option<&Session> {
-        let session = self.sessions.iter().find(|s| s.span.end >= t).or_else(|| self.sessions.last())?;
-        (!session.span.open).then_some(session)
+        ended_after(&self.sessions, t)
     }
+}
+
+/// The session of `sessions` that ended after `t` was in it: [`Agent::session_ended_after`].
+fn ended_after(sessions: &[Session], t: Timestamp) -> Option<&Session> {
+    let session = sessions.iter().find(|s| s.span.end >= t).or_else(|| sessions.last())?;
+    (!session.span.open).then_some(session)
 }
 
 /// A line that didn't read, by file.
@@ -150,6 +159,7 @@ impl Activity {
         let last = extent.map_or(Timestamp::default(), |(_, end)| end);
         let mut agents: Vec<Agent> = files.iter().map(|file| agent(file, last)).collect();
         apply_others(&mut agents, files);
+        end_unstopped_gates(&mut agents);
         agents.sort_by(|a, b| (&a.machine, &a.name, first_start(a), &a.instance).cmp(&(&b.machine, &b.name, first_start(b), &b.instance)));
         let errors =
             files.iter().flat_map(|f| f.errors.iter().map(|e| FileError { instance: f.instance.clone(), line: e.line, message: e.message.clone() })).collect();
@@ -346,6 +356,7 @@ fn read_sub(agent: &mut Agent, reading: &mut Reading, event: &Event) {
                 rc: None,
                 issues: Vec::new(),
                 prs: event.note.as_deref().map(pr_refs).unwrap_or_default(),
+                unfinished: None,
             };
             reading.subs.insert(sub.clone(), open);
         }
@@ -361,6 +372,7 @@ fn read_sub(agent: &mut Agent, reading: &mut Reading, event: &Event) {
                 rc: None,
                 issues: Vec::new(),
                 prs: Vec::new(),
+                unfinished: None,
             });
             done.span.end = t.max(done.span.start);
             done.rc = event.note.as_deref().and_then(rc_of);
@@ -426,6 +438,36 @@ fn end_session(agent: &mut Agent, reading: &mut Reading, t: Timestamp, by: Optio
         session.span.open = open;
         session.ended_by = by.map(str::to_owned);
         agent.sessions.push(session);
+    }
+}
+
+/// Ends each gate that never logged its stop (#42), which would otherwise run to the last event:
+/// at its coordinator's session's end, or at the next gate's start (one gate runs at a time in a
+/// repository), whichever comes first. One whose session goes on and no gate followed is still
+/// running, as far as anyone knows.
+fn end_unstopped_gates(agents: &mut [Agent]) {
+    let mut starts: Vec<(Timestamp, String)> =
+        agents.iter().flat_map(|a| a.subs.iter().filter(|s| s.is_gate()).map(|s| (s.span.start, s.sub.clone()))).collect();
+    starts.sort();
+    for agent in agents.iter_mut() {
+        let Agent { name, sessions, subs, .. } = agent;
+        for sub in subs.iter_mut().filter(|s| s.span.open && s.is_gate()) {
+            let start = sub.span.start;
+            let next = starts.iter().find(|(t, id)| *t > start && *id != sub.sub).map(|(t, id)| (*t, format!("never finished: {id} started {t}")));
+            let left = ended_after(sessions, start).map(|s| {
+                let by = s.ended_by.as_ref().map(|by| format!(" (ended by {by})")).unwrap_or_default();
+                (s.span.end.max(start), format!("never finished: {name}'s session ended {}{by}", s.span.end.max(start)))
+            });
+            let end = match (next, left) {
+                (Some(next), Some(left)) => Some(if left.0 <= next.0 { left } else { next }),
+                (next, left) => next.or(left),
+            };
+            if let Some((t, why)) = end {
+                sub.span.end = t;
+                sub.span.open = false;
+                sub.unfinished = Some(why);
+            }
+        }
     }
 }
 

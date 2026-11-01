@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory steps by key moment, back and forth: `factory.moments`, `factory.step`) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the timeline's toolbar trimmed to what Swarmception needs, its view fixed by command; the bars' tooltips in colour) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -38,7 +38,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
 - **L1 `swarmception-domain`**: `activity` reads each instance's sessions (split at its pauses),
   its work on issues, its helper sub-agents (a gate's `rc`, the PRs its note names) and its marks,
   and applies what another instance ends (`of` on `session.stop` and `release`), and keeps every
-  issue event in time order. `tickets` reads each ticket's life from them: when it was claimed,
+  issue event in time order. A gate that never logged its `sub.stop` ends at its coordinator's
+  session's end or the next gate's start, whichever comes first (#42: `Sub::unfinished`, `never
+  finished: …`), with no result; one whose session goes on with no gate after it still runs. `tickets` reads each ticket's life from them: when it was claimed,
   began, finished (its submit) and merged, and its stretches (claimed, working, waiting for merge,
   sent back, stopped); a claimed, working or sent back stretch ends where its holder's session
   ended, the ticket *abandoned* (#28: `Ticket::abandoned`, the bar's tooltip says whose session
@@ -66,7 +68,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `factory` is the swarm at one moment *t* as a factory (#18): each ticket a crate in its own
   colour (`colours`, as on the timeline), up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
   worker's actor and helper; the gate's runs (a merge whose gate logged no `sub.start` counts as a
-  run), main's blocks (each with its ticket's life up to the merge, #32: `took`, claim → merge;
+  run; one that never finished has no result, counted in `Gate::no_result`, #42), main's blocks (each with its ticket's life up to the merge, #32: `took`, claim → merge;
   `segments`, its stretches with the gate runs naming it carved out of its waits; `sent_back`), and
   what happened in the `recent` seconds before *t*. Nothing after *t* is
   told; `titled` adds what GitHub says (each crate's title, its tooltip's title, state and labels
@@ -246,17 +248,16 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | A gate that never logged its stop ends at its coordinator's session's end or the next gate's start, with no result (#42); the factory's working border a warm white and in-the-gate a magenta, apart from scheme B |
 | 2026-11-01 | minor | The factory steps by key moment, back and forth (#33): the domain's `moments`, `factory.moments` and `factory.step`; ⏮ / ⏭ and ← / →, the moment named beside the clock |
 | 2026-11-01 | minor | The timeline's toolbar shows only what Swarmception needs; the scale, origin, minimap and click fixed by command; the bars' tooltips in colour from the domain (#35) |
 | 2026-11-01 | minor | Tickets' colours from a fixed, curated palette (scheme B, #40), the phase colours retuned to sit with it |
+| 2026-11-01 | minor | A gate that never logged its stop ends at its coordinator's session's end or the next gate's start, with no result (#42); the factory's working border a warm white and in-the-gate a magenta, apart from scheme B |
 | 2026-11-01 | minor | Main's wall (#32): bricks sized by claim → merge, their phases along them, sendbacks marked; the blocks carry `took`, `segments`, `sent_back` |
 | 2026-11-01 | minor | The factory's layout (#31): no ticker, the key along the bottom, short bench strips, the gate as its list of runs, coloured tooltips, the sparkline's hours clickable; the factory's own colours softened |
 | 2026-11-01 | minor | An abandoned ticket: a claimed, working or sent back stretch ends where its holder's session did (#28) |
 | 2026-11-01 | minor | The repository's GitHub issues: fetched with `gh`, cached per repository; titles on bars and first in tooltips; `ticket.urls` and the bars' and chips' Open Issue / Open PR (#17) |
 | 2026-11-01 | minor | A colour per ticket from `colours`
 , shared with the factory; the top rows as 10 s spans; bars carry their ticket and colour, no more pins (#15) |
-| 2026-11-01 | minor | The factory's statistics strip, over `stats.get` for the window (#22) |
-| 2026-11-01 | minor | The factory: `factory.at`, `timeline.placeAt`, `timeline.ticketBars` and the Factory pane (#18) |
-| 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |
-| 2026-10-31 | minor | The menus as data; on macOS in the system menu bar (#3) |
-| 2026-10-31 | major | First version, from swarm-core's template |
+
+Older rows: `git log -p docs/architecture.md`.

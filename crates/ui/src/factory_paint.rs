@@ -633,8 +633,9 @@ impl Floor<'_> {
         self.more(room, scene.counts.waiting.saturating_sub(shown));
     }
 
-    /// The gate: its counts (passed green, failed red), what it is doing, the tickets in it, and
-    /// its runs, newest first (✔/✖, the run, its tickets and cause, its age) in all the room left.
+    /// The gate: its counts (passed green, failed red, no result grey when any), what it is doing,
+    /// the tickets in it, and its runs, newest first (✔/✖/?, the run, its tickets and cause, its
+    /// age) in all the room left: a run that never finished (#42) is grey, `never finished`.
     fn gate(&mut self, column: Rect) {
         let gate = &self.scene.gate;
         let room = self.card(column, "GATE", "");
@@ -642,6 +643,7 @@ impl Floor<'_> {
             (format!("{} {}", icons::CHECK, gate.passed), PASSED),
             ("   ".to_owned(), self.pal.text),
             (format!("{} {}", icons::CROSS, gate.failed), if gate.failed > 0 { SENT_BACK } else { self.pal.weak }),
+            (if gate.no_result > 0 { format!("   ? {}", gate.no_result) } else { String::new() }, STOPPED),
         ];
         pieces(&self.painter, pos2(column.right() - 8.0, column.top() + 6.0), Align2::RIGHT_TOP, &counts, Self::font(11.0), room.width() * 0.6);
         let mut y = room.top();
@@ -959,7 +961,7 @@ const fn outcome_word(outcome: Outcome) -> &'static str {
         Outcome::Running => "running",
         Outcome::Passed => "passed",
         Outcome::Failed => "failed",
-        Outcome::Unknown => "ended",
+        Outcome::Unknown => "no result",
     }
 }
 
