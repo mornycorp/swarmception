@@ -11,6 +11,7 @@ eframe = { workspace = true }
 swarmception-ui = { workspace = true }
 swarmception-engine = { workspace = true }
 swarmception-domain = { workspace = true }
+swarmception-model = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }

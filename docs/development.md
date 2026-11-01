@@ -2,7 +2,7 @@
      own now. Keep the heading the shared protocol links to: How many builds at once. -->
 # Development
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-01 · **Change:** minor (the app's --panes and --at) · **Target:** M1
 
 How to build, test and run Swarmception, and how many builds a machine takes.
 
@@ -21,6 +21,8 @@ Run the app on any swarm's clone (any directory in it; the current directory by 
 cargo run -- --repo ../swarm-timeline
 cargo run -- --repo ../swarm-timeline --grouping workers --collapse
 cargo run -- --repo ../swarm-timeline --screenshot shot.ppm   # draw, save the window, quit
+cargo run -- --repo ../swarm-timeline --panes factory --at 2026-10-30T23:47:30Z   # the factory at a moment
+cargo run -- --repo ../swarm-timeline --at 2026-10-30T23:47:30Z --hover 58 --trace 58 --screenshot shot.ppm
 ```
 
 The CLI runs the engine headless, one session, one JSON result a line:
@@ -90,4 +92,5 @@ changes a row's status updates it; the coordinator refreshes its measured number
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The app's `--panes`, `--at`, `--trace` and `--hover`, for the factory (#18) |
 | 2026-10-31 | major | First version, from swarm-core's template |

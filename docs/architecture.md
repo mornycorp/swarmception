@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the swarm's statistics: `stats`, `stats.get`) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory: `factory.at` and its pane) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -48,6 +48,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   event at all), its hourly series, the medians claim → merge and submit → merge, gate and
   `ready` pass rates with failures by cause, sendbacks, work in progress and each worker's
   utilisation; the module's docs define each figure.
+  `factory` is the swarm at one moment *t* as a factory (#18): each ticket a crate in its own
+  colour, up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
+  worker's actor and helper; the gate's runs (a merge whose gate logged no `sub.start` counts as a
+  run), main's blocks, and what happened in the `recent` seconds before *t*. Nothing after *t* is
+  told.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -56,7 +61,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   rows and the timeline built from them) and the command registry: `engine.commands`,
   `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
   `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
-  run by default). A session made with a waker reads in the background and lands through
+  run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
+  ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey). A session made with a waker reads in the background and lands through
   `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
@@ -67,9 +73,14 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the scale and
   window, and drives the widget through its own commands (`view.fit`, `view.zoom`, `state.set`).
-  `UiState` (the panes shown) is serde data.
+  The factory pane, under the timeline, draws what `factory.at` returns: each ticket the same
+  chip at every station (its fill its colour, its border its phase, its size by station),
+  gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
+  timeline (`timeline.ticketBars`, the widget's `ranges.toggle`), clicking one traces its journey; its *t* follows the timeline (the pointer, else the playhead,
+  else the window's end) or plays through the window, the playhead following.
+  `UiState` (the panes shown, the factory's follow, play, speed and *t*) is serde data.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--screenshot`) and `swarmception-cli` (the engine headless: `commands`, `run`).
+  `--panes`, `--at`, `--screenshot`) and `swarmception-cli` (the engine headless: `commands`, `run`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the
 widget's (the view: zoom, pan, scale, selection). Nothing reaches across: the UI moves data from
@@ -162,6 +173,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The factory: `factory.at`, `timeline.placeAt`, `timeline.ticketBars` and the Factory pane (#18) |
 | 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |
 | 2026-10-31 | minor | The menus as data; on macOS in the system menu bar (#3) |
 | 2026-10-31 | major | First version, from swarm-core's template |

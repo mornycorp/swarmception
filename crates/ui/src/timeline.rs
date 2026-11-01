@@ -5,9 +5,12 @@
 //! menu still offers the Time ruler (seconds from the axis's origin).
 
 use swarmception_engine::Session;
+use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, TicketParams};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
+use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
+use timeline_engine::ranges_cmds::{Clear as ClearRanges, RangeParams, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
 use timeline_engine::state_cmds::{Get, Set, SetParams};
 use timeline_engine::view_cmds::{Fit, Zoom, ZoomParams};
@@ -17,6 +20,17 @@ use crate::icons;
 
 /// The scale the pane starts on.
 const TIME: &str = swarmception_domain::timeline::TIME;
+
+/// Where the timeline is looking, as clock times on the `Time` scale (none on another scale).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Looking {
+    /// The time under the pointer.
+    pub hover: Option<Timestamp>,
+    /// The start of the playhead's item.
+    pub playhead: Option<Timestamp>,
+    /// The window's start and end.
+    pub window: Option<(Timestamp, Timestamp)>,
+}
 
 /// The widget, and which of the engine's generations of rows it shows.
 pub struct TimelinePane {
@@ -103,6 +117,61 @@ impl TimelinePane {
     /// Zooms about the window's centre: 2 shows half as much.
     pub fn zoom(&mut self, factor: f64) {
         let _ = self.widget.session().call::<Zoom>(ZoomParams { factor, ..ZoomParams::default() });
+    }
+
+    /// Where the timeline is looking: the pointer, the playhead and the window, as clock times;
+    /// none before it has data, and nothing in it on a scale other than `Time`.
+    pub fn looking(&mut self, engine: &mut Session) -> Option<Looking> {
+        if !self.has_data {
+            return None;
+        }
+        let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
+        if state.scale != TIME {
+            return Some(Looking::default());
+        }
+        let mut at = |position: i64| engine.call::<TimeAt>(TimeAtParams { position }).ok().map(|t| t.time);
+        Some(Looking {
+            hover: state.hover.and_then(&mut at),
+            playhead: state.playhead_span.and_then(|s| at(s.start)),
+            window: at(state.window.start).zip(at(state.window.end)),
+        })
+    }
+
+    /// Puts the playhead on the item `t` falls in (`timeline.placeAt`), or clears it before the
+    /// first; nothing when it is there already.
+    pub fn put_playhead(&mut self, engine: &mut Session, t: Timestamp) {
+        if !self.has_data {
+            return;
+        }
+        let Ok(place) = engine.call::<PlaceAt>(PlaceAtParams { time: t }) else { return };
+        let session = self.widget.session();
+        let now = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).and_then(|s| s.playhead);
+        if now == place.item {
+            return;
+        }
+        let params = match place.item {
+            Some(item) => SetParams { playhead: Some(item), ..SetParams::default() },
+            None => SetParams { clear_playhead: true, ..SetParams::default() },
+        };
+        let _ = session.call::<Set>(params);
+    }
+
+    /// Selects `issue`'s bars (`timeline.ticketBars`, then the widget's `ranges.toggle` for each,
+    /// which leaves the playhead where it is), after clearing the selection when `clear`; none
+    /// selects nothing. A bar in a collapsed group isn't shown, so it isn't selected.
+    pub fn light_ticket(&mut self, engine: &mut Session, issue: Option<u64>, clear: bool) {
+        if !self.has_data {
+            return;
+        }
+        let session = self.widget.session();
+        if clear || issue.is_some() {
+            let _ = session.call::<ClearRanges>(NoParams {});
+        }
+        let Some(issue) = issue else { return };
+        let Ok(found) = engine.call::<TicketBars>(TicketParams { issue }) else { return };
+        for bar in found.bars {
+            let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
+        }
     }
 
     /// The clock times the window spans and the pointer is at, on the `Time` scale, in UTC as
