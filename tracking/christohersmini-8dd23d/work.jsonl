@@ -2,3 +2,4 @@
 {"event":"claim","issue":34,"mr":36,"t":"2026-11-01T11:12:03Z"}
 {"event":"work","issue":34,"t":"2026-11-01T11:12:06Z"}
 {"event":"sub.start","name":"gate","sub":"gate1","t":"2026-11-01T11:16:33Z"}
+{"event":"sub.stop","sub":"gate1","t":"2026-11-01T11:16:40Z"}
