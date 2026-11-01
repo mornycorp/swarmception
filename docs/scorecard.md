@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 2: an Understand area; measured numbers) · **Target:** M1
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -16,14 +16,19 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Area | Done | Partial | Missing |
 |---|---|---|---|
-| Timeline (M1) | 6 | 0 | 0 |
+| Timeline (M1) | 8 | 0 | 0 |
+| Understand (M3) | 2 | 1 | 1 |
 
 ## Measured
 
 <!-- The numbers the coordinator refreshes once per batch, each with its source and date: test
      counts, commands, open gaps and their estimates. -->
 
-None yet.
+| What | Number | Source |
+|---|---|---|
+| Tests | 130 passed | `cargo nextest run --workspace`, 2026-11-01 |
+| Landed per active hour | mc-engine 7.8, swarm-timeline 10.3 | `stats.get`, 2026-11-01 |
+| Rows for swarm-timeline's tickets | 12 flat | `rows.list`, 2026-10-31 |
 
 ## Timeline (M1)
 
@@ -34,10 +39,22 @@ None yet.
 | TL-3 | Merges onto main, from git | done | `crates/source` and `crates/model/src/merges.rs` tests (#1) |
 | TL-4 | Tickets flat or by worker (machine / worker / ticket) | done | `rows.set {grouping}`; `rows.rs` tests |
 | TL-5 | Collapse: no empty rows | done | `rows.set {collapse}`; `rows.rs` tests |
-| TL-6 | Pan and zoom in time; View menu of panes; Font Awesome toolbar | done | `crates/ui`; screenshots checked 2026-10-31 |
+| TL-6 | Pan and zoom in time; View menu of panes; Font Awesome toolbar | done | `crates/ui`; screenshots checked 2026-10-31; Ctrl + drag pans on macOS (#11) |
+| TL-7 | A colour per ticket; merges as green 10 s spans | done | `crates/domain/src/colours.rs` tests; screenshots checked 2026-11-01 (#15) |
+| TL-8 | Titles on bars and tooltips; open the issue or PR from a bar | done | `crates/source/src/github.rs`, `crates/ui/tests/ticket_links.rs` (#17) |
+
+## Understand (M3)
+
+| Id | Target | Status | Evidence |
+|---|---|---|---|
+| UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18) |
+| UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
+| UN-3 | Gates analytics: runs, causes, durations | partial | gate pass rate and causes in `stats.get`; no pane ([G9](gaps.md#g9-swarm-analytics-panes)) |
+| UN-4 | Live watching | missing | [G4](gaps.md#g4-watching-a-live-swarm) |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Batch 2: TL-7, TL-8; the Understand area; measured numbers |
 | 2026-10-31 | major | First version, from swarm-core's template |
