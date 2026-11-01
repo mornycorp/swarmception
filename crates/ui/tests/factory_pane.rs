@@ -367,3 +367,74 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     assert_eq!(shell.timeline().selection().unwrap(), before);
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// The timeline's visible window, as clock times.
+fn window(shell: &mut Shell) -> (Timestamp, Timestamp) {
+    use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
+    let state = shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
+    let mut at = |position| shell.engine().call::<TimeAt>(TimeAtParams { position }).unwrap().time;
+    (at(state.window.start), at(state.window.end))
+}
+
+#[test]
+fn the_strip_draws_what_stats_get_returns_for_the_window() {
+    use swarmception_engine::stats_cmds::{At as StatsAt, Get as GetStats, GetParams};
+    use swarmception_ui::{percent, rate};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frame(&mut shell, &ctx);
+    }
+    let (start, end) = window(&mut shell);
+    let params = GetParams { start: Some(StatsAt::Seconds(start.0)), end: Some(StatsAt::Seconds(end.0)) };
+    let asked = shell.engine().call::<GetStats>(params).unwrap();
+    let strip = shell.factory().strip();
+    assert_eq!(strip.stats(), Some(&asked), "the strip shows stats.get's answer for the timeline's window");
+    assert_eq!(asked.landed, 1, "#7 merged in the window");
+    let drawn = strip.drawn();
+    assert_eq!(drawn.headline, rate(asked.landed_per_active_hour));
+    assert_eq!(drawn.landed, format!("{} landed · {:.1} active h", asked.landed, asked.active_seconds as f64 / 3_600.0));
+    assert_eq!(drawn.bars, asked.hours.len());
+    let t = Timestamp::parse("2026-10-31T03:42:00Z").unwrap();
+    let holding = asked.hours.iter().position(|h| h.start <= t && t.0 < h.start.0 + 3_600);
+    assert!(holding.is_some());
+    assert_eq!(drawn.marked, holding, "the hour holding t is marked");
+    assert!(drawn.figures.contains(&format!("gates pass {}", percent(asked.gates.pass_rate))), "{:?}", drawn.figures);
+    assert_eq!(drawn.figures.len(), 6);
+    assert!(texts.contains(&drawn.headline), "the headline drawn: {texts:?}");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn the_strip_asks_again_only_when_the_window_or_the_data_moves() {
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let asks = shell.factory().strip().asks();
+    let span = |shell: &Shell| shell.factory().strip().stats().map(|s| s.end.0 - s.start.0).unwrap();
+    let before = span(&shell);
+    // Frames with nothing moving, t moving included: no new ask.
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:10:00Z").unwrap());
+    for _ in 0..10 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(shell.factory().strip().asks(), asks, "not every frame, nor when t alone moves");
+    // A zoom changes the window: one more ask, over the narrower window.
+    shell.timeline().zoom(2.0);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(shell.factory().strip().asks(), asks + 1);
+    assert!(span(&shell) < before, "{} then {}", before, span(&shell));
+    // New rows (the data moved on): one more.
+    shell.engine().execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(shell.factory().strip().asks(), asks + 2);
+    std::fs::remove_dir_all(dir).ok();
+}
