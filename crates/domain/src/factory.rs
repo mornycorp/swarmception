@@ -13,7 +13,9 @@
 //! Each bench has its actor (the worker's name, model and effort, on shift, paused or off) and a
 //! helper's lamp (a `ready` check running, or just passed or failed). The gate has its
 //! inspectors (the coordinators on shift), the runs going on, and the runs before *t*, passed or
-//! failed with their cause (`rc=…; cause=…`). A merge whose gate left no `sub.start` counts as
+//! failed with their cause (`rc=…; cause=…`), or with no result: a gate that never logged its
+//! stop ended at its coordinator's session's end or the next gate's start (#42), *never
+//! finished*. A merge whose gate left no `sub.start` counts as
 //! a run of its own, at the merge. What happened in the `recent` seconds up to *t* is listed,
 //! newest first, so landings and failures are seen, not inferred. Nothing after *t* is told:
 //! a run going at *t* has no end yet, a crate's tooltip names only what had happened.
@@ -153,7 +155,7 @@ pub enum Outcome {
     Passed,
     /// A non-zero `rc`, or the run only sent tickets back.
     Failed,
-    /// It ended without saying.
+    /// No result: it ended without saying, or (a gate) never finished (#42).
     Unknown,
 }
 
@@ -253,6 +255,8 @@ pub struct Gate {
     pub recent: Vec<GateRun>,
     pub passed: usize,
     pub failed: usize,
+    /// Ended with no result: no `rc`, or never finished (#42).
+    pub no_result: usize,
 }
 
 /// A merge onto main by *t*: a block of the app.
@@ -900,9 +904,12 @@ const fn outcome_name(outcome: Outcome) -> &'static str {
         Outcome::Running => "running",
         Outcome::Passed => "passed",
         Outcome::Failed => "failed",
-        Outcome::Unknown => "ended",
+        Outcome::Unknown => "no result",
     }
 }
+
+/// A gate run's cause when it never logged its stop (#42).
+pub const NEVER_FINISHED: &str = "never finished";
 
 /// Every gate run begun by `t`, by start: the gate sub-agents, then a run for each gate the
 /// merges and send-backs name that logged no `sub.start` or `sub.stop`.
@@ -927,7 +934,11 @@ fn logged_run(sub: &Sub, t: Timestamp) -> GateRun {
     let outcome = if running { Outcome::Running } else { ended(sub.rc) };
     let end = (!running).then_some(sub.span.end);
     let notes = || sub.stop_note.iter().filter(|_| !running).chain(sub.start_note.iter());
-    let cause = sub.stop_note.as_deref().filter(|_| !running).and_then(|n| note_field(n, "cause"));
+    let unfinished = sub.unfinished.as_ref().filter(|_| !running);
+    let cause = match unfinished {
+        Some(_) => Some(NEVER_FINISHED.to_owned()),
+        None => sub.stop_note.as_deref().filter(|_| !running).and_then(|n| note_field(n, "cause")),
+    };
     let kind = notes().find_map(|n| note_field(n, "kind")).and_then(|k| k.split_whitespace().next().map(str::to_owned));
     let age = t.0.saturating_sub(end.unwrap_or(sub.span.start).0);
     let mut tooltip = vec![format!("gate run {}", sub.sub)];
@@ -937,7 +948,7 @@ fn logged_run(sub: &Sub, t: Timestamp) -> GateRun {
         Some(end) => format!("{}: {} → {end} ({})", outcome_name(outcome), sub.span.start, duration(end.0.saturating_sub(sub.span.start.0))),
     });
     if !running {
-        tooltip.extend(sub.stop_note.iter().cloned());
+        tooltip.extend(sub.stop_note.iter().chain(unfinished).cloned());
     }
     GateRun {
         sub: sub.sub.clone(),
@@ -988,8 +999,9 @@ fn gate(activity: &Activity, t: Timestamp, runs: &[GateRun], mut crates: Vec<Cra
     ended.sort_by_key(|r| std::cmp::Reverse((r.end, r.start)));
     let passed = ended.iter().filter(|r| r.outcome == Outcome::Passed).count();
     let failed = ended.iter().filter(|r| r.outcome == Outcome::Failed).count();
+    let no_result = ended.iter().filter(|r| r.outcome == Outcome::Unknown).count();
     crates.sort_by_key(|c| (c.since, c.issue));
-    Gate { inspectors, running, crates, recent: ended.into_iter().take(GATE_HISTORY).cloned().collect(), passed, failed }
+    Gate { inspectors, running, crates, recent: ended.into_iter().take(GATE_HISTORY).cloned().collect(), passed, failed, no_result }
 }
 
 fn shipping(merges: &[MainMerge], tickets: &[Ticket], runs: &[GateRun], t: Timestamp, done: (Vec<Crate>, usize)) -> Shipping {
@@ -1259,6 +1271,53 @@ pub(crate) mod tests {
         assert_eq!(bench(&scene, "worker-1").status, BenchStatus::SentBack);
         let texts: Vec<&str> = scene.happenings.iter().map(|h| h.text.as_str()).collect();
         assert_eq!(texts, ["#5 sent back: build: the API changed", "gate gate-9 failed: build"]);
+    }
+
+    /// A coordinator's gates that never logged their stops (#42): gate-1 until gate-2 began,
+    /// gate-3 until its session ended, gate-4 in a session still going with no gate after it.
+    const UNSTOPPED: &str = r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T01:00:00Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #9 (#5)","sub":"gate-1","t":"2026-10-31T01:10:00Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #9 (#5)","sub":"gate-2","t":"2026-10-31T01:20:00Z"}
+{"event":"sub.stop","note":"rc=0","sub":"gate-2","t":"2026-10-31T01:25:00Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #11 (#6)","sub":"gate-3","t":"2026-10-31T01:30:00Z"}
+{"event":"session.stop","t":"2026-10-31T01:40:00Z"}
+{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T02:00:00Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #13 (#7)","sub":"gate-4","t":"2026-10-31T02:10:00Z"}"#;
+
+    fn unstopped() -> Activity {
+        let worker = r#"{"event":"session.start","machine":"mini","name":"worker-1","role":"worker","t":"2026-10-31T01:00:00Z"}
+{"event":"claim","issue":8,"t":"2026-10-31T03:00:00Z"}"#;
+        Activity::of(&[parse_file("mini-c1", UNSTOPPED), parse_file("mini-w1", worker)])
+    }
+
+    #[test]
+    fn a_gate_that_never_logged_its_stop_ends_with_no_result() {
+        let activity = unstopped();
+        let at = |t: &str| scene(&activity, &[], self::at(t), DEFAULT_RECENT);
+        // While it goes, gate-1 runs.
+        assert_eq!(at("2026-10-31T01:15:00Z").gate.running.iter().map(|r| r.sub.as_str()).collect::<Vec<_>>(), ["gate-1"]);
+        let late = at("2026-10-31T03:00:00Z");
+        assert_eq!(late.gate.running.iter().map(|r| r.sub.as_str()).collect::<Vec<_>>(), ["gate-4"], "its session goes on, no gate after it");
+        let ended: Vec<(&str, Outcome, Option<Timestamp>, Option<&str>)> =
+            late.gate.recent.iter().map(|r| (r.sub.as_str(), r.outcome, r.end, r.cause.as_deref())).collect();
+        assert_eq!(
+            ended,
+            [
+                ("gate-3", Outcome::Unknown, Some(self::at("2026-10-31T01:40:00Z")), Some(NEVER_FINISHED)),
+                ("gate-2", Outcome::Passed, Some(self::at("2026-10-31T01:25:00Z")), None),
+                ("gate-1", Outcome::Unknown, Some(self::at("2026-10-31T01:20:00Z")), Some(NEVER_FINISHED)),
+            ],
+            "gate-1 ends where gate-2 began, gate-3 where its session ended (before gate-4 began)"
+        );
+        assert_eq!((late.gate.passed, late.gate.failed, late.gate.no_result), (1, 0, 2));
+        let gate_1 = &late.gate.recent[2].tooltip;
+        assert!(gate_1.iter().any(|l| l.starts_with("no result: 2026-10-31T01:10:00Z → 2026-10-31T01:20:00Z")), "{gate_1:?}");
+        assert!(gate_1.iter().any(|l| l == "never finished: gate-2 started 2026-10-31T01:20:00Z"), "{gate_1:?}");
+        assert!(late.gate.recent[0].tooltip.iter().any(|l| l == "never finished: coordinator's session ended 2026-10-31T01:40:00Z"));
+        assert!(late.happenings.iter().all(|h| !h.text.contains("gate-3")), "no result is no pass and no fail");
+        // stats.get's counts: gate-2 passed; gate-1 and gate-3 never finished, gate-4 still runs.
+        let stats = crate::stats::stats(&activity, &tickets(&activity), &[], crate::stats::Window::default());
+        assert_eq!((stats.gates.runs, stats.gates.passed, stats.gates.failed, stats.gates.no_result, stats.gates.pass_rate), (4, 1, 0, 3, Some(1.0)));
     }
 
     #[test]

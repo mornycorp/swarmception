@@ -1,7 +1,8 @@
 //! The factory's tooltips in colour (#31, the owner's review): the scene's lines as they are,
-//! each phrase that names a phase in that phase's colour (claimed yellow, working orange, waiting
-//! for merge blue, in the gate cyan, sent back red, stopped grey, merged green), what passed green
-//! and what failed red, durations emphasised and clock times quiet. The first line, what the
+//! each phrase that names a phase in that phase's colour (claimed yellow, working warm white,
+//! waiting for merge blue, in the gate magenta, sent back red, stopped grey, merged green), what
+//! passed green, what failed red and what has no result grey (a gate run that never finished,
+//! #42), durations emphasised and clock times quiet. The first line, what the
 //! tooltip is of, is strong. The words are the scene's: only how they are drawn is decided here.
 
 use egui::text::{LayoutJob, TextFormat};
@@ -27,6 +28,8 @@ const PHRASES: &[(&str, Color32)] = &[
     ("waiting for merge", WAITING),
     ("done without a merge", STOPPED),
     ("no stop logged", SENT_BACK),
+    ("never finished", STOPPED),
+    ("no result", STOPPED),
     ("in the gate", GATING),
     ("on the shelf", STOPPED),
     ("off shift", STOPPED),
@@ -210,6 +213,12 @@ mod tests {
         assert_eq!(coloured("failed 3m ago: cause=clippy"), [("failed", Tone::Colour(SENT_BACK)), ("3m", Tone::Duration)]);
         assert_eq!(coloured("passed: rc=0"), [("passed", Tone::Colour(PASSED)), ("rc=0", Tone::Colour(PASSED))]);
         assert_eq!(coloured("#58 sent back: flaky"), [("sent back", Tone::Colour(SENT_BACK))]);
+        assert_eq!(
+            coloured("never finished: gate-166b started 2026-10-31T03:04:34Z"),
+            [("never finished", Tone::Colour(STOPPED)), ("2026-10-31T03:04:34Z", Tone::Time)],
+            "#42: no result is grey, neither passed nor failed"
+        );
+        assert_eq!(coloured("no result: 1h05")[0], ("no result", Tone::Colour(STOPPED)));
         // Whole words only: `worker:` is no phase, `unmerged` no merge.
         assert!(coloured("worker: worker-1 unmerged").is_empty());
     }

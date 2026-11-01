@@ -2,7 +2,8 @@
 //! station. Its **fill** is always its ticket's own colour (the domain's `ticket_colour`, from its
 //! id, as on the timeline); its **border** is its phase, the same colours everywhere: the
 //! timeline's from the domain's `colours` (claimed yellow, waiting blue, sent back red, stopped
-//! grey), and the factory's own two (working orange, in the gate cyan). Up next, not started, it is a hollow
+//! grey), and the factory's own two (working a warm white, in the gate magenta: #42, away from
+//! every ticket's colour and every phase's). Up next, not started, it is a hollow
 //! outline in its colour; merged, a plain brick with no border. Only its size changes, with how
 //! much it says: [`Size::Large`] at a bench, [`Size::Medium`] in the queues, [`Size::Small`] on the
 //! shelf and in main's wall.
@@ -22,13 +23,16 @@ pub const SENT_BACK: Color32 = rgb(colours::SENT_BACK);
 pub const STOPPED: Color32 = rgb(colours::STOPPED);
 /// Main's green: a merge onto it, a gate passed.
 pub const PASSED: Color32 = rgb(colours::MAIN_MERGE);
-/// The factory's own: a working border (its fill is the ticket's colour), a run going on. A soft
-/// orange (hue 24°, saturation 0.5, value 0.95), as soft as the domain's pastels (#34) and clear
-/// of claimed's yellow and sent back's red.
-pub const WORKING: Color32 = Color32::from_rgb(0xf2, 0xa9, 0x79);
-/// The factory's own: in a gate run. A soft cyan (hue 188°, saturation 0.45, value 0.92), clear of
-/// waiting's blue.
-pub const GATING: Color32 = Color32::from_rgb(0x81, 0xdd, 0xeb);
+/// The factory's own: a working border (its fill is the ticket's colour), a run going on. A warm
+/// white, lit: lighter than every ticket's colour and every phase's, and 0.15 or more from each
+/// in OKLab (#42: the soft orange before it was all but scheme B's sand, 0.04 away).
+pub const WORKING: Color32 = rgb(WORKING_RGB);
+const WORKING_RGB: [u8; 3] = [0xff, 0xf3, 0xd6];
+/// The factory's own: in a gate run. A magenta, more vivid than the palette's muted purple and
+/// pink, and 0.15 or more from every ticket's and phase's colour in OKLab (#42: the soft cyan
+/// before it was 0.06 from scheme B's sky).
+pub const GATING: Color32 = rgb(GATING_RGB);
+const GATING_RGB: [u8; 3] = [0xe0, 0x40, 0xfb];
 
 const GLIDE: f64 = 0.7;
 /// A brick's key in [`Motion`], beside its ticket's chip's.
@@ -219,6 +223,25 @@ impl Motion {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// How far, in OKLab, the factory's own borders keep from every ticket's colour, every
+    /// phase's and each other: well past the palette's own spacing (`colours::DISTANCE`), so a
+    /// border never reads as a fill.
+    const BORDER_DISTANCE: f64 = 0.15;
+
+    #[test]
+    fn the_factorys_own_borders_stand_apart_from_every_ticket_and_phase_colour() {
+        let fixed = [colours::CLAIMED, colours::WAITING, colours::SENT_BACK, colours::STOPPED, colours::MAIN_MERGE, colours::NO_TICKET];
+        for own in [WORKING_RGB, GATING_RGB] {
+            for other in colours::PALETTE.iter().chain(&fixed) {
+                let d = colours::distance(own, *other);
+                assert!(d >= BORDER_DISTANCE, "{own:02x?} is {d:.3} from {other:02x?}");
+            }
+            assert!(colours::contrast(own, [0x1b, 0x1b, 0x1b]) >= 4.5, "{own:02x?} reads on the dark floor");
+        }
+        assert!(colours::distance(WORKING_RGB, GATING_RGB) >= BORDER_DISTANCE);
+        assert_eq!((rgb(WORKING_RGB), rgb(GATING_RGB)), (WORKING, GATING));
+    }
 
     #[test]
     fn the_fill_is_the_tickets_and_only_the_border_says_the_phase() {
