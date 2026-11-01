@@ -60,3 +60,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #36","sub":"gate-36","t":"2026-11-01T11:19:52Z"}
 {"event":"session.stop","note":"worker-13's PR merged","of":"christohersmini-8dd23d","t":"2026-11-01T11:20:04Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #37 (#31); capacity=2 free=11.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-37","t":"2026-11-01T11:27:49Z"}
+{"event":"merge","issue":31,"mr":37,"sub":"gate-37","t":"2026-11-01T11:28:35Z"}
