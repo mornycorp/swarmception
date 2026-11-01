@@ -2,7 +2,8 @@
 //! right. Every ticket is a crate in its own colour, and at *t* it is in one place:
 //!
 //! - **up next**: its first event comes after *t* (the next few, with how long until);
-//! - **the shelf**: it was worked on, but nobody holds it now (released, or left stopped);
+//! - **the shelf**: it was worked on, but nobody holds it now (released, left stopped, or
+//!   abandoned: its holder's session ended, its note says when);
 //! - **a bench**: claimed, worked on, sent back or stopped, at the bench of the worker that
 //!   holds it (the last to claim, work on or submit it by *t*);
 //! - **the dock**: submitted, waiting for the merge, in the order they came;
@@ -28,7 +29,7 @@ use swarmception_model::{Issues, Kind, MainMerge, Role, Timestamp};
 use crate::activity::{Activity, Agent, IssueEvent, Span, Sub, stop_reason};
 use crate::colours::{NO_TICKET, Rgb, ticket_colour};
 use crate::rows::duration;
-use crate::tickets::{Phase, Stretch, Ticket, tickets};
+use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 
 /// The seconds before *t* whose events count as just happened, unless asked otherwise.
 pub const DEFAULT_RECENT: i64 = 600;
@@ -609,8 +610,10 @@ fn place(ticket: &Ticket, t: Timestamp) -> (CrateState, Timestamp, Option<String
     if let Some(done) = ticket.done.as_ref().filter(|d| d.t <= t) {
         return (CrateState::Done, done.t, done.note.clone());
     }
-    let since = ticket.stretches.iter().map(|s| s.end).filter(|end| *end <= t).max().unwrap_or(ticket.first);
-    (CrateState::Shelved, since, None)
+    // Off the bench: released, or abandoned when its holder's session ended (#28).
+    let last = ticket.stretches.iter().filter(|s| s.end <= t).max_by_key(|s| s.end);
+    let note = last.and_then(|s| s.abandoned.as_ref()).map(Abandoned::text);
+    (CrateState::Shelved, last.map_or(ticket.first, |s| s.end), note)
 }
 
 fn crate_at(ticket: &Ticket, t: Timestamp, worker: Option<String>) -> Crate {
@@ -1189,6 +1192,25 @@ mod tests {
         assert_eq!(scene.shipping.done.iter().map(|c| (c.issue, c.note.as_deref())).collect::<Vec<_>>(), [(58, Some("review filed as #66-#73"))]);
         assert_eq!((scene.counts.shelved, scene.counts.done, scene.shipping.done_count), (1, 1, 1));
         assert_eq!(bench(&scene, "worker-1").status, BenchStatus::Idle);
+    }
+
+    #[test]
+    fn an_abandoned_ticket_leaves_the_bench_for_the_shelf_when_its_holders_session_ends() {
+        let activity = Activity::of(&crate::tickets::tests::abandoned());
+        let during = scene(&activity, &[], at("2026-10-31T01:09:00Z"), DEFAULT_RECENT);
+        assert_eq!(bench(&during, "worker-1").crates.iter().map(|c| (c.issue, c.state)).collect::<Vec<_>>(), [(40, CrateState::Working)]);
+        let after = scene(&activity, &[], at("2026-10-31T01:15:00Z"), DEFAULT_RECENT);
+        assert!(bench(&after, "worker-1").crates.is_empty());
+        assert_eq!(bench(&after, "worker-1").status, BenchStatus::Off);
+        let shelved = after.shelf.iter().find(|c| c.issue == 40).unwrap();
+        assert_eq!((shelved.since, shelved.note.as_deref()), (at("2026-10-31T01:10:00Z"), Some("abandoned: m-1's session ended 2026-10-31T01:10:00Z")));
+        assert!(shelved.tooltip.iter().any(|l| l.starts_with("abandoned: m-1")), "{:?}", shelved.tooltip);
+        // Worker-2 logged no stop: still on shift, #41 still at its bench, hours on.
+        let late = scene(&activity, &[], at("2026-10-31T03:30:00Z"), DEFAULT_RECENT);
+        assert_eq!(bench(&late, "worker-2").crates.iter().map(|c| (c.issue, c.state)).collect::<Vec<_>>(), [(41, CrateState::Working)]);
+        // Worker-3 took #40 up: at its bench, then at the dock.
+        let taken = scene(&activity, &[], at("2026-10-31T02:10:00Z"), DEFAULT_RECENT);
+        assert_eq!(bench(&taken, "worker-3").crates.iter().map(|c| (c.issue, c.note.clone())).collect::<Vec<_>>(), [(40, None)]);
     }
 
     #[test]

@@ -19,7 +19,7 @@ use swarmception_model::{Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
 use crate::colours::{Rgb, style_colour};
-use crate::tickets::{Phase, Stretch, Ticket, tickets};
+use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 
 /// How the ticket rows are grouped.
@@ -333,6 +333,7 @@ fn stretch_bar(ticket: &Ticket, stretch: &Stretch, text: Text<'_>) -> Bar {
     let mut tooltip = ticket_lines(ticket, text.issues);
     tooltip.extend([span, format!("by {}", stretch.by)]);
     tooltip.extend(stretch.note.iter().cloned());
+    tooltip.extend(stretch.abandoned.as_ref().map(Abandoned::text));
     tooltip.push(String::new());
     tooltip.extend(milestones(ticket));
     let titled = text.titles.then(|| titles::label(text.issues, ticket.issue)).flatten();
@@ -467,6 +468,26 @@ mod tests {
         assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
         assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
         assert!(bars[1].tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bars[1].tooltip);
+    }
+
+    #[test]
+    fn an_abandoned_bar_ends_at_its_holders_session_and_says_so() {
+        let activity = Activity::of(&crate::tickets::tests::abandoned());
+        let rows = rows(&activity, &[], RowsSpec::default());
+        let bars: Vec<&Bar> = rows
+            .iter()
+            .flat_map(|n| n.leaves())
+            .flat_map(|n| match n {
+                Node::Ranges { bars, .. } => bars.iter().collect::<Vec<_>>(),
+                Node::Group { .. } => Vec::new(),
+            })
+            .filter(|b| b.ticket == Some(40) && b.style == Style::Working)
+            .collect();
+        assert_eq!(bars.len(), 2, "worker-1's, abandoned, and worker-3's");
+        assert!(!bars[0].open);
+        assert_eq!(bars[0].tooltip[1], "working: 2026-10-31T01:00:15Z → 2026-10-31T01:10:00Z (9 min 45 s)");
+        assert_eq!(bars[0].tooltip[3], "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
+        assert!(!bars[1].tooltip.iter().any(|l| l.starts_with("abandoned")), "{:?}", bars[1].tooltip);
     }
 
     #[test]
