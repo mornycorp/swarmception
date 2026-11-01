@@ -1,12 +1,15 @@
 //! The rows the timeline shows (the owner's directions): what happened to tickets. At the top,
-//! every merge onto `main` (its merge commits), then every ticket's merge, then the tickets'
-//! stretches (claimed, working, waiting for merge, sent back, stopped), packed onto shared rows:
+//! every merge onto `main` (its merge commits), then every ticket's merge, each a span of
+//! [`MERGE_SECONDS`] from its time (#15), all on one row (the widget stacks the rare two that
+//! overlap); then the tickets' stretches (claimed, working, waiting for merge, sent back,
+//! stopped), packed onto shared rows:
 //! taken in the order they began, each ticket goes on the first row it doesn't overlap, so
 //! tickets that didn't run at once share a row. They are packed all together (flat), or within
 //! each worker that held them last (machine / worker / its rows), never across workers;
-//! collapsed, rows with nothing in them are left out. Each row's bars and pins carry their label
-//! (a bar names its ticket), their style and their tooltip lines: what the timeline draws is
-//! what this answers.
+//! collapsed, rows with nothing in them are left out. Each bar carries its label (it names its
+//! ticket), its ticket, its style, its colour ([`crate::colours`]: a ticket's working and its merge
+//! in its own colour, the rest fixed) and its tooltip lines: what the timeline draws is what this
+//! answers.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{MainMerge, Timestamp};
 
 use crate::activity::Activity;
+use crate::colours::{Rgb, style_colour};
 use crate::tickets::{Phase, Stretch, Ticket, tickets};
 
 /// How the ticket rows are grouped.
@@ -37,7 +41,7 @@ pub struct RowsSpec {
     pub collapse: bool,
 }
 
-/// How a bar or pin is drawn: the host picks its colour by this.
+/// What a bar shows; its colour follows from this and its ticket ([`style_colour`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Style {
@@ -70,53 +74,52 @@ pub struct Bar {
     pub start: Timestamp,
     pub end: Timestamp,
     pub label: String,
+    /// The ticket it is (a stretch of it, or its merge); none for a merge onto main.
+    pub ticket: Option<u64>,
     pub style: Style,
+    /// What it is drawn in: [`style_colour`] of its style and ticket.
+    pub colour: Rgb,
     /// Nothing ended it: it runs to the last event.
     pub open: bool,
     pub tooltip: Vec<String>,
 }
 
-/// An instant on an Instants row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct Pin {
-    pub at: Timestamp,
-    pub label: String,
-    pub style: Style,
-    pub tooltip: Vec<String>,
+impl Bar {
+    fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, tooltip: Vec<String>) -> Self {
+        Self { start, end, label, ticket, style, colour: style_colour(style, ticket), open: false, tooltip }
+    }
 }
 
-/// A row of the tree: a group, or a leaf of bars or pins. Keys are unique and stable across
-/// loads of the same swarm, so a row's state (collapsed, pinned) survives a reload.
+/// A row of the tree: a group, or a leaf of bars. Keys are unique and stable across loads of the
+/// same swarm, so a row's state (collapsed, pinned) survives a reload.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Node {
     Group { key: String, name: String, children: Vec<Node> },
     Ranges { key: String, name: String, bars: Vec<Bar> },
-    Instants { key: String, name: String, pins: Vec<Pin> },
 }
 
 impl Node {
     #[must_use]
     pub fn key(&self) -> &str {
         match self {
-            Self::Group { key, .. } | Self::Ranges { key, .. } | Self::Instants { key, .. } => key,
+            Self::Group { key, .. } | Self::Ranges { key, .. } => key,
         }
     }
 
     #[must_use]
     pub fn name(&self) -> &str {
         match self {
-            Self::Group { name, .. } | Self::Ranges { name, .. } | Self::Instants { name, .. } => name,
+            Self::Group { name, .. } | Self::Ranges { name, .. } => name,
         }
     }
 
-    /// Whether it holds nothing to draw: a leaf with no bars or pins, a group whose rows all are.
+    /// Whether it holds nothing to draw: a leaf with no bars, a group whose rows all are.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         match self {
             Self::Group { children, .. } => children.iter().all(Self::is_empty),
             Self::Ranges { bars, .. } => bars.is_empty(),
-            Self::Instants { pins, .. } => pins.is_empty(),
         }
     }
 
@@ -135,14 +138,16 @@ pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";
 /// The flat view's packed rows are keyed `tickets/1`, `tickets/2`, …
 pub const TICKETS_KEY: &str = "tickets";
+/// How long a merge's span on the top rows lasts, from its time.
+pub const MERGE_SECONDS: i64 = 10;
 
 /// The rows of `activity` and the merges onto main, as `spec` asks.
 #[must_use]
 pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<Node> {
     let tickets = tickets(activity);
     let mut rows = vec![
-        Node::Instants { key: MAIN_KEY.into(), name: "Merges to main".into(), pins: merges.iter().map(|m| main_pin(m, &tickets)).collect() },
-        Node::Instants { key: MERGED_KEY.into(), name: "Tickets merged".into(), pins: merged_pins(&tickets) },
+        Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets) },
+        Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets) },
     ];
     match spec.grouping {
         Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY)),
@@ -290,11 +295,17 @@ fn stretch_bar(ticket: &Ticket, stretch: &Stretch) -> Bar {
     tooltip.extend(stretch.note.iter().cloned());
     tooltip.push(String::new());
     tooltip.extend(milestones(ticket));
-    Bar { start: stretch.start, end: stretch.end, label: format!("#{} {phase}", ticket.issue), style: stretch.phase.into(), open: stretch.open, tooltip }
+    let label = format!("#{} {phase}", ticket.issue);
+    Bar { open: stretch.open, ..Bar::new(stretch.start, stretch.end, label, Some(ticket.issue), stretch.phase.into(), tooltip) }
 }
 
-fn merged_pins(tickets: &[Ticket]) -> Vec<Pin> {
-    let mut pins: Vec<Pin> = tickets
+/// A merge's span on the top rows: [`MERGE_SECONDS`] from `at`.
+fn merge_end(at: Timestamp) -> Timestamp {
+    Timestamp(at.0.saturating_add(MERGE_SECONDS))
+}
+
+fn merged_bars(tickets: &[Ticket]) -> Vec<Bar> {
+    let mut bars: Vec<Bar> = tickets
         .iter()
         .filter_map(|ticket| {
             let merged = ticket.merged.as_ref()?;
@@ -303,14 +314,20 @@ fn merged_pins(tickets: &[Ticket]) -> Vec<Pin> {
             tooltip.push(by);
             tooltip.push(String::new());
             tooltip.extend(milestones(ticket));
-            Some(Pin { at: merged.t, label: format!("#{}", ticket.issue), style: Style::Merged, tooltip })
+            Some(Bar::new(merged.t, merge_end(merged.t), format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip))
         })
         .collect();
-    pins.sort_by_key(|p| p.at);
-    pins
+    bars.sort_by_key(|b| (b.start, b.ticket));
+    bars
 }
 
-fn main_pin(merge: &MainMerge, tickets: &[Ticket]) -> Pin {
+fn main_bars(merges: &[MainMerge], tickets: &[Ticket]) -> Vec<Bar> {
+    let mut bars: Vec<Bar> = merges.iter().map(|m| main_bar(m, tickets)).collect();
+    bars.sort_by_key(|b| b.start);
+    bars
+}
+
+fn main_bar(merge: &MainMerge, tickets: &[Ticket]) -> Bar {
     let short = merge.commit.get(..8).unwrap_or(&merge.commit);
     let label = merge.pr.map_or_else(|| short.to_owned(), |pr| format!("PR #{pr}"));
     let mut tooltip = vec![merge.subject.clone(), format!("{short} · {}", merge.t)];
@@ -318,7 +335,7 @@ fn main_pin(merge: &MainMerge, tickets: &[Ticket]) -> Pin {
         let closed: Vec<String> = tickets.iter().filter(|t| t.merged.as_ref().is_some_and(|m| m.pr == Some(pr))).map(|t| format!("#{}", t.issue)).collect();
         tooltip.push(if closed.is_empty() { "no ticket's merge names it".to_owned() } else { format!("merged {}", closed.join(", ")) });
     }
-    Pin { at: merge.t, label, style: Style::MainMerge, tooltip }
+    Bar::new(merge.t, merge_end(merge.t), label, None, Style::MainMerge, tooltip)
 }
 
 #[cfg(test)]
@@ -356,13 +373,31 @@ mod tests {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
         assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "Tickets 1", "Tickets 2"], "#168 runs on past #170, so they can't share");
-        let Node::Instants { pins, .. } = &rows[0] else { panic!() };
-        assert_eq!(pins.iter().map(|p| p.label.as_str()).collect::<Vec<_>>(), ["PR #173", "PR #174"]);
-        assert_eq!(pins[0].tooltip[2], "merged #170");
-        assert_eq!(pins[1].tooltip[2], "no ticket's merge names it");
-        let Node::Instants { pins, .. } = &rows[1] else { panic!() };
-        assert_eq!(pins.iter().map(|p| (p.label.as_str(), p.at.to_string())).collect::<Vec<_>>(), [("#170", "2026-10-31T04:28:58Z".to_owned())]);
-        assert!(pins[0].tooltip.contains(&"claim to merge: 35 min 36 s".to_owned()), "{:?}", pins[0].tooltip);
+        let Node::Ranges { bars, .. } = &rows[0] else { panic!() };
+        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["PR #173", "PR #174"]);
+        assert_eq!(bars[0].tooltip[2], "merged #170");
+        assert_eq!(bars[1].tooltip[2], "no ticket's merge names it");
+        let Node::Ranges { bars, .. } = &rows[1] else { panic!() };
+        assert_eq!(bars.iter().map(|b| (b.label.as_str(), b.start.to_string())).collect::<Vec<_>>(), [("#170", "2026-10-31T04:28:58Z".to_owned())]);
+        assert!(bars[0].tooltip.contains(&"claim to merge: 35 min 36 s".to_owned()), "{:?}", bars[0].tooltip);
+    }
+
+    #[test]
+    fn the_top_rows_are_ten_second_spans_main_green_a_tickets_merge_its_own_colour() {
+        use crate::colours::{MAIN_MERGE, ticket_colour};
+        let activity = Activity::of(&sample());
+        let rows = rows(&activity, &merges(), RowsSpec::default());
+        let (Node::Ranges { bars: main, .. }, Node::Ranges { bars: merged, .. }) = (&rows[0], &rows[1]) else { panic!() };
+        assert_eq!(MERGE_SECONDS, 10);
+        for bar in main.iter().chain(merged) {
+            assert_eq!(bar.end.0 - bar.start.0, MERGE_SECONDS, "{}", bar.label);
+            assert!(!bar.open);
+        }
+        assert_eq!(
+            main.iter().map(|b| (b.start.0, b.ticket, b.style, b.colour)).collect::<Vec<_>>(),
+            [(1_793_420_113, None, Style::MainMerge, MAIN_MERGE), (1_793_420_255, None, Style::MainMerge, MAIN_MERGE)]
+        );
+        assert_eq!(merged.iter().map(|b| (b.ticket, b.style, b.colour)).collect::<Vec<_>>(), [(Some(170), Style::Merged, ticket_colour(170))]);
     }
 
     #[test]
@@ -372,6 +407,9 @@ mod tests {
         let Node::Ranges { bars, key, .. } = &rows[3] else { panic!() };
         assert_eq!(key, "tickets/2");
         assert_eq!(bars.iter().map(|b| b.style).collect::<Vec<_>>(), [Style::Claimed, Style::Working, Style::Waiting]);
+        assert!(bars.iter().all(|b| b.ticket == Some(170)), "each bar says which ticket it is");
+        let colours: Vec<_> = bars.iter().map(|b| b.colour).collect();
+        assert_eq!(colours, [crate::colours::CLAIMED, crate::colours::ticket_colour(170), crate::colours::WAITING], "only working is the ticket's own");
         assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 claimed", "#170 working", "#170 waiting for merge"]);
         assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
         assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
@@ -428,8 +466,8 @@ mod tests {
             .iter()
             .flat_map(Node::leaves)
             .filter_map(|leaf| match leaf {
-                Node::Ranges { key, bars, .. } => {
-                    let mut issues: Vec<u64> = bars.iter().filter_map(|b| b.label.strip_prefix('#')?.split(' ').next()?.parse().ok()).collect();
+                Node::Ranges { key, bars, .. } if key != MAIN_KEY && key != MERGED_KEY => {
+                    let mut issues: Vec<u64> = bars.iter().filter_map(|b| b.ticket).collect();
                     issues.dedup();
                     Some((key.clone(), issues))
                 }
@@ -442,6 +480,9 @@ mod tests {
     fn assert_no_overlap(nodes: &[Node]) {
         for leaf in nodes.iter().flat_map(Node::leaves) {
             let Node::Ranges { key, bars, .. } = leaf else { continue };
+            if key == MAIN_KEY || key == MERGED_KEY {
+                continue;
+            }
             let mut spans: Vec<(String, Timestamp, Timestamp)> = Vec::new();
             for bar in bars {
                 let issue = bar.label.split(' ').next().unwrap_or_default().to_owned();

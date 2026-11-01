@@ -184,12 +184,12 @@ fn the_factory_at_a_moment_and_the_timeline_place_of_a_time() {
     let at: swarmception_engine::rows_cmds::TimeAtResult = call(&mut session, "timeline.timeAt", &format!("{{\"position\":{}}}", place.position));
     assert_eq!(at.text, "2026-10-31T03:01:30Z", "the other way round");
     assert_eq!(place.item, Some(0), "in 03:01's item, the first");
-    // #7's journey, and its bars on the timeline: claimed, then waiting for merge.
+    // #7's journey, and its bars on the timeline: its merge, then claimed and waiting for merge.
     let traced: FactoryScene = call(&mut session, "factory.at", r#"{"ticket":7}"#);
     assert_eq!(traced.journey.map(|j| j.text).as_deref(), Some("bench 29m → dock 10m → gate 5m → main"));
     let bars: swarmception_engine::factory_cmds::TicketBarsResult = call(&mut session, "timeline.ticketBars", r#"{"issue":7}"#);
     let bars: Vec<(String, usize)> = bars.bars.into_iter().map(|b| (b.track, b.range)).collect();
-    assert_eq!(bars, [("tickets/1".to_owned(), 0), ("tickets/1".to_owned(), 1)]);
+    assert_eq!(bars, [("merged".to_owned(), 0), ("tickets/1".to_owned(), 0), ("tickets/1".to_owned(), 1)]);
     let none: swarmception_engine::factory_cmds::TicketBarsResult = call(&mut session, "timeline.ticketBars", r#"{"issue":70}"#);
     assert!(none.bars.is_empty(), "#70 is not #7");
     let before: PlaceAtResult = call(&mut session, "timeline.placeAt", r#"{"time":0}"#);

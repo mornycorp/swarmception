@@ -111,8 +111,9 @@ pub struct TicketBarsResult {
     pub bars: Vec<BarRef>,
 }
 
-/// `timeline.ticketBars`: where a ticket's bars are in the rows the timeline shows (each bar's
-/// label starts `#<issue> `), for a front end to select or highlight them.
+/// `timeline.ticketBars`: where a ticket's bars are in the rows the timeline shows (its
+/// stretches and its merge: the bars whose `ticket` it is), for a front end to select or
+/// highlight them.
 pub struct TicketBars;
 
 impl Command for TicketBars {
@@ -123,7 +124,6 @@ impl Command for TicketBars {
     type Result = TicketBarsResult;
 
     fn run(session: &mut Session, params: TicketParams) -> Result<TicketBarsResult, EngineError> {
-        let prefix = format!("#{} ", params.issue);
         let bars = session
             .rows
             .iter()
@@ -133,7 +133,7 @@ impl Command for TicketBars {
                 _ => None,
             })
             .flat_map(|(key, bars)| {
-                bars.iter().enumerate().filter(|(_, bar)| bar.label.starts_with(&prefix)).map(|(range, _)| BarRef { track: key.clone(), range })
+                bars.iter().enumerate().filter(|(_, bar)| bar.ticket == Some(params.issue)).map(|(range, _)| BarRef { track: key.clone(), range })
             })
             .collect();
         Ok(TicketBarsResult { bars })

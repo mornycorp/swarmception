@@ -1,6 +1,7 @@
 //! What Swarmception computes over the tracking events (docs/architecture.md › Layers, L1): each
 //! agent instance's sessions, pauses, work on issues, sub-agents and marks ([`activity`]); each
-//! ticket's life, from claim to merge ([`tickets`]); the rows the timeline shows, the merges onto
+//! ticket's life, from claim to merge ([`tickets`]); the colours of tickets and phases, one source
+//! for the timeline and the factory ([`colours`]); the rows the timeline shows, the merges onto
 //! main and the tickets, flat or by worker ([`rows`]); the timeline widget's host data built
 //! from those rows ([`timeline`]); the swarm's statistics over a window, tickets landed per
 //! active hour first ([`stats`]); and the swarm at one moment as a factory building the app
@@ -11,6 +12,7 @@
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
 pub mod activity;
+pub mod colours;
 pub mod factory;
 pub mod rows;
 pub mod stats;
