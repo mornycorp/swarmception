@@ -36,3 +36,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #23","sub":"gate-23","t":"2026-11-01T09:13:35Z"}
 {"event":"release","issue":15,"note":"worker-5 was stopped at 07:57 after its claim; nothing committed","of":"christohersmini-f3c142","reason":"stale","t":"2026-11-01T09:14:22Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #25 (#15); capacity=3 free=10.4; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-25","t":"2026-11-01T09:27:28Z"}
+{"event":"merge","issue":15,"mr":25,"sub":"gate-25","t":"2026-11-01T09:27:45Z"}
