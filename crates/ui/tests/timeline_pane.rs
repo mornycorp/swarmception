@@ -102,6 +102,7 @@ fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_comma
     assert_eq!(bar.show, wanted, "the toolbar draws only these");
     assert_eq!(bar.navigate.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Fit", "Zoom to Selection", "Undo Zoom"]);
     assert_eq!(bar.zoom.iter().map(|b| b.control).collect::<Vec<_>>(), [C::ZoomIn, C::ZoomOut, C::ZoomFit], "the zoom buttons are the widget's");
+    assert!(bar.zoom.iter().all(|b| b.item.enabled), "{:?}", bar.zoom);
 
     // Something moves them (the keyboard, a ruler's menu); the next load fixes them again and
     // the spec holds.

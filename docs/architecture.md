@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (main's wall: each brick as wide as its ticket took, its phases along it, its sendbacks marked) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the timeline's toolbar trimmed to what Swarmception needs, its view fixed by command; the bars' tooltips in colour) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -46,7 +46,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   by worker, collapsed), under two rows at the top, the merges onto `main` and the tickets'
   merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
   `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
-  its colour and its tooltip. `colours` is the one source of colours, the timeline's and the
+  its colour and its tooltip, as plain text (`tooltip`) and as styled lines (`tooltip_lines`,
+  #35: `tooltip::TipLine`, runs of text each in a colour from `colours` or none, strong or not:
+  the phase names in their colours, merged green, sent back, its cause and abandoned red,
+  durations and the title strong). `colours` is the one source of colours, the timeline's and the
   factory's (#15): a ticket's own colour from its issue number (its entry in a fixed, curated palette of
   eleven muted colours, the owner's scheme B (#40): consecutive ids never share one, none is
   near a phase's hue, dark labels legible on every one), in which its *working* bars and
@@ -99,8 +102,14 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
   their marks following `Shell::menu_state`; the toolbar (Font Awesome 5's solid face,
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
-  (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the scale and
-  window, and drives the widget through its own commands (`view.fit`, `view.zoom`, `state.set`).
+  (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the window,
+  and drives the widget through its own commands (`view.fit`, `state.set`). On every load it fixes
+  what the owner fixed (#35) by command: the `Time` scale and the absolute origin (`state.set`),
+  the minimap always (`view.minimap`), a click selecting the nearest bar (`view.clickMode`); the
+  widget's toolbar shows only `TIMELINE_TOOLBAR` (`toolbar.set`: Fit, Zoom to Selection, Undo
+  Zoom, its zoom in / out / fit buttons, the measurement), and the app's own toolbar has no zoom
+  buttons. The bars' tooltips reach the widget in colour (`timeline::tooltip_line`, the host
+  data's `range_tooltip_lines`).
   The factory's header carries a statistics strip: what `stats.get` returns for the timeline's
   visible window (landed per active hour, its hourly sparkline with *t*'s hour marked, and the
   compact figures, each tooltip saying how it is computed), asked again only when the window or
@@ -224,6 +233,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The timeline's toolbar shows only what Swarmception needs; the scale, origin, minimap and click fixed by command; the bars' tooltips in colour from the domain (#35) |
 | 2026-11-01 | minor | Tickets' colours from a fixed, curated palette (scheme B, #40), the phase colours retuned to sit with it |
 | 2026-11-01 | minor | Main's wall (#32): bricks sized by claim → merge, their phases along them, sendbacks marked; the blocks carry `took`, `segments`, `sent_back` |
 | 2026-11-01 | minor | The factory's layout (#31): no ticker, the key along the bottom, short bench strips, the gate as its list of runs, coloured tooltips, the sparkline's hours clickable; the factory's own colours softened |
