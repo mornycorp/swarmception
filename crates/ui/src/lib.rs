@@ -110,6 +110,11 @@ impl Shell {
         &mut self.engine
     }
 
+    /// The timeline pane, to read the widget's state.
+    pub const fn timeline(&mut self) -> &mut TimelinePane {
+        &mut self.timeline
+    }
+
     /// Whether a read is still going.
     #[must_use]
     pub const fn loading(&self) -> bool {
