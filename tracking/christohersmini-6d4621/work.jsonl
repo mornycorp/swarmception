@@ -14,3 +14,4 @@
 {"event":"submit","issue":18,"mr":19,"t":"2026-11-01T09:06:47Z"}
 {"event":"stop","issue":18,"note":"PR #19 merged (48d08b3)","reason":"done","t":"2026-11-01T09:08:17Z"}
 {"event":"claim","issue":22,"mr":23,"t":"2026-11-01T09:08:37Z"}
+{"event":"work","issue":22,"t":"2026-11-01T09:08:40Z"}
