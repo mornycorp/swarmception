@@ -2,7 +2,8 @@
 //! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the
 //! timeline, and under it the factory) and the status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
-//! timeline widget's (`view.fit`, `view.zoom`); what the shell keeps of its own, the panes shown
+//! timeline widget's (`view.fit`; the zoom buttons are the widget's toolbar's since #35, which
+//! shows only [`TIMELINE_TOOLBAR`]); what the shell keeps of its own, the panes shown
 //! and the factory's time, is [`UiState`], plain serde data.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -38,7 +39,7 @@ pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::{Looking, Selection, TimelinePane};
+pub use timeline::{Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane};
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time.
 pub const UI_STATE_VERSION: u32 = 2;
@@ -415,17 +416,7 @@ impl Shell {
             if spec != self.spec {
                 self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
             }
-            ui.separator();
-            let has = self.timeline.has_data();
-            if ui.add_enabled(has, icon_button(icons::FIT)).on_hover_text("Fit: show the whole swarm").clicked() {
-                self.timeline.fit();
-            }
-            if ui.add_enabled(has, icon_button(icons::ZOOM_IN)).on_hover_text("Zoom in").clicked() {
-                self.timeline.zoom(2.0);
-            }
-            if ui.add_enabled(has, icon_button(icons::ZOOM_OUT)).on_hover_text("Zoom out").clicked() {
-                self.timeline.zoom(0.5);
-            }
+            // The zoom in / out / fit buttons are the timeline widget's own toolbar's (#35).
             if self.loading() {
                 ui.separator();
                 ui.label(format!("{}  reading the tracking branch…", icons::SPINNER));

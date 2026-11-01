@@ -8,8 +8,9 @@
 //! each worker that held them last (machine / worker / its rows), never across workers;
 //! collapsed, rows with nothing in them are left out. Each bar carries its label (it names its
 //! ticket), its ticket, its style, its colour ([`crate::colours`]: a ticket's working and its merge
-//! in its own colour, the rest fixed) and its tooltip lines: what the timeline draws is what this
-//! answers.
+//! in its own colour, the rest fixed) and its tooltip lines, styled (#35: [`TipLine`], the phases
+//! in their colours, merged green, sent back and abandoned red, durations strong) and as plain
+//! text: what the timeline draws is what this answers.
 
 use std::collections::BTreeMap;
 
@@ -18,9 +19,10 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
-use crate::colours::{Rgb, style_colour};
+use crate::colours::{self, Rgb, phase_colour, style_colour};
 use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 use crate::titles;
+use crate::tooltip::{FAILED, PASSED, TipLine, texts};
 
 /// How the ticket rows are grouped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -87,12 +89,16 @@ pub struct Bar {
     pub colour: Rgb,
     /// Nothing ended it: it runs to the last event.
     pub open: bool,
+    /// Its tooltip as plain text: [`Bar::tooltip_lines`]' text, a line each.
     pub tooltip: Vec<String>,
+    /// Its tooltip's lines with their styling (#35), what the timeline shows.
+    pub tooltip_lines: Vec<TipLine>,
 }
 
 impl Bar {
-    fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, tooltip: Vec<String>) -> Self {
-        Self { start, end, label, ticket, pr: None, style, colour: style_colour(style, ticket), open: false, tooltip }
+    fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, lines: Vec<TipLine>) -> Self {
+        let colour = style_colour(style, ticket);
+        Self { start, end, label, ticket, pr: None, style, colour, open: false, tooltip: texts(&lines), tooltip_lines: lines }
     }
 }
 
@@ -219,10 +225,19 @@ struct Text<'a> {
     issues: &'a Issues,
 }
 
-/// The lines a ticket's tooltips start with: what GitHub says of it (its title, state and labels,
-/// its pull request), else `#170 · PR #173`.
-fn ticket_lines(ticket: &Ticket, issues: &Issues) -> Vec<String> {
-    titles::header(issues, ticket.issue, ticket.pr, None).unwrap_or_else(|| vec![ticket.title()])
+/// The lines a ticket's tooltips start with: what GitHub says of it (its title, strong; state and
+/// labels; its pull request, merged in green), else `#170 · PR #173`, strong.
+fn ticket_lines(ticket: &Ticket, issues: &Issues) -> Vec<TipLine> {
+    let header = titles::header(issues, ticket.issue, ticket.pr, None).unwrap_or_else(|| vec![ticket.title()]);
+    header.into_iter().enumerate().map(|(n, line)| if n == 0 { TipLine::strong(line) } else { header_line(line) }).collect()
+}
+
+/// A header line after the first: plain, but a pull request's `(merged)` in green.
+fn header_line(line: String) -> TipLine {
+    match line.strip_suffix(" (merged)") {
+        Some(before) => TipLine::plain(format!("{before} (")).then_coloured("merged", PASSED).then(")"),
+        None => TipLine::plain(line),
+    }
 }
 
 /// The ticket's pull request: the one its events name, else the newest on GitHub that closes it.
@@ -290,43 +305,70 @@ fn between(start: Timestamp, end: Timestamp) -> String {
 }
 
 /// The ticket's times, those it has: claimed, began, finished, merged, done (a `stop done` while
-/// worked on), and, done with no merge, that and the stop's note.
-fn milestones(ticket: &Ticket) -> Vec<String> {
+/// worked on), and, done with no merge, that and the stop's note. Each milestone's name is in the
+/// colour of what it begins (claimed yellow, began the ticket's working colour, finished waiting
+/// blue, merged green, done grey), the spans between them strong.
+fn milestones(ticket: &Ticket) -> Vec<TipLine> {
     let mut lines = Vec::new();
-    let mut line = |what: &str, t: Option<Timestamp>| {
+    let mut line = |what: &str, colour: Rgb, t: Option<Timestamp>| {
         if let Some(t) = t {
-            lines.push(format!("{what:<9} {t}"));
+            let padded = format!("{what:<9}");
+            lines.push(TipLine::coloured(what, colour).then(format!("{} {t}", padded.get(what.len()..).unwrap_or_default())));
         }
     };
-    line("claimed", ticket.claimed);
-    line("began", ticket.began);
-    line("finished", ticket.finished);
-    line("merged", ticket.merged.as_ref().map(|m| m.t));
-    line("done", ticket.done.as_ref().map(|d| d.t));
+    line("claimed", colours::CLAIMED, ticket.claimed);
+    line("began", phase_colour(Phase::Working, ticket.issue), ticket.began);
+    line("finished", colours::WAITING, ticket.finished);
+    line("merged", PASSED, ticket.merged.as_ref().map(|m| m.t));
+    line("done", colours::STOPPED, ticket.done.as_ref().map(|d| d.t));
     let from = ticket.claimed.or(ticket.began);
     if let (Some(from), Some(merged)) = (from, &ticket.merged) {
-        lines.push(format!("claim to merge: {}", between(from, merged.t)));
+        lines.push(TipLine::plain("claim to merge: ").then_strong(between(from, merged.t)));
     } else if let Some(done) = &ticket.done {
         if let Some(from) = from {
-            lines.push(format!("claim to done: {}", between(from, done.t)));
+            lines.push(TipLine::plain("claim to done: ").then_strong(between(from, done.t)));
         }
-        lines.push(done.note.as_ref().map_or_else(|| "done without a merge".to_owned(), |note| format!("done without a merge: {note}")));
+        let without = TipLine::coloured("done without a merge", colours::STOPPED);
+        lines.push(match &done.note {
+            Some(note) => without.then(format!(": {note}")),
+            None => without,
+        });
     }
     lines
 }
 
+/// A stretch's own line: its phase in its colour, its times, its duration strong.
+fn span_line(ticket: &Ticket, stretch: &Stretch) -> TipLine {
+    let phase = TipLine::coloured(stretch.phase.name(), phase_colour(stretch.phase, ticket.issue));
+    let took = between(stretch.start, stretch.end);
+    if stretch.open {
+        phase.then(format!(": {} → … (", stretch.start)).then_strong(took).then(" so far)")
+    } else {
+        phase.then(format!(": {} → {} (", stretch.start, stretch.end)).then_strong(took).then(")")
+    }
+}
+
+/// `abandoned: …`, the word in red.
+fn abandoned_line(abandoned: &Abandoned) -> TipLine {
+    let text = abandoned.text();
+    match text.strip_prefix("abandoned") {
+        Some(rest) => TipLine::coloured("abandoned", FAILED).then(rest),
+        None => TipLine::plain(text),
+    }
+}
+
+/// A stretch's note: a sent back stretch's (why: the gate's cause) in red, any other plain.
+fn note_line(stretch: &Stretch, note: &str) -> TipLine {
+    if stretch.phase == Phase::SentBack { TipLine::coloured(note, FAILED) } else { TipLine::plain(note) }
+}
+
 fn stretch_bar(ticket: &Ticket, stretch: &Stretch, text: Text<'_>) -> Bar {
     let phase = stretch.phase.name();
-    let span = if stretch.open {
-        format!("{phase}: {} → … ({} so far)", stretch.start, between(stretch.start, stretch.end))
-    } else {
-        format!("{phase}: {} → {} ({})", stretch.start, stretch.end, between(stretch.start, stretch.end))
-    };
     let mut tooltip = ticket_lines(ticket, text.issues);
-    tooltip.extend([span, format!("by {}", stretch.by)]);
-    tooltip.extend(stretch.note.iter().cloned());
-    tooltip.extend(stretch.abandoned.as_ref().map(Abandoned::text));
-    tooltip.push(String::new());
+    tooltip.extend([span_line(ticket, stretch), TipLine::plain(format!("by {}", stretch.by))]);
+    tooltip.extend(stretch.note.iter().map(|note| note_line(stretch, note)));
+    tooltip.extend(stretch.abandoned.as_ref().map(abandoned_line));
+    tooltip.push(TipLine::default());
     tooltip.extend(milestones(ticket));
     let label = titles::label(text.issues, ticket.issue).unwrap_or_else(|| format!("#{} {phase}", ticket.issue));
     let pr = ticket_pr(ticket, text.issues);
@@ -345,13 +387,13 @@ fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
             let merged = ticket.merged.as_ref()?;
             let mut tooltip = ticket_lines(ticket, issues);
             match tooltip.first_mut() {
-                Some(first) if issues.get(ticket.issue).is_none() => first.push_str(" merged"),
-                _ => tooltip.push("merged".to_owned()),
+                Some(first) if issues.get(ticket.issue).is_none() => *first = std::mem::take(first).then(" ").then_coloured("merged", PASSED),
+                _ => tooltip.push(TipLine::coloured("merged", PASSED)),
             }
-            tooltip.push(merged.t.to_string());
+            tooltip.push(TipLine::plain(merged.t.to_string()));
             let by = merged.sub.as_ref().map_or_else(|| format!("by {}", merged.by), |sub| format!("by {} in {sub}", merged.by));
-            tooltip.push(by);
-            tooltip.push(String::new());
+            tooltip.push(TipLine::plain(by));
+            tooltip.push(TipLine::default());
             tooltip.extend(milestones(ticket));
             let pr = merged.pr.or_else(|| ticket_pr(ticket, issues));
             Some(Bar { pr, ..Bar::new(merged.t, merge_end(merged.t), format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip) })
@@ -370,15 +412,17 @@ fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<B
 fn main_bar(merge: &MainMerge, tickets: &[Ticket], issues: &Issues) -> Bar {
     let short = merge.commit.get(..8).unwrap_or(&merge.commit);
     let label = merge.pr.map_or_else(|| short.to_owned(), |pr| format!("PR #{pr}"));
-    let mut tooltip = vec![merge.subject.clone(), format!("{short} · {}", merge.t)];
-    if let Some(pr) = merge.pr
-        && let Some(title) = titles::title(issues, pr)
-    {
-        tooltip.insert(0, format!("PR #{pr} {}", titles::short(title, titles::TOOLTIP_TITLE)));
-    }
+    let titled = merge.pr.and_then(|pr| titles::title(issues, pr).map(|title| format!("PR #{pr} {}", titles::short(title, titles::TOOLTIP_TITLE))));
+    let mut tooltip: Vec<TipLine> = titled.map(TipLine::strong).into_iter().collect();
+    let subject = if tooltip.is_empty() { TipLine::strong(merge.subject.clone()) } else { TipLine::plain(merge.subject.clone()) };
+    tooltip.extend([subject, TipLine::plain(format!("{short} · {}", merge.t))]);
     if let Some(pr) = merge.pr {
         let closed: Vec<String> = tickets.iter().filter(|t| t.merged.as_ref().is_some_and(|m| m.pr == Some(pr))).map(|t| format!("#{}", t.issue)).collect();
-        tooltip.push(if closed.is_empty() { "no ticket's merge names it".to_owned() } else { format!("merged {}", closed.join(", ")) });
+        tooltip.push(if closed.is_empty() {
+            TipLine::plain("no ticket's merge names it")
+        } else {
+            TipLine::coloured("merged", PASSED).then(format!(" {}", closed.join(", ")))
+        });
     }
     Bar { pr: merge.pr, ..Bar::new(merge.t, merge_end(merge.t), label, None, Style::MainMerge, tooltip) }
 }
@@ -698,5 +742,86 @@ mod tests {
         assert_eq!(duration(3_900), "1 h 05 min");
         assert_eq!(duration(90_000), "1 d 01 h");
         assert_eq!(duration(-5), "0 s");
+    }
+
+    fn every_bar(rows: &[Node]) -> Vec<&Bar> {
+        rows.iter()
+            .flat_map(Node::leaves)
+            .flat_map(|n| match n {
+                Node::Ranges { bars, .. } => bars.iter().collect::<Vec<_>>(),
+                Node::Group { .. } => Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_tooltips_lines_are_its_plain_text_styled() {
+        for activity in [Activity::of(&sample()), Activity::of(&crate::tickets::tests::abandoned())] {
+            let issues = crate::titles::tests::issues();
+            for bar in every_bar(&rows_with(&activity, &merges(), RowsSpec::default(), &issues)) {
+                assert_eq!(texts(&bar.tooltip_lines), bar.tooltip, "{}", bar.label);
+            }
+        }
+    }
+
+    #[test]
+    fn a_tooltip_colours_the_phases_merged_green_sent_back_red_and_durations_strong() {
+        use crate::colours::{CLAIMED, SENT_BACK, WAITING, ticket_colour};
+        let activity = Activity::of(&sample());
+        let rows = rows(&activity, &merges(), RowsSpec::default());
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        // The title strong; each stretch's phase in its bar's colour, its duration strong.
+        for bar in bars {
+            let tip = &bar.tooltip_lines;
+            assert!(tip[0].is_strong("#170 · PR #173"), "{:?}", tip[0]);
+            let phase = &tip[1].spans[0];
+            assert_eq!(phase.colour, Some(bar.colour), "{} in its bar's colour", phase.text);
+            assert!(tip[1].spans.iter().any(|s| s.strong && s.text.ends_with(" s")), "the duration strong: {:?}", tip[1]);
+            assert!(tip[2].is_plain(), "by: {:?}", tip[2]);
+        }
+        let working = &bars[1].tooltip_lines;
+        assert_eq!(working[1].colour_of("working"), Some(ticket_colour(170)));
+        assert!(working[1].is_strong("13 min 18 s"));
+        // The milestones: each name in the colour of what it begins, merged green, the span strong.
+        let milestone = |name: &str| working.iter().find(|l| l.spans.first().is_some_and(|s| s.text == name)).and_then(|l| l.spans[0].colour);
+        assert_eq!(milestone("claimed"), Some(CLAIMED));
+        assert_eq!(milestone("began"), Some(ticket_colour(170)));
+        assert_eq!(milestone("finished"), Some(WAITING));
+        assert_eq!(milestone("merged"), Some(PASSED));
+        assert!(working.iter().any(|l| l.is_strong("35 min 36 s")), "claim to merge strong");
+        // The top rows: a merge onto main names what it merged in green; a ticket's merge says
+        // merged in green.
+        let (Node::Ranges { bars: main, .. }, Node::Ranges { bars: merged, .. }) = (&rows[0], &rows[1]) else { panic!() };
+        assert_eq!(main[0].tooltip_lines[2].colour_of("merged"), Some(PASSED));
+        assert!(main[0].tooltip_lines[0].is_strong("Merge pull request #173 from mornycorp/170-spec"));
+        assert!(main[1].tooltip_lines[2].is_plain(), "no ticket's merge names it: not a failure");
+        assert_eq!(merged[0].tooltip_lines[0].colour_of("merged"), Some(PASSED));
+        // Sent back red, its note (the cause) red; abandoned red.
+        let activity = Activity::of(&crate::tickets::tests::abandoned());
+        let rows = super::rows(&activity, &[], RowsSpec::default());
+        let sent = every_bar(&rows).into_iter().find(|b| b.style == Style::SentBack && b.ticket == Some(44)).unwrap();
+        assert_eq!(sent.tooltip_lines[1].colour_of("sent back"), Some(SENT_BACK));
+        assert_eq!(sent.tooltip_lines[3].colour_of("tests fail"), Some(FAILED));
+        let gone = every_bar(&rows).into_iter().find(|b| b.ticket == Some(40) && b.style == Style::Working).unwrap();
+        assert_eq!(gone.tooltip_lines[3].colour_of("abandoned"), Some(FAILED));
+        assert_eq!(gone.tooltip_lines[3].text(), "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
+    }
+
+    #[test]
+    fn githubs_header_puts_the_title_strong_and_a_merged_pr_green() {
+        let activity = Activity::of(&sample());
+        let issues = crate::titles::tests::issues();
+        let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        let tip = &bars[1].tooltip_lines;
+        assert!(tip[0].is_strong("#170 The spec, written down"));
+        assert!(tip[1].is_plain());
+        assert_eq!(tip[2].colour_of("merged"), Some(PASSED));
+        assert_eq!(tip[2].text(), "PR #173 Spec: the first draft (merged)");
+        let Node::Ranges { bars: main, .. } = &rows[0] else { panic!() };
+        assert!(main[0].tooltip_lines[0].is_strong("PR #173 Spec: the first draft"));
+        assert!(main[0].tooltip_lines[1].is_plain(), "the subject under the title, plain");
+        let Node::Ranges { bars: merged, .. } = &rows[1] else { panic!() };
+        assert_eq!(merged[0].tooltip_lines[3].colour_of("merged"), Some(PASSED));
     }
 }

@@ -95,6 +95,26 @@ fn open_a_repo_and_list_its_rows() {
 }
 
 #[test]
+fn rows_list_answers_each_tooltip_as_plain_text_and_as_styled_lines() {
+    use swarmception_domain::Node;
+    use swarmception_domain::tooltip::{PASSED, texts};
+    let dir = repo();
+    let mut session = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let list: ListResult = call(&mut session, "rows.list", "");
+    let bars: Vec<_> =
+        list.rows.iter().flat_map(Node::leaves).flat_map(|n| if let Node::Ranges { bars, .. } = n { bars.clone() } else { Vec::new() }).collect();
+    assert!(!bars.is_empty());
+    for bar in &bars {
+        assert_eq!(texts(&bar.tooltip_lines), bar.tooltip, "{}: the same words, read as the typed result", bar.label);
+    }
+    let merged = bars.iter().find(|b| b.style == swarmception_domain::rows::Style::Merged).unwrap();
+    assert_eq!(merged.tooltip_lines[0].colour_of("merged"), Some(PASSED), "{:?}", merged.tooltip_lines[0]);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn a_reload_before_an_open_is_disabled() {
     let mut session = Session::new();
     let error = session.execute("repo.reload", "").unwrap_err();

@@ -5,8 +5,9 @@
 //! main and the tickets, flat or by worker ([`rows`]); the timeline widget's host data built
 //! from those rows ([`timeline`]); the swarm's statistics over a window, tickets landed per
 //! active hour first ([`stats`]); the swarm at one moment as a factory building the app
-//! ([`factory`]); and what GitHub's issues say of a ticket, its title on bars and first in
-//! tooltips ([`titles`]). Pure: no I/O, no clock.
+//! ([`factory`]); what GitHub's issues say of a ticket, its title on bars and first in
+//! tooltips ([`titles`]); and a tooltip's lines in colour, the bars' ([`tooltip`]). Pure: no I/O,
+//! no clock.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -21,6 +22,7 @@ pub mod stats;
 pub mod tickets;
 pub mod timeline;
 pub mod titles;
+pub mod tooltip;
 
 pub use activity::Activity;
 pub use rows::{Grouping, Node, RowsSpec};

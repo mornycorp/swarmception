@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 
 use timeline_core::axis::Position;
 use timeline_core::data::{
-    CategoryId, Colour, DataError, Importance, Instant, Item, ItemIndex, MemoryData, Range, RangeExtent, RangeFlags, TimelineData, TrackId, TrackKind,
-    TrackTree,
+    CategoryId, Colour, DataError, Importance, Instant, Item, ItemIndex, MemoryData, Range, RangeExtent, RangeFlags, TimelineData, TooltipLine, TooltipSpan,
+    TrackId, TrackKind, TrackTree,
 };
 use timeline_core::scale::{Availability, NamedScale, Scale};
 
@@ -20,6 +20,7 @@ use swarmception_model::Timestamp;
 
 use crate::colours::Rgb;
 use crate::rows::{Bar, Node};
+use crate::tooltip::TipLine;
 
 /// The time scale's name.
 pub const TIME: &str = "Time";
@@ -39,7 +40,8 @@ pub struct SwarmData {
     data: MemoryData,
     /// Position 0 of the `Time` scale, in nanoseconds from the Unix epoch.
     clock_epoch: Option<i64>,
-    range_tips: BTreeMap<(TrackId, usize), Vec<String>>,
+    /// Each bar's tooltip lines, styled (#35).
+    range_tips: BTreeMap<(TrackId, usize), Vec<TipLine>>,
     range_links: BTreeMap<(TrackId, usize), Vec<Link>>,
 }
 
@@ -86,6 +88,13 @@ impl Link {
     pub fn of(bar: &Bar) -> Vec<Self> {
         bar.ticket.map(Self::Issue).into_iter().chain(bar.pr.filter(|pr| Some(*pr) != bar.ticket).map(Self::Pull)).collect()
     }
+}
+
+/// A tooltip line as the widget's: each run in its colour (the theme's text colour with none),
+/// strong or not.
+#[must_use]
+pub fn tooltip_line(line: &TipLine) -> TooltipLine {
+    TooltipLine { spans: line.spans.iter().map(|span| TooltipSpan { text: span.text.clone(), colour: span.colour.map(colour), strong: span.strong }).collect() }
 }
 
 /// What [`build`] makes: the data, its time scale and where its positions count from.
@@ -191,7 +200,7 @@ impl Adder<'_> {
         if bar.open {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
         }
-        self.built.range_tips.insert((track, place), bar.tooltip.clone());
+        self.built.range_tips.insert((track, place), bar.tooltip_lines.clone());
         let links = Link::of(bar);
         if !links.is_empty() {
             self.built.range_links.insert((track, place), links);
@@ -230,7 +239,11 @@ impl TimelineData for SwarmData {
     }
 
     fn range_tooltip(&self, track: TrackId, place: usize) -> Vec<String> {
-        self.range_tips.get(&(track, place)).cloned().unwrap_or_else(|| self.data.range_tooltip(track, place))
+        self.range_tips.get(&(track, place)).map_or_else(|| self.data.range_tooltip(track, place), |lines| lines.iter().map(TipLine::text).collect())
+    }
+
+    fn range_tooltip_lines(&self, track: TrackId, place: usize) -> Vec<TooltipLine> {
+        self.range_tips.get(&(track, place)).map_or_else(|| self.data.range_tooltip_lines(track, place), |lines| lines.iter().map(tooltip_line).collect())
     }
 
     fn instant_tooltip(&self, track: TrackId, place: usize) -> Vec<String> {
@@ -287,6 +300,23 @@ mod tests {
         assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:25Z");
         assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:06:43Z", "up to the submit");
         assert_eq!(built.data.range_tooltip(ticket, 1)[0], "#170 · PR #173");
+    }
+
+    #[test]
+    fn a_bars_tooltip_reaches_the_widget_in_its_colours() {
+        let activity = Activity::of(&sample());
+        let rows = rows(&activity, &[], RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        let tree = built.data.tracks();
+        let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
+        let lines = built.data.range_tooltip_lines(ticket, 1);
+        let plain = built.data.range_tooltip(ticket, 1);
+        assert_eq!(lines.iter().map(TooltipLine::text).collect::<Vec<_>>(), plain, "the same words");
+        assert!(lines[0].spans[0].strong, "the title strong");
+        let working = &lines[1].spans[0];
+        assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::ticket_colour(170)))));
+        assert!(lines[1].spans.iter().any(|s| s.strong && s.text == "13 min 18 s"));
+        assert!(lines.iter().any(|l| l.spans.first().is_some_and(|s| s.text == "merged" && s.colour == Some(colour(crate::tooltip::PASSED)))));
     }
 
     #[test]
