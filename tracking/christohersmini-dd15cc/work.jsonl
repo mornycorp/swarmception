@@ -80,3 +80,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #43 (#33), #44 (#42); rerun after the repo move; capacity=2 free=11.1; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-43b","t":"2026-11-01T12:26:52Z"}
 {"event":"merge","issue":33,"mr":43,"sub":"gate-43b","t":"2026-11-01T12:27:19Z"}
 {"event":"merge","issue":42,"mr":44,"sub":"gate-43b","t":"2026-11-01T12:27:39Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #43 #44","sub":"gate-43b","t":"2026-11-01T12:27:46Z"}
