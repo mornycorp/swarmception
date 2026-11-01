@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 2: the Factory, statistics, ticket colours, issue titles) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 3: the Factory revised, colour scheme B, the reduced toolbar, abandoned tickets) · **Target:** M1
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,14 +29,15 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **No tab items in the macOS View menu** ([G10](gaps.md#g10-the-macos-view-menu-holds-the-systems-tab-items), #9)
-2. **An abandoned ticket ends with its worker's session** ([G11](gaps.md#g11-an-abandoned-ticket-runs-on-to-the-last-event))
-3. **Automation: the control channel and MCP** ([G2](gaps.md#g2-automation-the-control-channel-and-mcp))
+1. **Automation: the control channel and MCP** ([G2](gaps.md#g2-automation-the-control-channel-and-mcp))
+2. **A details pane** ([G3](gaps.md#g3-a-details-pane-for-what-is-selected))
+3. **A highlight that leaves the selection alone** ([G12](gaps.md#g12-a-highlight-that-leaves-the-selection-alone))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Batch 3: focus moved to G2, G3, G12 (G10, G11 done) |
 | 2026-11-01 | minor | Batch 2: focus moved (G11 up); the Factory and statistics are M3 work done early |
 | 2026-10-31 | minor | Batch 1: M1 is the tickets' timeline in clock time; the clock left M2; focus moved |
 | 2026-10-31 | major | First version, from swarm-core's template |
