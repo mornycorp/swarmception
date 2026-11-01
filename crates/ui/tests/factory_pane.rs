@@ -223,16 +223,16 @@ fn one_chip_its_whole_life_sized_by_station() {
     for issue in [7, 11, 13] {
         assert_eq!(size(&shell, issue), Some(Size::Medium.dims()), "#{issue}");
     }
-    // At 03:50 #7 has merged: a brick in main's wall, no bigger than the small chip.
+    // At 03:50 #7 has merged: it flies from the gate to its brick in main's wall.
     shell.set_factory_at(Timestamp::parse("2026-10-31T03:50:00Z").unwrap());
     frame(&mut shell, &ctx);
-    let flying = size(&shell, 7).unwrap();
-    assert!(flying.x > Size::Small.dims().x, "it sets off from the gate at its size: {flying:?}");
+    let flying = chips(&shell, 7)[0];
+    let place = |shell: &Shell| shell.factory().drawn().bricks.iter().find(|(mark, _)| mark == "#7").map(|(_, rect)| *rect).unwrap();
+    assert_ne!(flying, place(&shell), "it sets off from the gate");
     for _ in 0..60 {
         frame(&mut shell, &ctx);
     }
-    let brick = size(&shell, 7).unwrap();
-    assert!(brick.x <= Size::Small.dims().x && brick.y <= Size::Small.dims().y, "{brick:?}");
+    assert_eq!(chips(&shell, 7)[0], place(&shell), "and lands in its place in the wall");
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -313,6 +313,15 @@ fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
     assert_eq!(blocks[0].colour, NO_TICKET_COLOUR);
     assert_eq!(blocks[0].tooltip[0], "Merge pull request #13 from mornycorp/pr-13");
     assert_eq!(shell.factory().drawn().marks, ["!13", "#7"], "each brick says what it is");
+    // #32: #7's brick carries its life from factory.at (claimed 03:01, merged 03:45: 44 min,
+    // through a gate run), and is wider than the grey one, which has none.
+    let seven = &blocks[1];
+    assert_eq!(seven.took, Some(44 * 60));
+    assert!(seven.segments.iter().any(|s| s.state == CrateState::Gating), "{:?}", seven.segments);
+    assert_eq!(seven.segments.iter().map(|s| s.seconds).sum::<i64>(), 44 * 60);
+    assert!(seven.tooltip.iter().any(|line| line == "claim → merge 44 min 00 s"), "{:?}", seven.tooltip);
+    let bricks = shell.factory().drawn().bricks.clone();
+    assert!(bricks[1].1.width() > bricks[0].1.width(), "{bricks:?}");
     assert!(texts.iter().any(|t| t == "!13"), "{texts:?}");
     std::fs::remove_dir_all(dir).ok();
 }

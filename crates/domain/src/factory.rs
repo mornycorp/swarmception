@@ -271,7 +271,80 @@ pub struct Block {
     /// Its ticket's colour; [`NO_TICKET`] without one, so it reads as not a ticket.
     pub colour: Rgb,
     pub age: i64,
+    /// Its ticket's time from its first claim (else its first stretch) to this merge, in
+    /// seconds: what its brick's size says (#32). None for a merge no ticket names, or a ticket
+    /// with no stretch before it.
+    pub took: Option<i64>,
+    /// Its ticket's life up to this merge, in time order (#32): claimed, working, waiting for
+    /// merge, in the gate (a run naming it, carved out of the wait), sent back and stopped, each
+    /// from its start, how long; one phase running on is one segment.
+    pub segments: Vec<Segment>,
+    /// How many times its ticket was sent back before this merge.
+    pub sent_back: usize,
     pub tooltip: Vec<String>,
+}
+
+/// A stretch of a merged ticket's life, on its brick (#32): what it was doing, from when, and
+/// for how many seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Segment {
+    pub state: CrateState,
+    pub start: Timestamp,
+    pub seconds: i64,
+}
+
+/// The phases a brick's tooltip totals, in the order a ticket passes them.
+const LIFE: [CrateState; 6] = [CrateState::Claimed, CrateState::Working, CrateState::Waiting, CrateState::Gating, CrateState::SentBack, CrateState::Stopped];
+
+/// A merged ticket's life before `merged`: its segments, how long it took from its first claim,
+/// and how many times it was sent back. `runs` are the gate runs that name it.
+fn life(ticket: &Ticket, merged: Timestamp, runs: &[(Timestamp, Timestamp)]) -> (Option<i64>, Vec<Segment>, usize) {
+    let mut segments: Vec<Segment> = Vec::new();
+    let mut push = |state: CrateState, start: Timestamp, seconds: i64| {
+        if seconds <= 0 {
+            return;
+        }
+        match segments.last_mut() {
+            Some(last) if last.state == state => last.seconds = last.seconds.saturating_add(seconds),
+            _ => segments.push(Segment { state, start, seconds }),
+        }
+    };
+    let before: Vec<&Stretch> = ticket.stretches.iter().filter(|s| s.start < merged).collect();
+    for stretch in &before {
+        let end = if stretch.open { merged } else { stretch.end.min(merged) };
+        if stretch.phase == Phase::Waiting {
+            for (gating, start, seconds) in split_wait((stretch.start, end), runs) {
+                push(if gating { CrateState::Gating } else { CrateState::Waiting }, start, seconds);
+            }
+        } else {
+            push(CrateState::of(stretch.phase), stretch.start, end.0.saturating_sub(stretch.start.0));
+        }
+    }
+    let sent_back = before.iter().filter(|s| s.phase == Phase::SentBack).count();
+    let from = ticket.claimed.filter(|c| *c <= merged).or_else(|| before.first().map(|s| s.start));
+    (from.map(|from| merged.0.saturating_sub(from.0)), segments, sent_back)
+}
+
+/// The tooltip lines a merged ticket's brick adds (#32): how long it took, its time in each phase,
+/// and how many times it was sent back.
+fn life_lines(took: Option<i64>, segments: &[Segment], sent_back: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    if let Some(took) = took {
+        lines.push(format!("claim → merge {}", duration(took)));
+    }
+    for state in LIFE {
+        let seconds: i64 = segments.iter().filter(|s| s.state == state).map(|s| s.seconds).sum();
+        if seconds > 0 {
+            lines.push(format!("  {}: {}", state.name(), duration(seconds)));
+        }
+    }
+    match sent_back {
+        0 => {}
+        1 => lines.push("sent back once".to_owned()),
+        n => lines.push(format!("sent back {n} times")),
+    }
+    lines
 }
 
 /// Shipping: the app on main, block by block, and the tickets done without a merge.
@@ -500,7 +573,7 @@ pub fn scene(activity: &Activity, merges: &[MainMerge], t: Timestamp, recent: i6
         benches: benches(activity, t, recent, at_bench),
         dock,
         gate: gate(activity, t, &runs, gating),
-        shipping: shipping(merges, &tickets, t, done, done_count),
+        shipping: shipping(merges, &tickets, &runs, t, (done, done_count)),
         happenings: happenings(activity, merges, &runs, t, recent),
         counts,
         journey: None,
@@ -544,16 +617,26 @@ pub fn journey(activity: &Activity, t: Timestamp, issue: u64) -> Option<Journey>
 /// A wait for the merge, `span`, in time order: at the dock until a gate run naming the ticket
 /// (`runs`) starts, in the gate while it goes.
 fn wait(legs: &mut Vec<Leg>, span: (Timestamp, Timestamp), runs: &[(Timestamp, Timestamp)]) {
+    for (gating, start, seconds) in split_wait(span, runs) {
+        stay(legs, if gating { Station::Gate } else { Station::Dock }, start, seconds);
+    }
+}
+
+/// A wait for the merge, `span`, cut where the gate `runs` go on: in time order, whether each
+/// piece is in the gate, its start and its seconds (a piece may be empty).
+fn split_wait(span: (Timestamp, Timestamp), runs: &[(Timestamp, Timestamp)]) -> Vec<(bool, Timestamp, i64)> {
     let (start, end) = span;
     let mut runs: Vec<(Timestamp, Timestamp)> = runs.iter().map(|(a, b)| ((*a).max(start), (*b).min(end))).filter(|(a, b)| a < b).collect();
     runs.sort();
+    let mut pieces = Vec::new();
     let mut at = start;
     for (from, to) in runs {
-        stay(legs, Station::Dock, at, from.0.saturating_sub(at.0));
-        stay(legs, Station::Gate, from.max(at), to.0.saturating_sub(from.max(at).0));
+        pieces.push((false, at, from.0.saturating_sub(at.0)));
+        pieces.push((true, from.max(at), to.0.saturating_sub(from.max(at).0)));
         at = at.max(to);
     }
-    stay(legs, Station::Dock, at, end.0.saturating_sub(at.0));
+    pieces.push((false, at, end.0.saturating_sub(at.0)));
+    pieces
 }
 
 /// Adds `seconds` at `station`: to the last leg when it is there already.
@@ -909,12 +992,28 @@ fn gate(activity: &Activity, t: Timestamp, runs: &[GateRun], mut crates: Vec<Cra
     Gate { inspectors, running, crates, recent: ended.into_iter().take(GATE_HISTORY).cloned().collect(), passed, failed }
 }
 
-fn shipping(merges: &[MainMerge], tickets: &[Ticket], t: Timestamp, done: Vec<Crate>, done_count: usize) -> Shipping {
-    let issue_of = |pr: u64| tickets.iter().find(|tk| tk.merged.as_ref().is_some_and(|m| m.pr == Some(pr))).map(|tk| tk.issue);
+fn shipping(merges: &[MainMerge], tickets: &[Ticket], runs: &[GateRun], t: Timestamp, done: (Vec<Crate>, usize)) -> Shipping {
+    let (done, done_count) = done;
+    let ticket_of = |pr: u64| tickets.iter().find(|tk| tk.merged.as_ref().is_some_and(|m| m.pr == Some(pr)));
+    // A merged ticket's life before `at`, the gate runs naming it carved out of its waits.
+    let life_of = |ticket: &Ticket, at: Timestamp| {
+        let naming: Vec<(Timestamp, Timestamp)> = runs
+            .iter()
+            .filter(|r| ticket.pr.is_some_and(|pr| r.refs.contains(&pr)) || r.issues.contains(&ticket.issue))
+            .map(|r| (r.start, r.end.unwrap_or(t)))
+            .collect();
+        life(ticket, at, &naming)
+    };
     let mut blocks: Vec<Block> = if merges.is_empty() {
-        tickets.iter().filter_map(|tk| tk.merged.as_ref().map(|m| ticket_block(tk.issue, m.pr, m.t, t))).collect()
+        tickets.iter().filter_map(|tk| tk.merged.as_ref().map(|m| ticket_block(tk.issue, m.pr, (m.t, t), life_of(tk, m.t)))).collect()
     } else {
-        merges.iter().map(|m| main_block(m, m.pr.and_then(issue_of), t)).collect()
+        merges
+            .iter()
+            .map(|m| {
+                let ticket = m.pr.and_then(ticket_of);
+                main_block(m, ticket.map(|tk| (tk.issue, life_of(tk, m.t))), t)
+            })
+            .collect()
     };
     let total = blocks.len();
     blocks.retain(|b| b.t <= t);
@@ -925,24 +1024,37 @@ fn shipping(merges: &[MainMerge], tickets: &[Ticket], t: Timestamp, done: Vec<Cr
     Shipping { blocks: blocks.into_iter().skip(skip).collect(), landed, total, merged_tickets, done, done_count }
 }
 
-fn main_block(merge: &MainMerge, issue: Option<u64>, t: Timestamp) -> Block {
+/// A merged ticket's life: how long it took, its segments, and its sendbacks.
+type Life = (Option<i64>, Vec<Segment>, usize);
+
+/// A merge onto main's block; `ticket`, the ticket its PR merged and that ticket's life.
+fn main_block(merge: &MainMerge, ticket: Option<(u64, Life)>, t: Timestamp) -> Block {
+    let issue = ticket.as_ref().map(|(issue, _)| *issue);
+    let (took, segments, sent_back) = ticket.map(|(_, life)| life).unwrap_or_default();
     let short_commit = merge.commit.get(..8).unwrap_or(&merge.commit);
     let label = merge.pr.map_or_else(|| short_commit.to_owned(), |pr| format!("PR #{pr}"));
     let mut tooltip = vec![merge.subject.clone(), format!("{short_commit} · {}", merge.t)];
     tooltip.push(issue.map_or_else(|| "no ticket's merge names it".to_owned(), |issue| format!("ticket #{issue}")));
+    tooltip.extend(life_lines(took, &segments, sent_back));
     let mark = match (issue, merge.pr) {
         (Some(issue), _) => format!("#{issue}"),
         (None, Some(pr)) => format!("!{pr}"),
         (None, None) => short_commit.get(..7).unwrap_or(short_commit).to_owned(),
     };
     let colour = issue.map_or(NO_TICKET, ticket_colour);
-    Block { t: merge.t, pr: merge.pr, issue, label, mark, colour, age: t.0.saturating_sub(merge.t.0), tooltip }
+    Block { t: merge.t, pr: merge.pr, issue, label, mark, colour, age: t.0.saturating_sub(merge.t.0), took, segments, sent_back, tooltip }
 }
 
-fn ticket_block(issue: u64, pr: Option<u64>, at: Timestamp, t: Timestamp) -> Block {
+/// A ticket's merge's block, when the repository has no main: merged at `when.0`, seen at
+/// `when.1`.
+fn ticket_block(issue: u64, pr: Option<u64>, when: (Timestamp, Timestamp), life: Life) -> Block {
+    let (at, t) = when;
+    let (took, segments, sent_back) = life;
     let label = pr.map_or_else(|| format!("#{issue}"), |pr| format!("PR #{pr}"));
-    let tooltip = vec![format!("#{issue} merged"), at.to_string()];
-    Block { t: at, pr, issue: Some(issue), label, mark: format!("#{issue}"), colour: ticket_colour(issue), age: t.0.saturating_sub(at.0), tooltip }
+    let mut tooltip = vec![format!("#{issue} merged"), at.to_string()];
+    tooltip.extend(life_lines(took, &segments, sent_back));
+    let (mark, colour, age) = (format!("#{issue}"), ticket_colour(issue), t.0.saturating_sub(at.0));
+    Block { t: at, pr, issue: Some(issue), label, mark, colour, age, took, segments, sent_back, tooltip }
 }
 
 /// What happened in the `recent` seconds up to `t`, newest first.
@@ -1233,6 +1345,51 @@ mod tests {
         let midway = journey(&activity, at("2026-10-31T01:17:00Z"), 5).unwrap();
         assert_eq!(midway.text, "bench 10m → dock 5m → gate 2m", "nothing after t");
         assert_eq!(journey(&activity, at("2026-10-31T02:05:00Z"), 99), None);
+    }
+
+    #[test]
+    fn a_bricks_life_its_time_its_phases_and_its_sendbacks() {
+        let scene = failing("2026-10-31T02:05:00Z");
+        let block = &scene.shipping.blocks[0];
+        assert_eq!((block.issue, block.took, block.sent_back), (Some(5), Some(3_600), 1), "claimed 01:00, merged 02:00, sent back once");
+        let segments: Vec<(CrateState, i64)> = block.segments.iter().map(|s| (s.state, s.seconds)).collect();
+        assert_eq!(
+            segments,
+            [
+                (CrateState::Claimed, 5),
+                (CrateState::Working, 595),
+                (CrateState::Waiting, 300),
+                (CrateState::Gating, 240),
+                (CrateState::Waiting, 60),
+                (CrateState::SentBack, 600),
+                (CrateState::Working, 600),
+                (CrateState::Waiting, 1_200),
+            ]
+        );
+        assert_eq!(block.segments.iter().map(|s| s.seconds).sum::<i64>(), 3_600, "its life adds up to its time");
+        assert_eq!(block.segments[3].start, at("2026-10-31T01:15:00Z"));
+        assert_eq!(
+            &block.tooltip[2..],
+            [
+                "claim → merge 1 h 00 min",
+                "  claimed: 5 s",
+                "  working: 19 min 55 s",
+                "  waiting for merge: 26 min 00 s",
+                "  in the gate: 4 min 00 s",
+                "  sent back: 10 min 00 s",
+                "sent back once",
+            ]
+        );
+        // A merge onto main no ticket names says nothing of a life.
+        let merges: Vec<MainMerge> =
+            ["15bad2c0\u{1f}1793420255\u{1f}Merge pull request #174 from mornycorp/progress-7"].into_iter().filter_map(parse_merge).collect();
+        let grey = scene_of_sample(&merges);
+        assert_eq!((grey.took, grey.segments.len(), grey.sent_back), (None, 0, 0));
+    }
+
+    fn scene_of_sample(merges: &[MainMerge]) -> Block {
+        let scene = scene(&Activity::of(&sample()), merges, at("2026-10-31T05:00:00Z"), DEFAULT_RECENT);
+        scene.shipping.blocks[0].clone()
     }
 
     #[test]

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory's layout: no ticker, the key along the bottom, short benches, the gate as its list, coloured tooltips, the sparkline's hours clickable) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (main's wall: each brick as wide as its ticket took, its phases along it, its sendbacks marked) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -62,7 +62,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `factory` is the swarm at one moment *t* as a factory (#18): each ticket a crate in its own
   colour (`colours`, as on the timeline), up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
   worker's actor and helper; the gate's runs (a merge whose gate logged no `sub.start` counts as a
-  run), main's blocks, and what happened in the `recent` seconds before *t*. Nothing after *t* is
+  run), main's blocks (each with its ticket's life up to the merge, #32: `took`, claim → merge;
+  `segments`, its stretches with the gate runs naming it carved out of its waits; `sent_back`), and
+  what happened in the `recent` seconds before *t*. Nothing after *t* is
   told; `titled` adds what GitHub says (each crate's title, its tooltip's title, state and labels
   as of *t*). `titles` (#17) is the text from GitHub's issues: a bar's label with its ticket's
   title (`#58 Architecture review`, always: no option since #34), and the lines a
@@ -114,7 +116,12 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
   timeline (`timeline.ticketBars`, the widget's `ranges.toggle`; the person's own selection is put
   aside on the first hover and put back exactly when the pointer leaves), clicking one traces its
-  journey; a merge onto main no ticket names is a grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
+  journey; main's wall (#32) packs a brick per merge in rows from the ground up, each as wide as
+  its ticket's claim → merge time against the median (no narrower than its number, no wider than
+  four times the median's), a strip along its foot with its life's segments in
+  their phase colours, a red corner when it was sent back (the count in it from two), shrinking
+  to the smallest size and then scrolling with the wheel, the newest rows first; a merge onto
+  main no ticket names is a small grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
   else the window's end) or plays through the window, the playhead following.
   Right-clicking a bar (the widget's host items) or a chip offers Open Issue and Open PR: the
   shell runs `ticket.urls` and hands the page to egui's `open_url`. Bars always carry titles (#34);
@@ -216,6 +223,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Main's wall (#32): bricks sized by claim → merge, their phases along them, sendbacks marked; the blocks carry `took`, `segments`, `sent_back` |
 | 2026-11-01 | minor | The factory's layout (#31): no ticker, the key along the bottom, short bench strips, the gate as its list of runs, coloured tooltips, the sparkline's hours clickable; the factory's own colours softened |
 | 2026-11-01 | minor | An abandoned ticket: a claimed, working or sent back stretch ends where its holder's session did (#28) |
 | 2026-11-01 | minor | The repository's GitHub issues: fetched with `gh`, cached per repository; titles on bars and first in tooltips; `ticket.urls` and the bars' and chips' Open Issue / Open PR (#17) |
