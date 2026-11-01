@@ -15,11 +15,12 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_model::{MainMerge, Timestamp};
+use swarmception_model::{Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
 use crate::colours::{Rgb, style_colour};
 use crate::tickets::{Phase, Stretch, Ticket, tickets};
+use crate::titles;
 
 /// How the ticket rows are grouped.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -32,13 +33,22 @@ pub enum Grouping {
     Workers,
 }
 
-/// Grouped how, collapsed or not.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+/// Grouped how, collapsed or not, labelled with titles or not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RowsSpec {
     pub grouping: Grouping,
     /// Rows with nothing in them, and groups left with no rows, are left out.
     pub collapse: bool,
+    /// A ticket's bars are labelled with its title (`#58 Architecture review`) when GitHub's
+    /// issues have it, else with its phase (`#58 working`). On by default.
+    pub titles: bool,
+}
+
+impl Default for RowsSpec {
+    fn default() -> Self {
+        Self { grouping: Grouping::default(), collapse: false, titles: true }
+    }
 }
 
 /// What a bar shows; its colour follows from this and its ticket ([`style_colour`]).
@@ -76,6 +86,9 @@ pub struct Bar {
     pub label: String,
     /// The ticket it is (a stretch of it, or its merge); none for a merge onto main.
     pub ticket: Option<u64>,
+    /// The pull request it names: its ticket's (the one its events name, else the newest on
+    /// GitHub that closes it), or a merge onto main's.
+    pub pr: Option<u64>,
     pub style: Style,
     /// What it is drawn in: [`style_colour`] of its style and ticket.
     pub colour: Rgb,
@@ -86,7 +99,7 @@ pub struct Bar {
 
 impl Bar {
     fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, tooltip: Vec<String>) -> Self {
-        Self { start, end, label, ticket, style, colour: style_colour(style, ticket), open: false, tooltip }
+        Self { start, end, label, ticket, pr: None, style, colour: style_colour(style, ticket), open: false, tooltip }
     }
 }
 
@@ -141,17 +154,25 @@ pub const TICKETS_KEY: &str = "tickets";
 /// How long a merge's span on the top rows lasts, from its time.
 pub const MERGE_SECONDS: i64 = 10;
 
-/// The rows of `activity` and the merges onto main, as `spec` asks.
+/// The rows of `activity` and the merges onto main, as `spec` asks, with no issues from GitHub.
 #[must_use]
 pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<Node> {
+    rows_with(activity, merges, spec, &Issues::default())
+}
+
+/// The rows, as [`rows`], with what GitHub's `issues` say of the tickets: their titles first in
+/// the tooltips, and on the bars' labels when `spec.titles` asks (#17).
+#[must_use]
+pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
+    let text = Text { issues, titles: spec.titles };
     let mut rows = vec![
-        Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets) },
-        Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets) },
+        Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
+        Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets, issues) },
     ];
     match spec.grouping {
-        Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY)),
-        Grouping::Workers => rows.extend(by_workers(activity, &tickets)),
+        Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY, text)),
+        Grouping::Workers => rows.extend(by_workers(activity, &tickets, text)),
     }
     if spec.collapse { collapsed(rows) } else { rows }
 }
@@ -170,7 +191,7 @@ fn collapsed(nodes: Vec<Node>) -> Vec<Node> {
 }
 
 /// Machine / worker / its packed rows; tickets no worker held go last, under "no worker".
-fn by_workers(activity: &Activity, tickets: &[Ticket]) -> Vec<Node> {
+fn by_workers(activity: &Activity, tickets: &[Ticket], text: Text<'_>) -> Vec<Node> {
     let mut machines: BTreeMap<String, BTreeMap<String, Vec<&Ticket>>> = BTreeMap::new();
     let mut unheld = Vec::new();
     for ticket in tickets {
@@ -186,17 +207,35 @@ fn by_workers(activity: &Activity, tickets: &[Ticket]) -> Vec<Node> {
                 .into_iter()
                 .map(|(name, held)| {
                     let key = format!("w/{machine}/{name}");
-                    Node::Group { children: packed(&held, &key), key, name }
+                    Node::Group { children: packed(&held, &key, text), key, name }
                 })
                 .collect();
             Node::Group { key: format!("w/{machine}"), name: machine, children }
         })
         .collect();
-    let unheld = packed(&unheld, "w/-");
+    let unheld = packed(&unheld, "w/-", text);
     if !unheld.is_empty() {
         groups.push(Node::Group { key: "w/-".into(), name: "no worker".into(), children: unheld });
     }
     groups
+}
+
+/// What labels and tooltips say besides the events: GitHub's issues, and whether bars carry titles.
+#[derive(Clone, Copy)]
+struct Text<'a> {
+    issues: &'a Issues,
+    titles: bool,
+}
+
+/// The lines a ticket's tooltips start with: what GitHub says of it (its title, state and labels,
+/// its pull request), else `#170 · PR #173`.
+fn ticket_lines(ticket: &Ticket, issues: &Issues) -> Vec<String> {
+    titles::header(issues, ticket.issue, ticket.pr, None).unwrap_or_else(|| vec![ticket.title()])
+}
+
+/// The ticket's pull request: the one its events name, else the newest on GitHub that closes it.
+fn ticket_pr(ticket: &Ticket, issues: &Issues) -> Option<u64> {
+    ticket.pr.or_else(|| issues.pr_of(ticket.issue, None).map(|pr| pr.number))
 }
 
 /// Where a ticket's bars run: its first stretch's start to its last one's end. `touches` when
@@ -225,12 +264,12 @@ impl Extent {
 /// (first fit by start, the fewest rows for intervals). A later ticket never moves an earlier
 /// one, so the rows keep their keys as the swarm goes on. Tickets with no stretches have no bars
 /// and take no row.
-fn packed(tickets: &[&Ticket], key: &str) -> Vec<Node> {
+fn packed(tickets: &[&Ticket], key: &str, text: Text<'_>) -> Vec<Node> {
     let mut placed: Vec<(Extent, &Ticket)> = tickets.iter().filter_map(|t| Extent::of(t).map(|e| (e, *t))).collect();
     placed.sort_by_key(|(e, t)| (e.start, t.issue));
     let mut rows: Vec<(Extent, Vec<Bar>)> = Vec::new();
     for (extent, ticket) in placed {
-        let bars = ticket.stretches.iter().map(|s| stretch_bar(ticket, s));
+        let bars = ticket.stretches.iter().map(|s| stretch_bar(ticket, s, text));
         match rows.iter_mut().find(|(last, _)| !last.clashes(&extent)) {
             Some(row) => {
                 row.1.extend(bars);
@@ -284,19 +323,22 @@ fn milestones(ticket: &Ticket) -> Vec<String> {
     lines
 }
 
-fn stretch_bar(ticket: &Ticket, stretch: &Stretch) -> Bar {
+fn stretch_bar(ticket: &Ticket, stretch: &Stretch, text: Text<'_>) -> Bar {
     let phase = stretch.phase.name();
     let span = if stretch.open {
         format!("{phase}: {} → … ({} so far)", stretch.start, between(stretch.start, stretch.end))
     } else {
         format!("{phase}: {} → {} ({})", stretch.start, stretch.end, between(stretch.start, stretch.end))
     };
-    let mut tooltip = vec![ticket.title(), span, format!("by {}", stretch.by)];
+    let mut tooltip = ticket_lines(ticket, text.issues);
+    tooltip.extend([span, format!("by {}", stretch.by)]);
     tooltip.extend(stretch.note.iter().cloned());
     tooltip.push(String::new());
     tooltip.extend(milestones(ticket));
-    let label = format!("#{} {phase}", ticket.issue);
-    Bar { open: stretch.open, ..Bar::new(stretch.start, stretch.end, label, Some(ticket.issue), stretch.phase.into(), tooltip) }
+    let titled = text.titles.then(|| titles::label(text.issues, ticket.issue)).flatten();
+    let label = titled.unwrap_or_else(|| format!("#{} {phase}", ticket.issue));
+    let pr = ticket_pr(ticket, text.issues);
+    Bar { open: stretch.open, pr, ..Bar::new(stretch.start, stretch.end, label, Some(ticket.issue), stretch.phase.into(), tooltip) }
 }
 
 /// A merge's span on the top rows: [`MERGE_SECONDS`] from `at`.
@@ -304,38 +346,49 @@ fn merge_end(at: Timestamp) -> Timestamp {
     Timestamp(at.0.saturating_add(MERGE_SECONDS))
 }
 
-fn merged_bars(tickets: &[Ticket]) -> Vec<Bar> {
+fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     let mut bars: Vec<Bar> = tickets
         .iter()
         .filter_map(|ticket| {
             let merged = ticket.merged.as_ref()?;
-            let mut tooltip = vec![format!("{} merged", ticket.title()), merged.t.to_string()];
+            let mut tooltip = ticket_lines(ticket, issues);
+            match tooltip.first_mut() {
+                Some(first) if issues.get(ticket.issue).is_none() => first.push_str(" merged"),
+                _ => tooltip.push("merged".to_owned()),
+            }
+            tooltip.push(merged.t.to_string());
             let by = merged.sub.as_ref().map_or_else(|| format!("by {}", merged.by), |sub| format!("by {} in {sub}", merged.by));
             tooltip.push(by);
             tooltip.push(String::new());
             tooltip.extend(milestones(ticket));
-            Some(Bar::new(merged.t, merge_end(merged.t), format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip))
+            let pr = merged.pr.or_else(|| ticket_pr(ticket, issues));
+            Some(Bar { pr, ..Bar::new(merged.t, merge_end(merged.t), format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip) })
         })
         .collect();
     bars.sort_by_key(|b| (b.start, b.ticket));
     bars
 }
 
-fn main_bars(merges: &[MainMerge], tickets: &[Ticket]) -> Vec<Bar> {
-    let mut bars: Vec<Bar> = merges.iter().map(|m| main_bar(m, tickets)).collect();
+fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
+    let mut bars: Vec<Bar> = merges.iter().map(|m| main_bar(m, tickets, issues)).collect();
     bars.sort_by_key(|b| b.start);
     bars
 }
 
-fn main_bar(merge: &MainMerge, tickets: &[Ticket]) -> Bar {
+fn main_bar(merge: &MainMerge, tickets: &[Ticket], issues: &Issues) -> Bar {
     let short = merge.commit.get(..8).unwrap_or(&merge.commit);
     let label = merge.pr.map_or_else(|| short.to_owned(), |pr| format!("PR #{pr}"));
     let mut tooltip = vec![merge.subject.clone(), format!("{short} · {}", merge.t)];
+    if let Some(pr) = merge.pr
+        && let Some(title) = titles::title(issues, pr)
+    {
+        tooltip.insert(0, format!("PR #{pr} {}", titles::short(title, titles::TOOLTIP_TITLE)));
+    }
     if let Some(pr) = merge.pr {
         let closed: Vec<String> = tickets.iter().filter(|t| t.merged.as_ref().is_some_and(|m| m.pr == Some(pr))).map(|t| format!("#{}", t.issue)).collect();
         tooltip.push(if closed.is_empty() { "no ticket's merge names it".to_owned() } else { format!("merged {}", closed.join(", ")) });
     }
-    Bar::new(merge.t, merge_end(merge.t), label, None, Style::MainMerge, tooltip)
+    Bar { pr: merge.pr, ..Bar::new(merge.t, merge_end(merge.t), label, None, Style::MainMerge, tooltip) }
 }
 
 #[cfg(test)]
@@ -414,6 +467,66 @@ mod tests {
         assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
         assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
         assert!(bars[1].tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bars[1].tooltip);
+    }
+
+    #[test]
+    fn with_githubs_issues_a_tooltip_starts_with_the_title_then_state_and_labels() {
+        let activity = Activity::of(&sample());
+        let issues = crate::titles::tests::issues();
+        let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        let working = &bars[1];
+        assert_eq!(
+            working.tooltip[..4],
+            [
+                "#170 The spec, written down",
+                "closed · type::task, area::docs · by cmaughan",
+                "PR #173 Spec: the first draft (merged)",
+                "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)"
+            ]
+        );
+        assert!(working.tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "then today's lines: {:?}", working.tooltip);
+        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 The spec, written down"; 3], "every bar of it carries its title");
+        assert!(bars.iter().all(|b| b.pr == Some(173)));
+        let Node::Ranges { bars: main, .. } = &rows[0] else { panic!() };
+        assert_eq!(main[0].tooltip[0], "PR #173 Spec: the first draft", "a merge onto main says its PR's title");
+        assert_eq!((main[0].pr, main[1].pr), (Some(173), Some(174)));
+        assert_eq!(main[1].tooltip[0], "Merge pull request #174 from mornycorp/progress-7", "GitHub didn't list #174");
+        let Node::Ranges { bars: merged, .. } = &rows[1] else { panic!() };
+        assert_eq!(merged[0].tooltip[0], "#170 The spec, written down");
+        assert_eq!(merged[0].tooltip[3], "merged");
+        assert_eq!(merged[0].label, "#170", "the top rows' spans are too short for titles");
+        // Titles off: the labels name the phase again; the tooltips keep the title.
+        let rows = rows_with(&activity, &merges(), RowsSpec { titles: false, ..RowsSpec::default() }, &issues);
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        assert_eq!(bars[1].label, "#170 working");
+        assert_eq!(bars[1].tooltip[0], "#170 The spec, written down");
+    }
+
+    #[test]
+    fn a_ticket_github_doesnt_list_keeps_its_tooltip() {
+        let activity = Activity::of(&sample());
+        let all = crate::titles::tests::issues();
+        let issues = Issues::new(all.iter().filter(|i| i.number != 168).cloned().collect());
+        let with = rows_with(&activity, &[], RowsSpec::default(), &issues);
+        let without = rows(&activity, &[], RowsSpec::default());
+        let of = |rows: &[Node]| -> Vec<Bar> {
+            rows.iter()
+                .flat_map(Node::leaves)
+                .filter_map(|l| if let Node::Ranges { bars, .. } = l { Some(bars.clone()) } else { None })
+                .flatten()
+                .filter(|b| b.ticket == Some(168))
+                .collect()
+        };
+        assert!(!of(&with).is_empty());
+        assert_eq!(of(&with), of(&without), "#168's bars are as they were");
+    }
+
+    #[test]
+    fn rows_spec_reads_back_with_titles_on_by_default() {
+        assert!(RowsSpec::default().titles);
+        let old: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":true}"#).unwrap();
+        assert_eq!(old, RowsSpec { grouping: Grouping::Workers, collapse: true, titles: true }, "a spec from before #17 reads, titles on");
     }
 
     #[test]

@@ -3,7 +3,7 @@
 use std::sync::LazyLock;
 
 use crate::command::Entry;
-use crate::{engine_cmds, factory_cmds, repo_cmds, rows_cmds, stats_cmds};
+use crate::{engine_cmds, factory_cmds, issues_cmds, repo_cmds, rows_cmds, stats_cmds};
 
 static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
     vec![
@@ -20,6 +20,7 @@ static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
         Entry::of::<factory_cmds::PlaceAt>(),
         Entry::of::<factory_cmds::At>(),
         Entry::of::<factory_cmds::TicketBars>(),
+        Entry::of::<issues_cmds::Urls>(),
     ]
 });
 

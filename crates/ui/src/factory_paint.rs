@@ -13,6 +13,7 @@
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScene, GateRun, Happening, HappeningKind, Outcome, Shift, Station, short};
+use swarmception_domain::timeline::Link;
 
 use crate::factory_chip::{CLAIMED, Chip, GATING, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, look_after, paint_chip, rgb};
 use crate::icons;
@@ -41,6 +42,8 @@ pub struct Drawn {
     pub hovered: Option<u64>,
     /// A ticket clicked this frame; `Some(None)` for a click on the floor away from any.
     pub clicked: Option<Option<u64>>,
+    /// A page chosen from a chip's context menu this frame: its issue, or its PR (#17).
+    pub open: Option<Link>,
     /// The journey traced, its legs' labels in order.
     pub journey: Vec<String>,
     /// What each brick in main's wall says, oldest first.
@@ -225,12 +228,13 @@ impl Floor<'_> {
         let glow = if look == Look::Hollow { 0.0 } else { self.fresh(c.age) };
         let highlight = self.marks.hovered.filter(|h| *h == c.issue).map(|_| self.ring());
         paint_chip(&self.painter, rect, &Chip { colour: c.colour, look, label: &c.label, ground: self.pal.card, highlight, glow });
-        self.pointed(rect, c.issue, &c.tooltip);
+        self.pointed(rect, c.issue, c.pr, &c.tooltip);
         rect
     }
 
-    /// The tooltip of ticket `issue`'s chip at `rect`, and whether the pointer is on it or clicks it.
-    fn pointed(&mut self, rect: Rect, issue: u64, tooltip: &[String]) {
+    /// The tooltip of ticket `issue`'s chip at `rect`, whether the pointer is on it or clicks it,
+    /// and its context menu: Open Issue, and Open PR when it has one (`pr`).
+    fn pointed(&mut self, rect: Rect, issue: u64, pr: Option<u64>, tooltip: &[String]) {
         let id = self.ui.scope_id().with(("factory-chip", issue, self.drawn.chips.len()));
         let response = self.ui.interact(rect, id, egui::Sense::click());
         if response.hovered() {
@@ -239,7 +243,19 @@ impl Floor<'_> {
         if response.clicked() {
             self.drawn.clicked = Some(Some(issue));
         }
-        response.on_hover_text(tooltip.join("\n"));
+        let response = response.on_hover_text(tooltip.join("\n"));
+        let mut chosen = None;
+        response.context_menu(|ui| {
+            for link in [Some(Link::Issue(issue)), pr.filter(|pr| *pr != issue).map(Link::Pull)].into_iter().flatten() {
+                if ui.button(link.label()).clicked() {
+                    chosen = Some(link);
+                    ui.close();
+                }
+            }
+        });
+        if chosen.is_some() {
+            self.drawn.open = chosen;
+        }
         self.drawn.chips.push((issue, rect));
         if self.marks.hovered == Some(issue) {
             self.drawn.highlighted.push(issue);
@@ -619,7 +635,7 @@ impl Floor<'_> {
         paint_chip(&self.painter, rect, &Chip { colour: block.colour, look: Look::Plain, label, ground: self.pal.card, highlight, glow: 0.0 });
         self.drawn.marks.push(block.mark.clone());
         match block.issue {
-            Some(issue) => self.pointed(rect, issue, &block.tooltip),
+            Some(issue) => self.pointed(rect, issue, block.pr, &block.tooltip),
             None => self.tooltip(rect, ("block", block.t.0, block.pr), &block.tooltip),
         }
     }
@@ -657,7 +673,7 @@ impl Floor<'_> {
                 }
                 let chip = Chip { colour, look: look_after(happening.kind), label: "", ground: self.pal.card, highlight: None, glow: 0.0 };
                 paint_chip(&self.painter, dot, &chip);
-                self.pointed(line, issue, std::slice::from_ref(&happening.text));
+                self.pointed(line, issue, None, std::slice::from_ref(&happening.text));
             }
             _ => {
                 self.painter.circle_filled(dot.center(), 4.5, happening_colour(happening.kind));

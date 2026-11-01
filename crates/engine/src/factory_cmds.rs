@@ -6,7 +6,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_domain::Node;
-use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, scene};
+use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, scene, titled};
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
@@ -47,6 +47,7 @@ impl Command for At {
         let t = params.t.unwrap_or(last);
         let mut scene = scene(&loaded.activity, &loaded.tracking.merges, t, params.recent.unwrap_or(DEFAULT_RECENT));
         scene.journey = params.ticket.and_then(|issue| journey(&loaded.activity, t, issue));
+        titled(&mut scene, &session.issues.issues);
         Ok(scene)
     }
 }

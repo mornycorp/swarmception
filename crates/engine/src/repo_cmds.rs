@@ -1,4 +1,5 @@
 //! The repository: open one, read its tracking branch again, fetch it, and say what it held.
+//! Each load reads the repository's GitHub issues too, beside the branch (#17).
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -10,6 +11,7 @@ use swarmception_model::Timestamp;
 use crate::command::Command;
 use crate::engine_cmds::NoParams;
 use crate::error::{EngineError, Refusal, Unavailable};
+use crate::issues::IssuesStatus;
 use crate::session::{Job, Session};
 
 /// The most line errors a status lists.
@@ -61,6 +63,8 @@ pub struct StatusResult {
     /// Lines that didn't read, how many, and the first of them.
     pub line_errors: usize,
     pub errors: Vec<LineErrorWire>,
+    /// The repository's GitHub issues: where from, how many, the fetch going on, why it failed.
+    pub issues: IssuesStatus,
 }
 
 fn status(session: &Session) -> StatusResult {
@@ -68,6 +72,7 @@ fn status(session: &Session) -> StatusResult {
         repo: session.repo.as_ref().map(|p| p.display().to_string()),
         job: session.job.as_ref().map(|(job, _)| *job),
         error: session.error.clone(),
+        issues: session.issues.status(),
         ..StatusResult::default()
     };
     let Some(loaded) = &session.loaded else { return status };
@@ -113,7 +118,9 @@ impl Command for Open {
         session.repo = Some(path);
         session.loaded = None;
         session.rebuild();
-        session.start(Job::Read)?;
+        let read = session.start(Job::Read);
+        session.start_issues(true);
+        read?;
         Ok(status(session))
     }
 }
@@ -142,7 +149,9 @@ impl Command for Reload {
     }
 
     fn run(session: &mut Session, _params: NoParams) -> Result<StatusResult, EngineError> {
-        session.start(Job::Read)?;
+        let read = session.start(Job::Read);
+        session.start_issues(false);
+        read?;
         Ok(status(session))
     }
 }
@@ -161,7 +170,9 @@ impl Command for Fetch {
     }
 
     fn run(session: &mut Session, _params: NoParams) -> Result<StatusResult, EngineError> {
-        session.start(Job::Fetch)?;
+        let read = session.start(Job::Fetch);
+        session.start_issues(false);
+        read?;
         Ok(status(session))
     }
 }

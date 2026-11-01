@@ -22,9 +22,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use swarmception_domain::timeline::Link;
 use swarmception_domain::{Grouping, RowsSpec};
-use swarmception_engine::Session;
+use swarmception_engine::{Github, Session};
+
 use swarmception_engine::engine_cmds::NoParams;
+use swarmception_engine::factory_cmds::TicketParams;
+use swarmception_engine::issues_cmds::Urls;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
 
@@ -86,15 +90,25 @@ pub struct Shell {
     error: Option<String>,
     /// The app shows the menus in the system menu bar, so the window draws none.
     native_menu: bool,
+    /// The pages opened from context menus, newest last: what was handed to `ctx.open_url`.
+    opened: Vec<String>,
 }
 
 impl Shell {
     /// The shell over `repo`'s tracking branch, read in the background; `ctx` is woken when the
-    /// read lands.
+    /// read lands. Its GitHub issues come through `gh` on the path, cached in the user's cache
+    /// directory.
     #[must_use]
     pub fn new(ctx: &egui::Context, repo: Option<&Path>) -> Self {
+        Self::with_github(ctx, repo, Github::default())
+    }
+
+    /// As [`Shell::new`], the issues read through `github` (its `gh`, its cache directory).
+    #[must_use]
+    pub fn with_github(ctx: &egui::Context, repo: Option<&Path>, github: Github) -> Self {
         let waker = ctx.clone();
-        let engine = Session::with_waker(Arc::new(move || waker.request_repaint()));
+        let mut engine = Session::with_waker(Arc::new(move || waker.request_repaint()));
+        engine.set_github(github);
         let mut shell = Self {
             engine,
             timeline: TimelinePane::default(),
@@ -107,6 +121,7 @@ impl Shell {
             spec: RowsSpec::default(),
             error: None,
             native_menu: false,
+            opened: Vec::new(),
         };
         if let Some(repo) = repo {
             let result = shell.engine.call::<Open>(OpenParams { path: repo.display().to_string() });
@@ -155,6 +170,17 @@ impl Shell {
         self.status.job.is_some()
     }
 
+    /// Whether the GitHub issues are still being fetched.
+    #[must_use]
+    pub const fn fetching_issues(&self) -> bool {
+        self.status.issues.fetching
+    }
+
+    /// Where on screen ticket `issue`'s first bar on the timeline was drawn last frame.
+    pub fn bar_point(&mut self, issue: u64) -> Option<egui::Pos2> {
+        self.timeline.bar_point(&mut self.engine, issue)
+    }
+
     /// Whether the window leaves its menu bar out because the app shows the menus in the system
     /// menu bar.
     pub const fn set_native_menu(&mut self, native: bool) {
@@ -172,6 +198,29 @@ impl Shell {
             factory: self.ui.panes.factory,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
+            titles: self.spec.titles,
+        }
+    }
+
+    /// The pages opened from the bars' and chips' context menus, oldest first (#17).
+    #[must_use]
+    pub fn opened(&self) -> &[String] {
+        &self.opened
+    }
+
+    /// Opens `link`'s page in the browser: its URL from `ticket.urls`, handed to egui's
+    /// `open_url` (eframe opens it; a test reads it from the frame's output instead).
+    pub fn open_link(&mut self, ctx: &egui::Context, link: Link) {
+        let (number, pull) = match link {
+            Link::Issue(n) => (n, false),
+            Link::Pull(n) => (n, true),
+        };
+        let result = self.engine.call::<Urls>(TicketParams { issue: number });
+        let url = result.as_ref().ok().map(|urls| if pull { urls.pull_url.clone() } else { urls.issue_url.clone() });
+        self.note(result);
+        if let Some(url) = url {
+            ctx.open_url(egui::OpenUrl::new_tab(url.clone()));
+            self.opened.push(url);
         }
     }
 
@@ -188,8 +237,9 @@ impl Shell {
             }
             MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
             MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
-            MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), collapse: None }),
-            MenuAction::Collapse => self.set_rows(SetRowsParams { grouping: None, collapse: Some(!self.spec.collapse) }),
+            MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
+            MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
+            MenuAction::Titles => self.set_rows(SetRowsParams { titles: Some(!self.spec.titles), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
         }
     }
@@ -268,6 +318,11 @@ impl Shell {
             }
         });
         self.light_timeline(ui.ctx());
+        let mut links = self.timeline.take_links();
+        links.extend(self.factory.drawn().open);
+        for link in links {
+            self.open_link(ui.ctx(), link);
+        }
     }
 
     /// The ticket hovered in the factory, its bars selected on the timeline; the person's own
@@ -343,8 +398,9 @@ impl Shell {
             ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / its rows");
             ui.separator();
             ui.toggle_value(&mut spec.collapse, icons::COLLAPSE).on_hover_text("Collapse: leave out rows with nothing in them");
+            ui.toggle_value(&mut spec.titles, icons::TAG).on_hover_text("Titles on bars: label each ticket's bars with its title on GitHub");
             if spec != self.spec {
-                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
+                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse), titles: Some(spec.titles) });
             }
             ui.separator();
             let has = self.timeline.has_data();
@@ -390,6 +446,7 @@ impl Shell {
                 ui.separator();
                 ui.label(format!("{}  {text}", icons::CLOCK));
             }
+            self.issues_note(ui);
             let problem = self.error.as_ref().or(s.error.as_ref());
             if let Some(problem) = problem {
                 ui.separator();
@@ -401,6 +458,40 @@ impl Shell {
                     .on_hover_text(lines.join("\n"));
             }
         });
+    }
+}
+
+impl Shell {
+    /// The status bar's word on the GitHub issues: how many and from where, the fetch going on,
+    /// or why there are none (a warning, never a failed load).
+    fn issues_note(&self, ui: &mut egui::Ui) {
+        let issues = &self.status.issues;
+        if self.status.repo.is_none() {
+            return;
+        }
+        ui.separator();
+        let from = match issues.source {
+            Some(swarmception_engine::issues::IssuesSource::Github) => "from GitHub",
+            Some(swarmception_engine::issues::IssuesSource::Cache) => "cached",
+            None => "",
+        };
+        let mut text = match (&issues.github, issues.issues) {
+            (Some(repo), 0) if issues.source.is_none() => format!("{}  {repo}", icons::ISSUES),
+            (Some(repo), n) => format!("{}  {repo}: {n} issues and PRs {from}", icons::ISSUES),
+            (None, _) => format!("{}  no issues", icons::ISSUES),
+        };
+        if issues.fetching {
+            text.push_str(" · fetching…");
+        }
+        let hover = issues.fetched.map(|t| format!("fetched {t}")).into_iter().chain(issues.cache.iter().map(|c| format!("cached in {c}")));
+        let hover: Vec<String> = hover.chain(issues.error.iter().cloned()).collect();
+        let label = match &issues.error {
+            Some(_) => ui.colored_label(ui.visuals().warn_fg_color, format!("{text} {}", icons::WARNING)),
+            None => ui.label(text),
+        };
+        if !hover.is_empty() {
+            label.on_hover_text(hover.join("\n"));
+        }
     }
 }
 
@@ -429,7 +520,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
         let state = shell.menu_state();
-        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false });
+        assert_eq!(
+            state,
+            MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false, titles: true }
+        );
 
         shell.run_menu(&ctx, MenuAction::Timeline);
         shell.run_menu(&ctx, MenuAction::Factory);
@@ -447,6 +541,10 @@ mod tests {
 
         shell.run_menu(&ctx, MenuAction::Collapse);
         assert!(!shell.menu_state().collapse);
+        shell.run_menu(&ctx, MenuAction::Titles);
+        assert!(!shell.menu_state().titles);
+        assert!(!shell.engine().call::<GetRows>(NoParams {}).unwrap().titles, "the menu runs rows.set");
+
         // No repository: Reload is an error the status bar shows, never a panic.
         shell.run_menu(&ctx, MenuAction::Reload);
         assert!(shell.error.is_some());

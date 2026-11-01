@@ -7,9 +7,11 @@
 //! (`timeline`, `factory`, or both, comma-separated); `--at` puts the factory at a UTC time
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
-//! chip once the factory has drawn it; `--screenshot` saves the window once the timeline has
-//! drawn, then quits, so agents can check the drawing by eye. On macOS the menus are in the system
-//! menu bar ([`mac_menu`]); elsewhere the window draws its own.
+//! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline;
+//! `--no-titles` labels the bars with their phase, not their tickets' titles; `--screenshot`
+//! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
+//! agents can check the drawing by eye. On macOS the menus are in the system menu bar
+//! ([`mac_menu`]); elsewhere the window draws its own.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -46,7 +48,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--no-titles] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -59,6 +61,7 @@ struct Options {
     at: Option<Timestamp>,
     trace: Option<u64>,
     hover: Option<u64>,
+    hover_bar: Option<u64>,
     theme: Option<egui::Theme>,
     size: Option<(f32, f32)>,
     screenshot: Option<PathBuf>,
@@ -80,6 +83,7 @@ impl Options {
                     });
                 }
                 "--collapse" => options.rows.collapse = Some(true),
+                "--no-titles" => options.rows.titles = Some(false),
                 "--panes" => options.panes = Some(panes(&value()?)?),
                 "--at" => {
                     let text = value()?;
@@ -87,6 +91,7 @@ impl Options {
                 }
                 "--trace" => options.trace = Some(issue(&value()?)?),
                 "--hover" => options.hover = Some(issue(&value()?)?),
+                "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
                 "--dark" => options.theme = Some(egui::Theme::Dark),
                 "--light" => options.theme = Some(egui::Theme::Light),
                 "--size" => {
@@ -146,8 +151,10 @@ fn main() -> ExitCode {
         Ok(Box::new(App {
             shell,
             // A hover waits a little longer, for its tooltip.
-            screenshot: options.screenshot.map(|path| Screenshot::new(path, if options.hover.is_some() { 45 } else { SETTLE_FRAMES })),
+            screenshot: options.screenshot.map(|path| Screenshot::new(path, if options.hover.or(options.hover_bar).is_some() { 45 } else { SETTLE_FRAMES })),
             hover: options.hover,
+            hover_bar: options.hover_bar,
+            pointer: None,
             #[cfg(target_os = "macos")]
             menu,
         }))
@@ -185,15 +192,22 @@ struct App {
     screenshot: Option<Screenshot>,
     /// `--hover`: the ticket the pointer is put on.
     hover: Option<u64>,
+    /// `--hover-bar`: the ticket whose bar on the timeline the pointer is put on.
+    hover_bar: Option<u64>,
+    /// Where `--hover` or `--hover-bar` put the pointer last.
+    pointer: Option<egui::Pos2>,
     #[cfg(target_os = "macos")]
     menu: Option<mac_menu::NativeMenu>,
 }
 
 impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        let Some(issue) = self.hover else { return };
-        if let Some((_, rect)) = self.shell.factory().drawn().chips.iter().find(|(i, _)| *i == issue) {
-            raw_input.events.push(egui::Event::PointerMoved(rect.center()));
+        let bar = self.hover_bar.and_then(|issue| self.shell.bar_point(issue));
+        let chip = self.hover.and_then(|issue| self.shell.factory().drawn().chips.iter().find(|(i, _)| *i == issue).map(|(_, rect)| rect.center()));
+        // Moved only when the point moves: each move restarts egui's tooltip delay.
+        if let Some(point) = chip.or(bar).filter(|p| self.pointer.is_none_or(|last| last.distance(*p) > 1.0)) {
+            raw_input.events.push(egui::Event::PointerMoved(point));
+            self.pointer = Some(point);
         }
     }
 
@@ -208,7 +222,7 @@ impl eframe::App for App {
             menu.show(&mut self.shell);
         }
         if let Some(shot) = &mut self.screenshot {
-            let ready = !self.shell.loading() && self.shell.has_timeline();
+            let ready = !self.shell.loading() && !self.shell.fetching_issues() && self.shell.has_timeline();
             shot.step(ui.ctx(), ready);
         }
     }
@@ -274,7 +288,7 @@ mod tests {
     fn options_parse() {
         let options = parse(&["--repo", "../swarm-timeline", "--grouping", "workers", "--collapse", "--dark"]).unwrap();
         assert_eq!(options.repo, Some(PathBuf::from("../swarm-timeline")));
-        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true) });
+        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true), titles: None });
         assert_eq!(options.theme, Some(egui::Theme::Dark));
         assert!(parse(&["--repo"]).is_err());
         assert!(parse(&["--grouping", "tree"]).is_err());
@@ -288,6 +302,9 @@ mod tests {
         let options = parse(&["--trace", "#58", "--hover", "120"]).unwrap();
         assert_eq!((options.trace, options.hover), (Some(58), Some(120)));
         assert!(parse(&["--hover", "x"]).is_err());
+        let options = parse(&["--no-titles", "--hover-bar", "#17"]).unwrap();
+        assert_eq!((options.rows.titles, options.hover_bar), (Some(false), Some(17)));
+
         assert_eq!(parse(&["--help"]), Err(String::new()));
     }
 }

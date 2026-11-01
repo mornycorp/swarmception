@@ -8,11 +8,13 @@
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+pub mod issues;
 pub mod merges;
 pub mod time;
 
 use serde::{Deserialize, Serialize};
 
+pub use issues::{Issue, IssueCache, IssueKind, IssueState, Issues, PrRef, parse_issues};
 pub use merges::{MainMerge, parse_merge};
 pub use time::Timestamp;
 
