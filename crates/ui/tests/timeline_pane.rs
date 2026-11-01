@@ -73,7 +73,49 @@ fn the_first_load_reads_the_clock_and_a_reload_keeps_the_rulers() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// One frame of the shell, 1000 × 700 points, with `events`; y = 120 is in the timeline's rows.
+#[test]
+fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_command() {
+    use timeline_engine::menu_cmds::Toolbar;
+    use timeline_engine::minimap_cmds::VisibilityWire;
+    use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};
+    use timeline_engine::toolbar_cmds::{GetToolbar, ToolbarControl as C};
+    use timeline_engine::wire::ClickModeWire;
+
+    // The spec, before any data and after: the navigate items, the zoom buttons, the measurement.
+    let wanted = [C::Fit, C::ZoomToSelection, C::UndoZoom, C::ZoomIn, C::ZoomOut, C::ZoomFit, C::Measurement];
+    assert_eq!(swarmception_ui::TIMELINE_TOOLBAR, wanted);
+    let mut pane = TimelinePane::default();
+    assert_eq!(pane.widget().session().call::<GetToolbar>(NoParams {}).unwrap().show, wanted);
+
+    let dir = repo();
+    let mut engine = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
+    pane.sync(&engine).unwrap();
+    let fixed = |pane: &mut TimelinePane| {
+        let state = pane.widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
+        (state.scale, state.origin, state.minimap, state.click)
+    };
+    let expected = ("Time".to_owned(), OriginWire::Absolute, VisibilityWire::Always, ClickModeWire::Nearest);
+    assert_eq!(fixed(&mut pane), expected, "set by command on load");
+    let bar = pane.widget().session().call::<Toolbar>(NoParams {}).unwrap();
+    assert_eq!(bar.show, wanted, "the toolbar draws only these");
+    assert_eq!(bar.navigate.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(), ["Fit", "Zoom to Selection", "Undo Zoom"]);
+    assert_eq!(bar.zoom.iter().map(|b| b.control).collect::<Vec<_>>(), [C::ZoomIn, C::ZoomOut, C::ZoomFit], "the zoom buttons are the widget's");
+    assert!(bar.zoom.iter().all(|b| b.item.enabled), "{:?}", bar.zoom);
+
+    // Something moves them (the keyboard, a ruler's menu); the next load fixes them again and
+    // the spec holds.
+    let session = pane.widget().session();
+    session.call::<SetState>(SetStateParams { scale: Some("Unit".to_owned()), origin: Some(OriginWire::Viewport), ..SetStateParams::default() }).unwrap();
+    engine.execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
+    pane.sync(&engine).unwrap();
+    assert_eq!(fixed(&mut pane), expected);
+    assert_eq!(pane.widget().session().call::<GetToolbar>(NoParams {}).unwrap().show, wanted);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// One frame of the shell, 1000 × 700 points, with `events`.
 fn frame(shell: &mut swarmception_ui::Shell, ctx: &egui::Context, events: Vec<egui::Event>) {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
     let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
@@ -98,6 +140,10 @@ fn ctrl_drag_through_the_shell_pans_the_timeline() {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(shell.has_timeline(), "the tracking branch loaded");
+        // A height in the timeline's rows, under the minimap's strip (always shown since #35):
+        // ticket 7's bar's, while the whole swarm shows.
+        frame(&mut shell, &ctx, Vec::new());
+        let y = shell.bar_point(7).expect("ticket 7's bar is drawn").y;
         let window = |shell: &mut swarmception_ui::Shell| {
             let state = shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
             (state.window.start, state.window.end)
@@ -109,12 +155,12 @@ fn ctrl_drag_through_the_shell_pans_the_timeline() {
         let before = window(&mut shell);
         frame(&mut shell, &ctx, vec![egui::Event::ModifiersChanged(modifiers)]);
         let button = |at, pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers };
-        let start = egui::pos2(600.0, 120.0);
+        let start = egui::pos2(600.0, y);
         frame(&mut shell, &ctx, vec![egui::Event::PointerMoved(start), button(start, true)]);
         for x in [570.0, 520.0, 450.0, 400.0] {
-            frame(&mut shell, &ctx, vec![egui::Event::PointerMoved(egui::pos2(x, 120.0))]);
+            frame(&mut shell, &ctx, vec![egui::Event::PointerMoved(egui::pos2(x, y))]);
         }
-        frame(&mut shell, &ctx, vec![button(egui::pos2(400.0, 120.0), false)]);
+        frame(&mut shell, &ctx, vec![button(egui::pos2(400.0, y), false)]);
         let after = window(&mut shell);
         assert!(after.0 > before.0, "{modifiers:?}: the content followed the pointer left: {before:?} → {after:?}");
         assert_eq!(after.1 - after.0, before.1 - before.0, "{modifiers:?}: a pan keeps the span");

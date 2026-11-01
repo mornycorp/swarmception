@@ -1,8 +1,13 @@
 //! The timeline pane: swarm-timeline's widget over the engine's rows. When the engine's rows
 //! move on (a read landed, the rows were set), the pane loads the engine's timeline into the
-//! widget's session, keeping the scale, window and rulers it showed; on the first load it shows
-//! the `Time` scale, the whole swarm, under a Clock ruler (the time of day, UTC). The ruler's
-//! menu still offers the Time ruler (seconds from the axis's origin).
+//! widget's session, keeping the window and rulers it showed; on the first load it shows the
+//! whole swarm, under a Clock ruler (the time of day, UTC). The ruler's menu still offers the Time
+//! ruler (seconds from the axis's origin).
+//!
+//! What the owner fixed (#35) the pane sets by command on every load, and the widget's toolbar
+//! leaves out: the `Time` scale, the absolute origin, the minimap always and a click selecting
+//! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
+//! zoom in / out / fit buttons and the measurement (Δ).
 
 use swarmception_domain::timeline::Link;
 use swarmception_engine::Session;
@@ -12,7 +17,10 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
+use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
+use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams};
+use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
 use timeline_engine::tracks_cmds::{Layout, LayoutParams};
 
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, InstantParams, RangeParams, SelectInstant, Toggle as ToggleRange};
@@ -23,8 +31,22 @@ use timeline_engine::wire::{OriginWire, RulerDomainWire, RulerWire, SpanWire};
 
 use crate::icons;
 
-/// The scale the pane starts on.
+/// The scale the pane shows, always (#35).
 const TIME: &str = swarmception_domain::timeline::TIME;
+
+/// The widget's toolbar controls the pane shows (#35, the owner's): the navigate items, the zoom
+/// buttons and the measurement. The scale, origin, minimap and click mode are fixed by command
+/// on each load instead; the tracks checklist, the window's fields and the overlays aren't
+/// wanted.
+pub const TOOLBAR: [ToolbarControl; 7] = [
+    ToolbarControl::Fit,
+    ToolbarControl::ZoomToSelection,
+    ToolbarControl::UndoZoom,
+    ToolbarControl::ZoomIn,
+    ToolbarControl::ZoomOut,
+    ToolbarControl::ZoomFit,
+    ToolbarControl::Measurement,
+];
 
 /// Where the timeline is looking, as clock times on the `Time` scale (none on another scale).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -69,14 +91,10 @@ pub struct TimelinePane {
 
 impl Default for TimelinePane {
     fn default() -> Self {
-        Self {
-            widget: timeline_egui::Timeline::new(timeline_engine::Session::new()),
-            loaded: None,
-            has_data: false,
-            saved: None,
-            links: Vec::new(),
-            rect: None,
-        }
+        let mut session = timeline_engine::Session::new();
+        // The session keeps the toolbar's spec across loads: set once.
+        let _ = session.call::<SetToolbar>(ToolbarSetParams { show: Some(TOOLBAR.to_vec()), hide: Vec::new() });
+        Self { widget: timeline_egui::Timeline::new(session), loaded: None, has_data: false, saved: None, links: Vec::new(), rect: None }
     }
 }
 
@@ -154,14 +172,19 @@ impl TimelinePane {
         let session = self.widget.session();
         session.load(timeline);
         self.has_data = true;
-        let origin = Some(OriginWire::Absolute);
+        Self::fix_view(session);
         let restored = before.and_then(|(scale, window, rulers)| {
-            session.call::<Set>(SetParams { scale: Some(scale), window: Some(window), origin, ..SetParams::default() }).ok().map(|_| rulers)
+            let window = (scale == TIME).then_some(window);
+            session.call::<Set>(SetParams { window, ..SetParams::default() }).ok().map(|_| (window.is_some(), rulers))
         });
         match restored {
-            Some(rulers) => self.restore_rulers(&rulers),
+            Some((kept, rulers)) => {
+                if !kept {
+                    let _ = session.call::<Fit>(NoParams {});
+                }
+                self.restore_rulers(&rulers);
+            }
             None => {
-                let _ = session.call::<Set>(SetParams { scale: Some(TIME.to_owned()), origin, ..SetParams::default() });
                 let _ = session.call::<Fit>(NoParams {});
                 let _ = session.call::<SetRuler>(SetRulerParams { ruler: 0, domain: Some(RulerDomainWire::Clock), origin: None });
             }
@@ -169,12 +192,21 @@ impl TimelinePane {
         Ok(())
     }
 
+    /// What the owner fixed (#35), by command: the `Time` scale, the absolute origin, the minimap
+    /// always, a click selecting the nearest bar.
+    fn fix_view(session: &mut timeline_engine::Session) {
+        let _ = session.call::<Set>(SetParams { scale: Some(TIME.to_owned()), origin: Some(OriginWire::Absolute), ..SetParams::default() });
+        let _ = session.call::<SetVisibility>(VisibilityParams { visibility: VisibilityWire::Always });
+        let _ = session.call::<SetClickMode>(ClickModeParams { mode: ClickModeWire::Nearest });
+    }
+
     /// Shows the whole swarm.
     pub fn fit(&mut self) {
         let _ = self.widget.session().call::<Fit>(NoParams {});
     }
 
-    /// Zooms about the window's centre: 2 shows half as much.
+    /// Zooms about the window's centre: 2 shows half as much. (The widget's toolbar has the zoom
+    /// buttons since #35; this is for a host or a test to drive it.)
     pub fn zoom(&mut self, factor: f64) {
         let _ = self.widget.session().call::<Zoom>(ZoomParams { factor, ..ZoomParams::default() });
     }
