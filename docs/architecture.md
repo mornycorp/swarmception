@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the repository's GitHub issues: titles, tooltips, Open Issue / Open PR) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (an abandoned ticket ends with its holder's session) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -40,7 +40,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   and applies what another instance ends (`of` on `session.stop` and `release`), and keeps every
   issue event in time order. `tickets` reads each ticket's life from them: when it was claimed,
   began, finished (its submit) and merged, and its stretches (claimed, working, waiting for merge,
-  sent back, stopped). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
+  sent back, stopped); a claimed, working or sent back stretch ends where its holder's session
+  ended, the ticket *abandoned* (#28: `Ticket::abandoned`, the bar's tooltip says whose session
+  ended when, and the factory puts it on the shelf then). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed), under two rows at the top, the merges onto `main` and the tickets'
   merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
   `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
@@ -207,6 +209,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | An abandoned ticket: a claimed, working or sent back stretch ends where its holder's session did (#28) |
 | 2026-11-01 | minor | The repository's GitHub issues: fetched with `gh`, cached per repository; titles on bars and first in tooltips; `ticket.urls` and the bars' and chips' Open Issue / Open PR (#17) |
 | 2026-11-01 | minor | A colour per ticket from `colours`
 , shared with the factory; the top rows as 10 s spans; bars carry their ticket and colour, no more pins (#15) |

@@ -96,6 +96,18 @@ pub struct Agent {
     pub events: usize,
 }
 
+impl Agent {
+    /// The session of its that ended after `t` was in it, when it did end: the one going at `t`,
+    /// else its last before `t` (`t` came after it left). None while that session goes on: one
+    /// with no `session.stop` (its own, a `finish`'s or another's `of`) is live to the last
+    /// event, as the tracking format has it, and as statistics' *on shift* reads it.
+    #[must_use]
+    pub fn session_ended_after(&self, t: Timestamp) -> Option<&Session> {
+        let session = self.sessions.iter().find(|s| s.span.end >= t).or_else(|| self.sessions.last())?;
+        (!session.span.open).then_some(session)
+    }
+}
+
 /// A line that didn't read, by file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileError {

@@ -9,7 +9,17 @@
 //! - `stop done` while claimed or worked on ends the stretch and marks the ticket done without a
 //!   merge (its output was something else, such as new issues); after a `submit` it changes
 //!   nothing, as the ticket waits for its merge;
-//! - `release` ends the stretch, and `merge` ends it and marks the ticket merged.
+//! - `release` ends the stretch, and `merge` ends it and marks the ticket merged;
+//! - a *claimed*, *working* or *sent back* stretch ends where its holder's session ended (#28),
+//!   and the ticket reads as *abandoned*: the holder is the instance that last claimed, worked
+//!   on or submitted it, and its session the one going when it did (its last before, when that
+//!   had ended already: sent back after its worker left, it is abandoned at the send-back). A
+//!   session ends at its `session.stop` (a `cargo xtask finish` logs one), a coordinator's
+//!   `session.stop --of` it, or its next `session.start`. A session that never logged a stop is
+//!   still going, as the tracking format says of a dead agent's until the coordinator ends it,
+//!   and as the statistics' *on shift* and the factory's actors read it: it ends nothing. A
+//!   *waiting* stretch waits for the coordinator, and a *stopped* one was set down on purpose,
+//!   so neither is abandoned. A later claim or work, by anyone, begins a new stretch as usual.
 //!
 //! What nothing ended runs to the last event of all, open.
 
@@ -59,6 +69,37 @@ pub struct Stretch {
     pub by: String,
     /// The note or reason the event that began it carried.
     pub note: Option<String>,
+    /// Its holder's session ended, which ended it.
+    pub abandoned: Option<Abandoned>,
+}
+
+/// A ticket left by its holder: the session of the instance that held it ended with a claimed,
+/// working or sent back stretch going on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Abandoned {
+    /// When the session ended.
+    pub t: Timestamp,
+    /// The instance that held it, and the one that ended its session when another did (a
+    /// coordinator's `session.stop --of`).
+    pub holder: String,
+    pub ended_by: Option<String>,
+}
+
+impl Abandoned {
+    /// `abandoned: <instance>'s session ended <t>`, and who ended it when another did.
+    #[must_use]
+    pub fn text(&self) -> String {
+        let by = self.ended_by.as_ref().map(|by| format!(" (ended by {by})")).unwrap_or_default();
+        format!("abandoned: {}'s session ended {}{by}", self.holder, self.t)
+    }
+}
+
+/// Who holds a ticket: the instance that last claimed, worked on or submitted it, a gate's events
+/// included, and when.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hold {
+    pub instance: String,
+    pub since: Timestamp,
 }
 
 /// A ticket's merge.
@@ -93,6 +134,11 @@ pub struct Ticket {
     pub merged: Option<Merged>,
     /// Its last `stop done` while claimed or worked on: it finished without a merge.
     pub done: Option<Done>,
+    /// Its holder's session ended with it claimed, worked on or sent back, and nothing took it
+    /// up after: neither open nor done.
+    pub abandoned: Option<Abandoned>,
+    /// Who holds it, whose session ending abandons it.
+    pub holder: Option<Hold>,
     pub stretches: Vec<Stretch>,
     /// The instance that claimed it or worked on it last, not counting a gate's events.
     pub worker: Option<String>,
@@ -102,7 +148,20 @@ pub struct Ticket {
 
 impl Ticket {
     fn new(issue: u64, first: Timestamp) -> Self {
-        Self { issue, pr: None, claimed: None, began: None, finished: None, merged: None, done: None, stretches: Vec::new(), worker: None, first }
+        Self {
+            issue,
+            pr: None,
+            claimed: None,
+            began: None,
+            finished: None,
+            merged: None,
+            done: None,
+            abandoned: None,
+            holder: None,
+            stretches: Vec::new(),
+            worker: None,
+            first,
+        }
     }
 
     /// `#<issue>`, or `#<issue> · PR #<pr>`.
@@ -125,7 +184,36 @@ impl Ticket {
 
     fn begin(&mut self, phase: Phase, event: &IssueEvent, note: Option<String>) {
         self.end(event.t);
-        self.stretches.push(Stretch { phase, start: event.t, end: event.t, open: true, by: event.instance.clone(), note });
+        self.abandoned = None;
+        self.stretches.push(Stretch { phase, start: event.t, end: event.t, open: true, by: event.instance.clone(), note, abandoned: None });
+    }
+
+    /// Ends a claimed, working or sent back stretch where its holder's session ended, when that
+    /// came before `before` (none: at any time): the ticket was abandoned.
+    fn lapse(&mut self, before: Option<Timestamp>, activity: &Activity) {
+        let Some(hold) = &self.holder else { return };
+        let Some(open) = self.stretches.last_mut().filter(|s| s.open && matches!(s.phase, Phase::Claimed | Phase::Working | Phase::SentBack)) else {
+            return;
+        };
+        let Some(session) = activity.agent(&hold.instance).and_then(|a| a.session_ended_after(hold.since)) else { return };
+        if before.is_some_and(|before| session.span.end >= before) {
+            return;
+        }
+        let abandoned = Abandoned { t: session.span.end.max(open.start), holder: hold.instance.clone(), ended_by: session.ended_by.clone() };
+        open.end = abandoned.t;
+        open.open = false;
+        open.abandoned = Some(abandoned.clone());
+        self.abandoned = Some(abandoned);
+    }
+
+    /// Who holds it, and its worker: a claim, work or submit's instance (a gate's not a worker).
+    fn hold(&mut self, event: &IssueEvent) {
+        if matches!(event.kind, Kind::Claim { .. } | Kind::Work { .. } | Kind::Submit { .. }) {
+            self.holder = Some(Hold { instance: event.instance.clone(), since: event.t });
+            if event.sub.is_none() {
+                self.worker = Some(event.instance.clone());
+            }
+        }
     }
 
     /// Begins `phase` with `event`, unless the ticket is in one of `unless` already.
@@ -137,9 +225,7 @@ impl Ticket {
 
     fn read(&mut self, event: &IssueEvent) {
         self.pr = event.kind.mr().or(self.pr);
-        if event.sub.is_none() && matches!(event.kind, Kind::Claim { .. } | Kind::Work { .. } | Kind::Submit { .. }) {
-            self.worker = Some(event.instance.clone());
-        }
+        self.hold(event);
         match &event.kind {
             Kind::Claim { .. } => {
                 self.claimed = self.claimed.or(Some(event.t));
@@ -158,6 +244,7 @@ impl Ticket {
             Kind::Release { .. } => self.end(event.t),
             Kind::Merge { mr, .. } => {
                 self.end(event.t);
+                self.abandoned = None;
                 self.merged = Some(Merged { t: event.t, pr: mr.or(self.pr), by: event.instance.clone(), sub: event.sub.clone() });
             }
             _ => {}
@@ -186,10 +273,13 @@ pub fn tickets(activity: &Activity) -> Vec<Ticket> {
     let last = activity.extent.map_or(Timestamp::default(), |(_, end)| end);
     let mut tickets: BTreeMap<u64, Ticket> = BTreeMap::new();
     for event in &activity.issue_events {
-        tickets.entry(event.issue).or_insert_with(|| Ticket::new(event.issue, event.t)).read(event);
+        let ticket = tickets.entry(event.issue).or_insert_with(|| Ticket::new(event.issue, event.t));
+        ticket.lapse(Some(event.t), activity);
+        ticket.read(event);
     }
     let mut tickets: Vec<Ticket> = tickets.into_values().collect();
     for ticket in &mut tickets {
+        ticket.lapse(None, activity);
         if let Some(open) = ticket.stretches.last_mut().filter(|s| s.open) {
             open.end = last.max(open.start);
         }
@@ -224,14 +314,153 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn work_nothing_ended_runs_on() {
+    fn work_whose_session_a_coordinator_ended_is_abandoned_there() {
         let activity = Activity::of(&sample());
         let ticket = &tickets(&activity)[0];
         assert_eq!(ticket.stretches.len(), 1);
-        assert!(ticket.stretches[0].open);
+        assert!(!ticket.stretches[0].open);
         assert_eq!(ticket.stretches[0].end.to_string(), "2026-10-31T05:00:00Z");
+        let abandoned = ticket.abandoned.as_ref().unwrap();
+        assert_eq!(abandoned.text(), "abandoned: mini-dead01's session ended 2026-10-31T05:00:00Z (ended by mini-8d44f3)");
+        assert_eq!(ticket.stretches[0].abandoned.as_ref(), Some(abandoned));
         assert_eq!(ticket.claimed, None);
-        assert!(ticket.merged.is_none());
+        assert!(ticket.merged.is_none() && ticket.done.is_none());
+    }
+
+    /// Tickets whose holders left, each in its own file: #40 worked on till its worker's
+    /// `session.stop` at 01:10, then taken up and merged by worker-3; #41 worked on by a session
+    /// that never logged a stop; #42 and #43 (working, then stopped blocked) held by a session the
+    /// coordinator ends at 04:00; #44 sent back after its worker had left; #45 claimed by a
+    /// session its instance's next `session.start` ends; #46 submitted, then its worker left.
+    pub(crate) const ABANDONED: [(&str, &str); 7] = [
+        (
+            "m-1",
+            r#"{"event":"session.start","machine":"m","name":"worker-1","role":"worker","t":"2026-10-31T01:00:00Z"}
+{"event":"claim","issue":40,"t":"2026-10-31T01:00:10Z"}
+{"event":"work","issue":40,"t":"2026-10-31T01:00:15Z"}
+{"event":"session.stop","note":"review done","t":"2026-10-31T01:10:00Z"}"#,
+        ),
+        (
+            "m-2",
+            r#"{"event":"session.start","machine":"m","name":"worker-2","role":"worker","t":"2026-10-31T01:05:00Z"}
+{"event":"claim","issue":41,"t":"2026-10-31T01:05:10Z"}
+{"event":"work","issue":41,"t":"2026-10-31T01:05:20Z"}"#,
+        ),
+        (
+            "m-3",
+            r#"{"event":"session.start","machine":"m","name":"worker-3","role":"worker","t":"2026-10-31T02:00:00Z"}
+{"event":"claim","issue":40,"mr":50,"t":"2026-10-31T02:00:10Z"}
+{"event":"work","issue":40,"t":"2026-10-31T02:00:20Z"}
+{"event":"submit","issue":40,"mr":50,"t":"2026-10-31T02:30:00Z"}
+{"event":"session.stop","t":"2026-10-31T02:40:00Z"}"#,
+        ),
+        (
+            "m-4",
+            r#"{"event":"session.start","machine":"m","name":"worker-4","role":"worker","t":"2026-10-31T01:20:00Z"}
+{"event":"claim","issue":42,"t":"2026-10-31T01:20:10Z"}
+{"event":"work","issue":42,"t":"2026-10-31T01:20:20Z"}
+{"event":"claim","issue":43,"t":"2026-10-31T01:25:00Z"}
+{"event":"stop","issue":43,"reason":"blocked","t":"2026-10-31T01:26:00Z"}"#,
+        ),
+        (
+            "m-5",
+            r#"{"event":"session.start","machine":"m","name":"worker-5","role":"worker","t":"2026-10-31T01:30:00Z"}
+{"event":"claim","issue":44,"mr":51,"t":"2026-10-31T01:30:10Z"}
+{"event":"work","issue":44,"t":"2026-10-31T01:30:20Z"}
+{"event":"submit","issue":44,"mr":51,"t":"2026-10-31T01:40:00Z"}
+{"event":"claim","issue":46,"mr":52,"t":"2026-10-31T01:41:00Z"}
+{"event":"submit","issue":46,"mr":52,"t":"2026-10-31T01:42:00Z"}
+{"event":"session.stop","t":"2026-10-31T01:45:00Z"}"#,
+        ),
+        (
+            "m-6",
+            r#"{"event":"session.start","machine":"m","name":"worker-6","role":"worker","t":"2026-10-31T01:00:00Z"}
+{"event":"claim","issue":45,"t":"2026-10-31T01:01:00Z"}
+{"event":"session.start","machine":"m","name":"worker-6","role":"worker","t":"2026-10-31T01:30:00Z"}"#,
+        ),
+        (
+            "m-c",
+            r#"{"event":"session.start","machine":"m","name":"coordinator","role":"coordinator","t":"2026-10-31T00:59:00Z"}
+{"event":"sendback","issue":44,"mr":51,"note":"tests fail","t":"2026-10-31T02:00:00Z"}
+{"event":"merge","issue":40,"mr":50,"t":"2026-10-31T03:00:00Z"}
+{"event":"session.stop","of":"m-4","note":"silent 3 h","t":"2026-10-31T04:00:00Z"}"#,
+        ),
+    ];
+
+    pub(crate) fn abandoned() -> Vec<swarmception_model::AgentFile> {
+        ABANDONED.iter().map(|(instance, text)| swarmception_model::parse_file(instance, text)).collect()
+    }
+
+    fn ticket(tickets: &[Ticket], issue: u64) -> &Ticket {
+        tickets.iter().find(|t| t.issue == issue).unwrap()
+    }
+
+    fn spans(ticket: &Ticket) -> Vec<(Phase, String, String, bool, Option<String>)> {
+        ticket.stretches.iter().map(|s| (s.phase, s.start.to_string(), s.end.to_string(), s.open, s.abandoned.as_ref().map(|a| a.holder.clone()))).collect()
+    }
+
+    fn at(text: &str) -> String {
+        format!("2026-10-31T{text}Z")
+    }
+
+    #[test]
+    fn work_ends_where_its_workers_session_did_and_another_takes_it_up() {
+        let tickets = tickets(&Activity::of(&abandoned()));
+        let ticket = ticket(&tickets, 40);
+        assert_eq!(
+            spans(ticket),
+            [
+                (Phase::Claimed, at("01:00:10"), at("01:00:15"), false, None),
+                (Phase::Working, at("01:00:15"), at("01:10:00"), false, Some("m-1".to_owned())),
+                (Phase::Claimed, at("02:00:10"), at("02:00:20"), false, None),
+                (Phase::Working, at("02:00:20"), at("02:30:00"), false, None),
+                (Phase::Waiting, at("02:30:00"), at("03:00:00"), false, None),
+            ],
+            "abandoned at worker-1's stop; worker-3's claim begins anew, and its stop after the submit leaves the wait alone"
+        );
+        assert_eq!(ticket.stretches[1].abandoned.as_ref().map(Abandoned::text).as_deref(), Some("abandoned: m-1's session ended 2026-10-31T01:10:00Z"));
+        assert_eq!(ticket.abandoned, None, "taken up and merged: not abandoned");
+        assert!(ticket.merged.is_some());
+        assert_eq!(ticket.worker.as_deref(), Some("m-3"));
+    }
+
+    #[test]
+    fn a_holder_whose_session_goes_on_keeps_it_open() {
+        let tickets = tickets(&Activity::of(&abandoned()));
+        let ticket = ticket(&tickets, 41);
+        assert_eq!(spans(ticket)[1], (Phase::Working, at("01:05:20"), at("04:00:00"), true, None), "no stop logged: still going, to the last event");
+        assert_eq!(ticket.abandoned, None);
+    }
+
+    #[test]
+    fn a_coordinators_stop_of_a_dead_session_abandons_what_it_held_but_not_what_it_stopped() {
+        let tickets = tickets(&Activity::of(&abandoned()));
+        let working = ticket(&tickets, 42);
+        assert_eq!(spans(working)[1], (Phase::Working, at("01:20:20"), at("04:00:00"), false, Some("m-4".to_owned())));
+        assert_eq!(working.abandoned.as_ref().and_then(|a| a.ended_by.as_deref()), Some("m-c"));
+        let stopped = ticket(&tickets, 43);
+        assert_eq!(spans(stopped)[1], (Phase::Stopped, at("01:26:00"), at("04:00:00"), true, None), "set down on purpose: stays stopped");
+        assert_eq!(stopped.abandoned, None);
+    }
+
+    #[test]
+    fn sent_back_after_its_worker_left_is_abandoned_at_the_send_back() {
+        let tickets = tickets(&Activity::of(&abandoned()));
+        let ticket = ticket(&tickets, 44);
+        assert_eq!(
+            spans(ticket)[2..],
+            [(Phase::Waiting, at("01:40:00"), at("02:00:00"), false, None), (Phase::SentBack, at("02:00:00"), at("02:00:00"), false, Some("m-5".to_owned())),]
+        );
+        assert_eq!(ticket.abandoned.as_ref().map(|a| a.t.to_string()), Some(at("02:00:00")));
+    }
+
+    #[test]
+    fn a_new_session_start_ends_the_last_and_a_wait_is_never_abandoned() {
+        let tickets = tickets(&Activity::of(&abandoned()));
+        assert_eq!(spans(ticket(&tickets, 45)), [(Phase::Claimed, at("01:01:00"), at("01:30:00"), false, Some("m-6".to_owned()))]);
+        let waiting = ticket(&tickets, 46);
+        assert_eq!(spans(waiting)[1], (Phase::Waiting, at("01:42:00"), at("04:00:00"), true, None), "submitted: it waits for the coordinator");
+        assert_eq!(waiting.abandoned, None);
     }
 
     #[test]
