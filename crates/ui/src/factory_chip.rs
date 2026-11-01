@@ -14,7 +14,7 @@ use std::collections::{HashMap, HashSet};
 
 use egui::{Align2, Color32, FontId, Rect, Stroke, StrokeKind, vec2};
 use swarmception_domain::colours;
-use swarmception_domain::factory::{CrateState, HappeningKind};
+use swarmception_domain::factory::CrateState;
 
 pub const CLAIMED: Color32 = rgb(colours::CLAIMED);
 pub const WAITING: Color32 = rgb(colours::WAITING);
@@ -22,10 +22,13 @@ pub const SENT_BACK: Color32 = rgb(colours::SENT_BACK);
 pub const STOPPED: Color32 = rgb(colours::STOPPED);
 /// Main's green: a merge onto it, a gate passed.
 pub const PASSED: Color32 = rgb(colours::MAIN_MERGE);
-/// The factory's own: a working border (its fill is the ticket's colour), a run going on.
-pub const WORKING: Color32 = Color32::from_rgb(0xff, 0x8c, 0x1a);
-/// The factory's own: in a gate run.
-pub const GATING: Color32 = Color32::from_rgb(0x22, 0xd3, 0xee);
+/// The factory's own: a working border (its fill is the ticket's colour), a run going on. A soft
+/// orange (hue 24°, saturation 0.5, value 0.95), as soft as the domain's pastels (#34) and clear
+/// of claimed's yellow and sent back's red.
+pub const WORKING: Color32 = Color32::from_rgb(0xf2, 0xa9, 0x79);
+/// The factory's own: in a gate run. A soft cyan (hue 188°, saturation 0.45, value 0.92), clear of
+/// waiting's blue.
+pub const GATING: Color32 = Color32::from_rgb(0x81, 0xdd, 0xeb);
 
 const GLIDE: f64 = 0.7;
 /// A brick's key in [`Motion`], beside its ticket's chip's.
@@ -74,19 +77,6 @@ pub const fn look(state: CrateState) -> Look {
         CrateState::SentBack => Look::Phase(SENT_BACK),
         CrateState::Stopped | CrateState::Shelved => Look::Phase(STOPPED),
         CrateState::Merged | CrateState::Done => Look::Plain,
-    }
-}
-
-/// The look a happening leaves its ticket in, for the ticker's chips.
-#[must_use]
-pub const fn look_after(kind: HappeningKind) -> Look {
-    match kind {
-        HappeningKind::Claimed => Look::Phase(CLAIMED),
-        HappeningKind::Began => Look::Phase(WORKING),
-        HappeningKind::Submitted => Look::Phase(WAITING),
-        HappeningKind::SentBack | HappeningKind::GateFailed => Look::Phase(SENT_BACK),
-        HappeningKind::Stopped | HappeningKind::Released => Look::Phase(STOPPED),
-        HappeningKind::Merged | HappeningKind::Done | HappeningKind::GatePassed | HappeningKind::Landed => Look::Plain,
     }
 }
 
@@ -238,7 +228,6 @@ mod tests {
         let phases = [CrateState::Claimed, CrateState::Working, CrateState::Waiting, CrateState::Gating, CrateState::SentBack, CrateState::Stopped];
         let borders: Vec<Look> = phases.iter().map(|s| look(*s)).collect();
         assert_eq!(borders, [CLAIMED, WORKING, WAITING, GATING, SENT_BACK, STOPPED].map(Look::Phase));
-        assert_eq!(look_after(HappeningKind::Submitted), look(CrateState::Waiting));
     }
 
     #[test]

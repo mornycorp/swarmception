@@ -179,6 +179,27 @@ impl TimelinePane {
         let _ = self.widget.session().call::<Zoom>(ZoomParams { factor, ..ZoomParams::default() });
     }
 
+    /// Shows `start` to `end` (clock times, `timeline.placeAt`'s positions) in the window, on the
+    /// `Time` scale, as much of it as the timeline's extent holds; nothing before the widget has
+    /// data, or for a span outside the extent.
+    pub fn show_span(&mut self, engine: &mut Session, start: Timestamp, end: Timestamp) {
+        if !self.has_data || end <= start {
+            return;
+        }
+        let mut at = |time| engine.call::<PlaceAt>(PlaceAtParams { time }).ok().map(|p| p.position);
+        let Some((start, end)) = at(start).zip(at(end)) else { return };
+        let session = self.widget.session();
+        let Some(state) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline) else { return };
+        if state.scale != TIME {
+            let _ = session.call::<Set>(SetParams { scale: Some(TIME.to_owned()), ..SetParams::default() });
+        }
+        let Some(extent) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.extent) else { return };
+        let (start, end) = (start.max(extent.start), end.min(extent.end));
+        if end > start {
+            let _ = session.call::<Set>(SetParams { window: Some(SpanWire { start, end }), ..SetParams::default() });
+        }
+    }
+
     /// Where the timeline is looking: the pointer, the playhead and the window, as clock times;
     /// none before it has data, and nothing in it on a scale other than `Time`.
     pub fn looking(&mut self, engine: &mut Session) -> Option<Looking> {

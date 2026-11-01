@@ -1,22 +1,24 @@
 //! Drawing the factory's floor from a [`FactoryScene`], with egui's painter: five stations left to
-//! right (up next and the shelf, the benches, the dock, the gate, main), what just happened and
-//! a legend under them. Every ticket is the same chip at every station ([`crate::factory_chip`]):
-//! its fill its own colour, its border its phase, only its size changing. Every chip, bench, run
-//! and brick has its tooltip, the scene's own lines. [`Drawn`] records what each station drew, for
-//! a test to check against `factory.at`.
+//! right (up next and the shelf, the benches, the dock, the gate, main), and the key along the
+//! bottom in a row, two when the pane is narrow (#31). Every ticket is the same chip at every
+//! station ([`crate::factory_chip`]): its fill its own colour, its border its phase, only its size
+//! changing. The benches are short strips (the name, model and helper on one line, the status
+//! under it), in more columns when many workers would not fit in one; the gate is its runs' list
+//! (✔/✖, cause, age) under what it is gating. Every chip, bench, run and brick has its tooltip,
+//! the scene's own lines in colour ([`crate::factory_tip`]). [`Drawn`] records what each station
+//! drew, for a test to check against `factory.at`.
 //!
 //! Hovering a ticket rings it at every station it is drawn at (and the shell selects its bars on
 //! the timeline); clicking it traces its journey through the stations, with the time at each.
-//! Chips glide and resize between stations; nothing else moves by the wall clock: the gate's
-//! press, the gears and the glow of what just happened follow *t*, so a still *t* draws a still
-//! factory.
+//! Chips glide and resize between stations; nothing else moves by the wall clock: the gears and
+//! the glow of what just happened follow *t*, so a still *t* draws a still factory.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
-use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScene, GateRun, Happening, HappeningKind, Outcome, Shift, Station, short};
+use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScene, GateRun, Outcome, Shift, Station, short};
 use swarmception_domain::timeline::Link;
 
-use crate::factory_chip::{CLAIMED, Chip, GATING, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, look_after, paint_chip, rgb};
-use crate::icons;
+use crate::factory_chip::{CLAIMED, Chip, GATING, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb};
+use crate::{factory_tip, icons};
 
 /// What each station drew: the crates by issue, the benches by key, the runs by sub.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,7 +33,6 @@ pub struct Drawn {
     pub runs: Vec<String>,
     pub blocks: usize,
     pub done: Vec<u64>,
-    pub happenings: usize,
     /// How many crates a station had no room for, all told.
     pub hidden: usize,
     /// Every ticket chip drawn (bricks too), and where.
@@ -58,7 +59,65 @@ pub struct Marks {
     pub traced: Option<u64>,
 }
 
-const IDLE: Color32 = Color32::from_rgb(0x7f, 0xb0, 0x8f);
+/// An idle bench: a quiet sea green (hue 150°, saturation 0.34, value 0.76), softer than main's.
+const IDLE: Color32 = Color32::from_rgb(0x80, 0xc2, 0xa1);
+
+/// A row of the key along the bottom.
+const LEGEND_ROW: f32 = 17.0;
+/// A run in the gate's list.
+const RUN_LINE: f32 = 17.0;
+/// The shortest bench that takes its two lines; shorter, it says it all on one.
+const BENCH_TWO_LINES: f32 = 38.0;
+/// The bench strips' heights: the least before taking another column, and the most.
+const BENCH_LEAST: f32 = 42.0;
+const BENCH_MOST: f32 = 56.0;
+/// The narrowest a column of benches gets.
+const BENCH_NARROWEST: f32 = 230.0;
+
+/// A piece of the key, placed: its row, where it starts and how wide it may be, its swatch (none
+/// for the key's title) and its words.
+struct KeyItem {
+    row: usize,
+    x: f32,
+    width: f32,
+    swatch: Option<([u8; 3], Look)>,
+    label: &'static str,
+}
+
+/// How many columns `n` benches take in `room`, and each strip's height: one column while every
+/// strip gets [`BENCH_LEAST`], more (each at least [`BENCH_NARROWEST`] wide, three at most) when
+/// not; the strips no taller than [`BENCH_MOST`].
+fn bench_grid(n: usize, room: Vec2) -> (usize, f32) {
+    let most = ((room.x / BENCH_NARROWEST).floor() as usize).clamp(1, 3);
+    let cols = (1..=most).find(|c| n.div_ceil(*c) as f32 * BENCH_LEAST <= room.y).unwrap_or(most);
+    let rows = n.div_ceil(cols).max(1);
+    (cols, (room.y / rows as f32).min(BENCH_MOST))
+}
+
+/// The chips a bench strip `cell` draws, the one worked on first: small on a one-line strip,
+/// medium then small on a narrow one, else large then medium.
+fn bench_sizes(cell: Rect, compact: bool) -> &'static [Size] {
+    if compact {
+        &[Size::Small, Size::Small]
+    } else if cell.width() < 330.0 {
+        &[Size::Medium, Size::Small]
+    } else {
+        &[Size::Large, Size::Medium, Size::Medium]
+    }
+}
+
+/// A line of `parts`, each in its colour, cut to `width` with an ellipsis.
+fn pieces(painter: &egui::Painter, pos: Pos2, anchor: Align2, parts: &[(String, Color32)], font: FontId, width: f32) -> Rect {
+    let mut job = egui::text::LayoutJob::default();
+    for (text, colour) in parts {
+        job.append(text, 0.0, egui::TextFormat { font_id: font.clone(), color: *colour, ..egui::TextFormat::default() });
+    }
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(1.0));
+    let galley = painter.layout_job(job);
+    let rect = anchor.anchor_size(pos, galley.size());
+    painter.galley(rect.min, galley, Color32::PLACEHOLDER);
+    rect
+}
 
 const fn bench_colour(status: BenchStatus) -> Color32 {
     match status {
@@ -77,17 +136,6 @@ const fn outcome_colour(outcome: Outcome) -> Color32 {
         Outcome::Passed => PASSED,
         Outcome::Failed => SENT_BACK,
         Outcome::Unknown => STOPPED,
-    }
-}
-
-const fn happening_colour(kind: HappeningKind) -> Color32 {
-    match kind {
-        HappeningKind::Claimed => CLAIMED,
-        HappeningKind::Began => WORKING,
-        HappeningKind::Submitted => WAITING,
-        HappeningKind::SentBack | HappeningKind::GateFailed => SENT_BACK,
-        HappeningKind::Stopped | HappeningKind::Released => STOPPED,
-        HappeningKind::Merged | HappeningKind::Done | HappeningKind::GatePassed | HappeningKind::Landed => PASSED,
     }
 }
 
@@ -117,8 +165,9 @@ pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, motion: &mut Motio
     motion.begin(ui.input(|i| i.time), rect);
     let floor_click = ui.interact(rect, ui.scope_id().with("factory-floor"), egui::Sense::click()).clicked();
     let mut floor = Floor { ui, painter: ui.painter_at(rect), pal: Palette::of(ui.visuals()), motion, drawn: Drawn::default(), scene, marks };
-    let strip = (rect.height() * 0.26).clamp(52.0, 118.0);
-    let (stations, under) = rect.split_top_bottom_at_y(rect.max.y - strip);
+    let key = floor.legend_layout(rect.width() - 8.0);
+    let rows = key.iter().map(|item| item.row).max().map_or(1, |r| r + 1);
+    let (stations, under) = rect.split_top_bottom_at_y(rect.max.y - LEGEND_ROW * rows as f32 - 6.0);
     let columns = columns(stations.shrink2(vec2(2.0, 2.0)));
     floor.intake(columns[0]);
     floor.benches(columns[1]);
@@ -128,9 +177,7 @@ pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, motion: &mut Motio
     for pair in columns.windows(2) {
         floor.arrow(pair[0].right(), pair[1].left(), pair[0].center().y);
     }
-    let (ticker, legend) = under.shrink2(vec2(2.0, 4.0)).split_left_right_at_fraction(0.7);
-    floor.ticker(ticker);
-    floor.legend(legend.shrink2(vec2(6.0, 0.0)));
+    floor.legend(under.shrink2(vec2(4.0, 3.0)), &key);
     floor.journey(&columns);
     let mut drawn = floor.drawn;
     if floor_click && drawn.clicked.is_none() {
@@ -142,7 +189,7 @@ pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, motion: &mut Motio
 
 /// The stations' columns, with a gap for the arrows between.
 fn columns(rect: Rect) -> [Rect; 5] {
-    const SHARES: [f32; 5] = [0.11, 0.36, 0.13, 0.17, 0.23];
+    const SHARES: [f32; 5] = [0.10, 0.37, 0.12, 0.19, 0.22];
     const GAP: f32 = 14.0;
     let width = (rect.width() - GAP * 4.0).max(0.0);
     let mut x = rect.left();
@@ -193,7 +240,7 @@ impl Floor<'_> {
 
     fn tooltip(&self, rect: Rect, id: impl std::hash::Hash + std::fmt::Debug, lines: &[String]) {
         let response = self.ui.interact(rect, self.ui.scope_id().with(("factory", id)), egui::Sense::hover());
-        response.on_hover_text(lines.join("\n"));
+        factory_tip::show(response, lines);
     }
 
     /// A station's card: its title and count; the room inside.
@@ -243,7 +290,7 @@ impl Floor<'_> {
         if response.clicked() {
             self.drawn.clicked = Some(Some(issue));
         }
-        let response = response.on_hover_text(tooltip.join("\n"));
+        let response = factory_tip::show(response, tooltip);
         let mut chosen = None;
         response.context_menu(|ui| {
             for link in [Some(Link::Issue(issue)), pr.filter(|pr| *pr != issue).map(Link::Pull)].into_iter().flatten() {
@@ -325,67 +372,75 @@ impl Floor<'_> {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
             return;
         }
-        let cols = if n > 3 && room.width() > 480.0 { 2 } else { 1 };
+        let (cols, height) = bench_grid(n, room.size());
         let rows = n.div_ceil(cols);
-        let height = (room.height() / rows as f32).min(78.0);
         let width = room.width() / cols as f32;
         for (i, bench) in scene.benches.iter().enumerate() {
             let (col, row) = ((i / rows) as f32, (i % rows) as f32);
-            let cell = Rect::from_min_size(room.left_top() + vec2(col * width, row * height), vec2(width, height)).shrink(2.5);
+            let cell = Rect::from_min_size(room.left_top() + vec2(col * width, row * height), vec2(width, height)).shrink2(vec2(2.5, 2.0));
             self.bench(cell, bench);
         }
     }
 
+    /// A bench's strip: the worker, its name, model and helper on one line and its status under
+    /// it (all on one line when the strip is too short for two), its tickets at the right.
     fn bench(&mut self, cell: Rect, bench: &Bench) {
         let status = bench_colour(bench.status);
         let lit = bench.status == BenchStatus::Working;
         let edge = if lit { Stroke::new(1.5, status) } else { Stroke::new(1.0, self.pal.edge) };
         self.painter.rect(cell, 5.0, self.pal.cell, edge, StrokeKind::Inside);
-        let compact = cell.height() < 44.0;
-        let radius = if compact { 8.0 } else { (cell.height() / 2.0 - 8.0).clamp(8.0, 14.0) };
-        let avatar = pos2(cell.left() + 8.0 + radius, cell.center().y);
+        let compact = cell.height() < BENCH_TWO_LINES;
+        let radius = if compact { 8.0 } else { (cell.height() / 2.0 - 7.0).clamp(8.0, 13.0) };
+        let avatar = pos2(cell.left() + 7.0 + radius, cell.center().y);
         self.actor(avatar, radius, bench);
-        let held = bench.crates.len().saturating_sub(1).min(2) as f32;
-        let crates_width = if bench.crates.is_empty() { 0.0 } else { Size::Large.dims().x + 12.0 } + held * (Size::Medium.dims().x + 8.0);
+        let sizes = bench_sizes(cell, compact);
+        let shown = bench.crates.len().min(sizes.len());
+        let crates_width: f32 = sizes.iter().take(shown).map(|s| s.dims().x + 8.0).sum::<f32>() + if shown > 0 { 4.0 } else { 0.0 };
         let text = Rect::from_min_max(pos2(avatar.x + radius + 8.0, cell.top()), pos2(cell.right() - crates_width - 4.0, cell.bottom()));
-        let name = self.bench_text(text, bench, compact);
-        self.helper(bench, name, text.right());
+        let line = self.bench_text(text, bench, compact);
+        self.helper(bench, line, text.right());
         self.tooltip(cell, ("bench", &bench.key), &bench.tooltip);
-        self.bench_crates(cell, bench, compact);
+        self.bench_crates(cell, bench, sizes);
     }
 
-    /// The worker's name, its model and effort, and its status line, in `room`: the name's rect.
+    /// The worker's name, its model and effort beside it, and its status line under them (beside
+    /// them when `compact`), in `room`: the first line's last piece, for the helper to follow.
     fn bench_text(&self, room: Rect, bench: &Bench, compact: bool) -> Rect {
         let width = room.width().max(10.0);
-        let (at, anchor) = if compact { (room.left_center(), Align2::LEFT_CENTER) } else { (room.left_top() + vec2(0.0, 6.0), Align2::LEFT_TOP) };
-        let name = fit(&self.painter, at, anchor, &bench.actor.name, (FontId::proportional(13.0), self.pal.text), width);
-        if compact {
-            return name;
-        }
-        if let Some(model) = bench.actor.model.as_deref().filter(|_| room.height() >= 58.0) {
-            let text = bench.actor.effort.as_ref().map_or_else(|| model_name(model).to_owned(), |e| format!("{} · {e}", model_name(model)));
-            fit(&self.painter, name.left_bottom() + vec2(0.0, 1.0), Align2::LEFT_TOP, &text, (Self::font(10.0), self.pal.weak), width);
-        }
         let line = status_line(bench);
-        fit(&self.painter, room.left_bottom() - vec2(0.0, 6.0), Align2::LEFT_BOTTOM, &line, (Self::font(11.0), bench_colour(bench.status)), width);
-        name
+        let status = (Self::font(11.5), bench_colour(bench.status));
+        let name_font = FontId::proportional(13.0);
+        if compact {
+            let name = fit(&self.painter, room.left_center(), Align2::LEFT_CENTER, &bench.actor.name, (name_font, self.pal.text), width * 0.45);
+            let at = name.right_center() + vec2(8.0, 0.0);
+            return fit(&self.painter, at, Align2::LEFT_CENTER, &line, status, room.right() - at.x);
+        }
+        let first = pos2(room.left(), room.center().y - 1.0);
+        let name = fit(&self.painter, first, Align2::LEFT_BOTTOM, &bench.actor.name, (name_font, self.pal.text), width);
+        let mut last = name;
+        if let Some(model) = bench.actor.model.as_deref() {
+            let text = bench.actor.effort.as_ref().map_or_else(|| model_name(model).to_owned(), |e| format!("{} · {e}", model_name(model)));
+            let at = name.right_bottom() + vec2(7.0, -1.5);
+            if room.right() - at.x > 24.0 {
+                last = fit(&self.painter, at, Align2::LEFT_BOTTOM, &text, (Self::font(10.0), self.pal.weak), room.right() - at.x);
+            }
+        }
+        fit(&self.painter, pos2(room.left(), room.center().y + 2.0), Align2::LEFT_TOP, &line, status, width);
+        last
     }
 
-    /// The ticket the bench works on, large at its right with its progress, and up to two more
-    /// it holds, medium.
-    fn bench_crates(&mut self, cell: Rect, bench: &Bench, compact: bool) {
+    /// The tickets the bench holds, from its right in `sizes`: the one it works on first, with
+    /// its progress under it unless it is small.
+    fn bench_crates(&mut self, cell: Rect, bench: &Bench, sizes: &[Size]) {
         let mut x = cell.right() - 8.0;
         let mut drawn = Vec::new();
-        for (n, c) in bench.crates.iter().take(3).enumerate() {
-            let size = match (n, compact) {
-                (0, false) => Size::Large,
-                (_, false) => Size::Medium,
-                (_, true) => Size::Small,
-            };
-            let y = cell.center().y - if size == Size::Large { 3.0 } else { 0.0 };
+        for (c, size) in bench.crates.iter().zip(sizes) {
+            let size = *size;
+            let barred = drawn.is_empty() && size != Size::Small;
+            let y = cell.center().y - if barred { 3.0 } else { 0.0 };
             let rect = Rect::from_center_size(pos2(x - size.dims().x / 2.0, y), size.dims());
             let drawn_at = self.chip(c, rect.center(), size);
-            if size == Size::Large {
+            if barred {
                 self.progress(drawn_at, c.age, look(c.state));
             }
             drawn.push(c.issue);
@@ -467,12 +522,18 @@ impl Floor<'_> {
         self.more(room, scene.counts.waiting.saturating_sub(shown));
     }
 
+    /// The gate: its counts (passed green, failed red), what it is doing, the tickets in it, and
+    /// its runs, newest first (✔/✖, the run, its tickets and cause, its age) in all the room left.
     fn gate(&mut self, column: Rect) {
         let gate = &self.scene.gate;
-        let room = self.card(column, "GATE", &format!("{} {}  {} {}", icons::CHECK, gate.passed, icons::CROSS, gate.failed));
-        let press = Rect::from_min_size(room.left_top(), vec2(room.width(), (room.height() * 0.42).clamp(54.0, 104.0)));
-        self.press(press);
-        let mut y = press.bottom() + 4.0;
+        let room = self.card(column, "GATE", "");
+        let counts = [
+            (format!("{} {}", icons::CHECK, gate.passed), PASSED),
+            ("   ".to_owned(), self.pal.text),
+            (format!("{} {}", icons::CROSS, gate.failed), if gate.failed > 0 { SENT_BACK } else { self.pal.weak }),
+        ];
+        pieces(&self.painter, pos2(column.right() - 8.0, column.top() + 6.0), Align2::RIGHT_TOP, &counts, Self::font(11.0), room.width() * 0.6);
+        let mut y = room.top();
         let status = match (gate.running.first(), gate.recent.first()) {
             (Some(run), _) => (format!("running {} · {}", run.sub, short(run.age)), WORKING),
             (None, Some(last)) => (format!("idle · last {} {} ago", outcome_word(last.outcome), short(last.age)), self.pal.weak),
@@ -480,14 +541,26 @@ impl Floor<'_> {
         };
         fit(&self.painter, pos2(room.left(), y), Align2::LEFT_TOP, &status.0, (Self::font(11.0), status.1), room.width());
         y += 17.0;
+        if !gate.crates.is_empty() {
+            let chip = Size::Medium.dims();
+            let fits = ((room.width() + 8.0) / (chip.x + 8.0)).floor().max(1.0) as usize;
+            let shown = gate.crates.len().min(fits);
+            for (n, c) in gate.crates.iter().take(shown).enumerate() {
+                let x = room.left() + 4.0 + chip.x / 2.0 + n as f32 * (chip.x + 8.0);
+                self.chip(c, pos2(x, y + 4.0 + chip.y / 2.0), Size::Medium);
+                self.drawn.gate.push(c.issue);
+            }
+            self.drawn.hidden += gate.crates.len() - shown;
+            y += chip.y + 12.0;
+        }
         let runs: Vec<&GateRun> = gate.running.iter().chain(&gate.recent).collect();
         let bottom = room.bottom() - if gate.inspectors.is_empty() { 0.0 } else { 15.0 };
         for (n, run) in runs.iter().enumerate() {
-            if y + 15.0 > bottom {
+            if y + RUN_LINE > bottom {
                 break;
             }
-            self.run_line(Rect::from_min_size(pos2(room.left(), y), vec2(room.width(), 15.0)), run, n);
-            y += 15.0;
+            self.run_line(Rect::from_min_size(pos2(room.left(), y), vec2(room.width(), RUN_LINE)), run, n);
+            y += RUN_LINE;
         }
         let inspectors: Vec<String> = gate.inspectors.iter().map(|a| format!("{} · {}", a.name, shift_word(a.shift))).collect();
         if !inspectors.is_empty() {
@@ -495,57 +568,8 @@ impl Floor<'_> {
         }
     }
 
-    /// The inspection press: its beam and lamp, the piston (down while a run goes, with *t*), and
-    /// the crates being gated on its bed.
-    fn press(&mut self, press: Rect) {
-        let gate = &self.scene.gate;
-        let frame = self.pal.weak;
-        let beam = Rect::from_min_size(press.left_top(), vec2(press.width(), 10.0));
-        let bed = Rect::from_min_max(pos2(press.left(), press.bottom() - 6.0), press.right_bottom());
-        self.painter.rect_filled(beam, 2.0, frame);
-        self.painter.rect_filled(bed, 2.0, frame);
-        for x in [press.left() + 3.0, press.right() - 3.0] {
-            self.painter.line_segment([pos2(x, beam.bottom()), pos2(x, bed.top())], Stroke::new(4.0, frame));
-        }
-        let last = gate.recent.first();
-        let lamp = match (gate.running.is_empty(), last) {
-            (false, _) => (WORKING, 1.0),
-            (true, Some(run)) => (outcome_colour(run.outcome), self.fresh(run.age)),
-            (true, None) => (STOPPED, 0.0),
-        };
-        let lamp_at = beam.center();
-        if lamp.1 > 0.0 {
-            self.painter.circle_filled(lamp_at, 7.0 + 5.0 * lamp.1, lamp.0.gamma_multiply(0.35 * lamp.1));
-        }
-        self.painter.circle(lamp_at, 6.0, if lamp.1 > 0.0 { lamp.0 } else { lamp.0.gamma_multiply(0.5) }, Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.6)));
-        let chip = Size::Medium.dims();
-        let travel = (bed.top() - beam.bottom() - chip.y - 10.0).max(0.0);
-        let stroke = if gate.running.is_empty() {
-            0.0
-        } else {
-            let phase = (self.scene.t.0.rem_euclid(120) as f32) / 120.0 * std::f32::consts::TAU;
-            0.35 + 0.3 * phase.sin()
-        };
-        let head = beam.bottom() + 2.0 + travel * stroke;
-        let piston = Rect::from_center_size(pos2(press.center().x, (beam.bottom() + head) / 2.0), vec2(6.0, head - beam.bottom()));
-        self.painter.rect_filled(piston, 0.0, frame);
-        self.painter.rect_filled(Rect::from_center_size(pos2(press.center().x, head + 2.0), vec2(press.width() * 0.6, 4.0)), 1.0, frame);
-        let inner = press.width() - 14.0;
-        let fits = ((inner + 8.0) / (chip.x + 8.0)).floor().max(1.0) as usize;
-        let gating = &gate.crates;
-        let shown = gating.len().min(fits);
-        let row = shown as f32 * (chip.x + 8.0) - 8.0;
-        for (n, c) in gating.iter().take(shown).enumerate() {
-            let x = press.center().x - row / 2.0 + chip.x / 2.0 + n as f32 * (chip.x + 8.0);
-            self.chip(c, pos2(x, bed.top() - chip.y / 2.0 - 4.0), Size::Medium);
-            self.drawn.gate.push(c.issue);
-        }
-        self.drawn.hidden += gating.len() - shown;
-        for run in &gate.running {
-            self.drawn.runs.push(run.sub.clone());
-        }
-    }
-
+    /// A run in the gate's list: its mark in its outcome's colour, the run, the tickets it gated,
+    /// its cause (red when it failed) and its age; a glow while it is fresh.
     fn run_line(&mut self, line: Rect, run: &GateRun, n: usize) {
         let colour = outcome_colour(run.outcome);
         let fresh = if run.outcome == Outcome::Running { 1.0 } else { self.fresh(run.age) };
@@ -558,16 +582,22 @@ impl Floor<'_> {
             Outcome::Failed => icons::CROSS,
             Outcome::Unknown => "?",
         };
-        let font = Self::font(10.5);
+        let font = Self::font(11.0);
         self.painter.text(line.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER, mark, font.clone(), colour);
         let age = self.painter.text(line.right_center() - vec2(3.0, 0.0), Align2::RIGHT_CENTER, short(run.age), font.clone(), self.pal.weak);
-        let what = run.cause.as_ref().map_or_else(|| run.sub.clone(), |cause| format!("{} · {cause}", run.sub));
-        let width = age.left() - line.left() - 22.0;
-        fit(&self.painter, line.left_center() + vec2(18.0, 0.0), Align2::LEFT_CENTER, &what, (font, self.pal.text), width);
-        self.tooltip(line, ("run", n, &run.sub), &run.tooltip);
-        if run.outcome != Outcome::Running {
-            self.drawn.runs.push(run.sub.clone());
+        let mut what = vec![(run.sub.clone(), self.pal.text)];
+        if !run.issues.is_empty() {
+            let tickets: Vec<String> = run.issues.iter().map(|i| format!("#{i}")).collect();
+            what.push((format!("  {}", tickets.join(" ")), self.pal.weak));
         }
+        if let Some(cause) = &run.cause {
+            let red = matches!(run.outcome, Outcome::Failed);
+            what.push((format!("  {cause}"), if red { SENT_BACK } else { self.pal.weak }));
+        }
+        let width = age.left() - line.left() - 24.0;
+        pieces(&self.painter, line.left_center() + vec2(19.0, 0.0), Align2::LEFT_CENTER, &what, font, width);
+        self.tooltip(line, ("run", n, &run.sub), &run.tooltip);
+        self.drawn.runs.push(run.sub.clone());
     }
 
     fn shipping(&mut self, column: Rect) {
@@ -640,80 +670,62 @@ impl Floor<'_> {
         }
     }
 
-    /// What just happened, newest first, in columns.
-    fn ticker(&mut self, rect: Rect) {
-        let scene = self.scene;
-        self.painter.rect(rect, 6.0, self.pal.card, Stroke::new(1.0, self.pal.edge), StrokeKind::Inside);
-        let title = format!("JUST HAPPENED · the {} before t", short(scene.recent));
-        self.painter.text(rect.left_top() + vec2(8.0, 5.0), Align2::LEFT_TOP, title, Self::font(11.0), self.pal.weak);
-        let room = Rect::from_min_max(rect.left_top() + vec2(8.0, 21.0), rect.right_bottom() - vec2(8.0, 4.0));
-        if scene.happenings.is_empty() {
-            self.painter.text(room.left_top(), Align2::LEFT_TOP, "nothing", Self::font(11.0), self.pal.weak);
-            return;
-        }
-        let per_column = ((room.height() / 15.0).floor().max(1.0)) as usize;
-        let columns = if room.width() > 640.0 { 2 } else { 1 };
-        let width = room.width() / columns as f32;
-        for (n, happening) in scene.happenings.iter().take(per_column * columns).enumerate() {
-            let at = room.left_top() + vec2((n / per_column) as f32 * width, (n % per_column) as f32 * 15.0);
-            self.happening(Rect::from_min_size(at, vec2(width - 8.0, 15.0)), happening);
-            self.drawn.happenings += 1;
-        }
-    }
-
-    /// A line of the ticker: the ticket's chip, tiny, in the look the happening left it in (a
-    /// lamp for the gate and main), its age and what happened; ringed while its ticket is hovered.
-    fn happening(&mut self, line: Rect, happening: &Happening) {
-        let fresh = self.fresh(happening.age);
-        let dot = Rect::from_center_size(line.left_center() + vec2(11.0, 0.0), vec2(18.0, 10.0));
-        match (happening.issue, happening.colour) {
-            (Some(issue), Some(colour)) => {
-                if self.marks.hovered == Some(issue) {
-                    self.painter.rect_filled(line.expand2(vec2(3.0, 0.0)), 3.0, self.ring().gamma_multiply(0.12));
-                }
-                let chip = Chip { colour, look: look_after(happening.kind), label: "", ground: self.pal.card, highlight: None, glow: 0.0 };
-                paint_chip(&self.painter, dot, &chip);
-                self.pointed(line, issue, None, std::slice::from_ref(&happening.text));
-            }
-            _ => {
-                self.painter.circle_filled(dot.center(), 4.5, happening_colour(happening.kind));
-            }
-        }
-        let age = self.painter.text(line.left_center() + vec2(26.0, 0.0), Align2::LEFT_CENTER, short(happening.age), Self::font(10.5), self.pal.weak);
-        let text = self.pal.weak.lerp_to_gamma(self.pal.text, 0.4 + 0.6 * fresh);
-        let left = (line.left() + 62.0).max(age.right() + 8.0);
-        fit(&self.painter, pos2(left, line.center().y), Align2::LEFT_CENTER, &happening.text, (Self::font(11.0), text), line.right() - left);
-    }
-
-    /// What a chip's look means: its border the phase, its fill the ticket.
-    fn legend(&self, rect: Rect) {
-        self.painter.text(rect.left_top(), Align2::LEFT_TOP, "border = phase · fill = ticket", Self::font(11.0), self.pal.weak);
-        let ground = self.pal.card;
+    /// The key's pieces placed along the bottom: in one row when they fit in `width`, else in two
+    /// of five each.
+    fn legend_layout(&self, width: f32) -> Vec<KeyItem> {
         let sample = [0x5c, 0x5f, 0x70];
-        let phase = |colour: Color32, label: &'static str| (Look::Phase(colour), label);
+        let phase = |colour: Color32, label: &'static str| (Some((sample, Look::Phase(colour))), label);
         let items = [
-            (Look::Hollow, "up next (hollow)"),
+            (None, "border = phase · fill = ticket"),
+            (Some((sample, Look::Hollow)), "up next"),
             phase(CLAIMED, "claimed"),
             phase(WORKING, "working"),
             phase(SENT_BACK, "sent back"),
             phase(STOPPED, "stopped / shelved"),
             phase(WAITING, "waiting for merge"),
             phase(GATING, "in the gate"),
-            (Look::Plain, "merged: a brick on main"),
+            (Some((sample, Look::Plain)), "merged: a brick on main"),
+            (Some((swarmception_domain::colours::NO_TICKET, Look::Plain)), "grey !13: a merge, no ticket"),
         ];
-        let grey = swarmception_domain::colours::NO_TICKET;
-        let room = rect.with_min_y(rect.top() + 17.0);
-        let rows = ((room.height() / 15.0).floor().max(1.0)) as usize;
-        let items = items.iter().map(|(look, label)| (sample, *look, *label)).chain([(grey, Look::Plain, "grey !13: a merge, no ticket")]);
-        let count = 9; // the eight looks, and the grey brick
-        let rows = rows.min(count);
-        let columns = count.div_ceil(rows);
-        let width = room.width() / columns.max(1) as f32;
-        for (n, (colour, look, label)) in items.enumerate() {
-            let at = room.left_top() + vec2((n / rows) as f32 * width, (n % rows) as f32 * 15.0 + 7.0);
+        let measured: Vec<f32> = items
+            .iter()
+            .map(|(swatch, label)| {
+                let text = self.painter.layout_no_wrap((*label).to_owned(), Self::font(11.0), self.pal.text).size().x;
+                text + if swatch.is_some() { 26.0 } else { 0.0 } + 18.0
+            })
+            .collect();
+        let one_row = measured.iter().sum::<f32>() <= width;
+        let per_row = items.len().div_ceil(2);
+        let mut x = 0.0;
+        items
+            .iter()
+            .zip(measured)
+            .enumerate()
+            .map(|(n, ((swatch, label), measured))| {
+                if one_row {
+                    let item = KeyItem { row: 0, x, width: measured, swatch: *swatch, label };
+                    x += measured;
+                    item
+                } else {
+                    let share = width / per_row as f32;
+                    KeyItem { row: n / per_row, x: (n % per_row) as f32 * share, width: share, swatch: *swatch, label }
+                }
+            })
+            .collect()
+    }
+
+    /// What a chip's look means, along the bottom: its border the phase, its fill the ticket.
+    fn legend(&self, rect: Rect, key: &[KeyItem]) {
+        let ground = self.pal.card;
+        for item in key {
+            let at = rect.left_top() + vec2(item.x, item.row as f32 * LEGEND_ROW + LEGEND_ROW / 2.0);
+            let Some((colour, look)) = item.swatch else {
+                fit(&self.painter, at, Align2::LEFT_CENTER, item.label, (Self::font(11.0), self.pal.weak), item.width - 8.0);
+                continue;
+            };
             let swatch = Rect::from_center_size(at + vec2(11.0, 0.0), vec2(18.0, 10.0));
             paint_chip(&self.painter, swatch, &Chip { colour, look, label: "", ground, highlight: None, glow: 0.0 });
-            fit(&self.painter, at + vec2(26.0, 0.0), Align2::LEFT_CENTER, label, (Self::font(10.5), self.pal.text), width - 30.0);
+            fit(&self.painter, at + vec2(26.0, 0.0), Align2::LEFT_CENTER, item.label, (Self::font(11.0), self.pal.text), item.width - 34.0);
         }
     }
 
@@ -787,5 +799,39 @@ fn status_line(bench: &Bench) -> String {
         }
         Some(c) => format!("{status} · holds {}", c.label),
         None => status.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benches_take_more_columns_only_when_one_would_squash_them() {
+        // Three workers in a tall column: one column, each strip at its most.
+        assert_eq!(bench_grid(3, vec2(500.0, 300.0)), (1, BENCH_MOST));
+        // Twelve on a laptop: two columns of six, every strip with its two lines.
+        let (cols, height) = bench_grid(12, vec2(500.0, 300.0));
+        assert_eq!(cols, 2);
+        assert!(height >= BENCH_LEAST, "{height}");
+        // Twelve on a big screen: one column of short strips.
+        let (cols, height) = bench_grid(12, vec2(900.0, 700.0));
+        assert_eq!(cols, 1);
+        assert!((BENCH_LEAST..=BENCH_MOST).contains(&height), "{height}");
+        // Too narrow for a second column: one column, each on one line.
+        let (cols, height) = bench_grid(12, vec2(300.0, 300.0));
+        assert_eq!(cols, 1);
+        assert!(height < BENCH_TWO_LINES);
+        // None, or a room with no size: never a division by nothing.
+        assert_eq!(bench_grid(0, vec2(0.0, 0.0)).0, 1);
+    }
+
+    #[test]
+    fn a_narrow_or_short_bench_draws_smaller_chips() {
+        let wide = Rect::from_min_size(Pos2::ZERO, vec2(480.0, 50.0));
+        let narrow = Rect::from_min_size(Pos2::ZERO, vec2(250.0, 50.0));
+        assert_eq!(bench_sizes(wide, false)[0], Size::Large);
+        assert_eq!(bench_sizes(narrow, false)[0], Size::Medium);
+        assert!(bench_sizes(wide, true).iter().all(|s| *s == Size::Small));
     }
 }
