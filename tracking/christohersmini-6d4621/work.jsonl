@@ -16,3 +16,4 @@
 {"event":"claim","issue":22,"mr":23,"t":"2026-11-01T09:08:37Z"}
 {"event":"work","issue":22,"t":"2026-11-01T09:08:40Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-2028cc0","t":"2026-11-01T09:12:40Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-2028cc0","t":"2026-11-01T09:12:44Z"}
