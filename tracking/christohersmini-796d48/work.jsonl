@@ -4,3 +4,4 @@
 {"event":"release","issue":15,"note":"lost the claim race to worker-5 (claimed first, 2026-11-01T07:56:06Z)","reason":"duplicate","t":"2026-11-01T09:15:46Z"}
 {"event":"claim","issue":15,"mr":25,"t":"2026-11-01T09:16:25Z"}
 {"event":"work","issue":15,"t":"2026-11-01T09:16:28Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-3504c44","t":"2026-11-01T09:26:46Z"}
