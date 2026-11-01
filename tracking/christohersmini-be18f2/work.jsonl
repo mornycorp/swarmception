@@ -3,3 +3,4 @@
 {"event":"work","issue":9,"t":"2026-11-01T10:40:32Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-2e2cb8f","t":"2026-11-01T10:43:19Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-2e2cb8f","t":"2026-11-01T10:43:25Z"}
+{"event":"submit","issue":9,"mr":29,"t":"2026-11-01T10:43:32Z"}
