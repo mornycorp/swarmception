@@ -142,7 +142,8 @@ mod tests {
     fn a_plain_run_serializes_as_its_text_alone() {
         let line = TipLine::plain("by m-1").then_coloured("merged", PASSED).then_strong("5 s");
         let json = serde_json::to_string(&line).unwrap();
-        assert_eq!(json, r#"{"spans":[{"text":"by m-1"},{"text":"merged","colour":[119,212,150]},{"text":"5 s","strong":true}]}"#);
+        let [r, g, b] = PASSED;
+        assert_eq!(json, format!(r#"{{"spans":[{{"text":"by m-1"}},{{"text":"merged","colour":[{r},{g},{b}]}},{{"text":"5 s","strong":true}}]}}"#));
         assert_eq!(serde_json::from_str::<TipLine>(&json).unwrap(), line);
     }
 }
