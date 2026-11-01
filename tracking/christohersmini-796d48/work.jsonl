@@ -2,3 +2,4 @@
 {"event":"claim","issue":15,"mr":24,"t":"2026-11-01T09:15:39Z"}
 {"event":"work","issue":15,"t":"2026-11-01T09:15:41Z"}
 {"event":"release","issue":15,"note":"lost the claim race to worker-5 (claimed first, 2026-11-01T07:56:06Z)","reason":"duplicate","t":"2026-11-01T09:15:46Z"}
+{"event":"claim","issue":15,"mr":25,"t":"2026-11-01T09:16:25Z"}
