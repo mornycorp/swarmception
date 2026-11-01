@@ -12,3 +12,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-665d273","t":"2026-11-01T09:06:38Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-665d273","t":"2026-11-01T09:06:42Z"}
 {"event":"submit","issue":18,"mr":19,"t":"2026-11-01T09:06:47Z"}
+{"event":"stop","issue":18,"note":"PR #19 merged (48d08b3)","reason":"done","t":"2026-11-01T09:08:17Z"}
