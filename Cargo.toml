@@ -25,6 +25,9 @@ egui = "0.37"
 eframe = "0.37"
 # The macOS system menu bar (owner-approved, 2026-10-31, #3); no GTK on Linux.
 muda = { version = "0.21.2", default-features = false }
+# AppKit from Rust, as winit and muda already lock it: window tabbing off (#9).
+objc2 = "0.6.5"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
 swarmception-model = { path = "crates/model" }
 swarmception-domain = { path = "crates/domain" }
 swarmception-source = { path = "crates/source" }

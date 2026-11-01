@@ -2,13 +2,28 @@
 //! app menu (About, Services, Hide, Quit), then File and View, built from the shell's
 //! [`MenuAction`]s: a click runs the same [`Shell::run_menu`] the in-window menu runs, and the
 //! items' enabled and checked marks follow [`Shell::menu_state`] every frame.
+//!
+//! Automatic window tabbing is off ([`no_window_tabs`], #9): the app has one window, and with it
+//! on, macOS adds Show Tab Bar and Show All Tabs to the View menu.
 
 use std::sync::mpsc::{self, Receiver};
 
 use eframe::egui;
 use muda::accelerator::{Accelerator, Code, Modifiers};
 use muda::{AboutMetadata, CheckMenuItem, IsMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu};
+use objc2::MainThreadMarker;
+use objc2_app_kit::NSWindow;
 use swarmception_ui::{MenuAction, MenuState, Shell};
+
+/// Turns automatic window tabbing off for the app, so macOS adds no tab items (Show Tab Bar, Show
+/// All Tabs) to the View menu. Call it on the main thread before the window and menus exist; off
+/// it, it does nothing and says so.
+pub fn no_window_tabs() {
+    match MainThreadMarker::new() {
+        Some(mtm) => NSWindow::setAllowsAutomaticWindowTabbing(false, mtm),
+        None => eprintln!("swarmception: not on the main thread; window tabbing stays on"),
+    }
+}
 
 /// The system menu bar, while the app runs.
 pub struct NativeMenu {
@@ -179,6 +194,15 @@ mod tests {
         }
         assert_eq!(label(MenuAction::Quit), "Quit Swarmception");
         assert_eq!(label(MenuAction::Fit), "Fit");
+    }
+
+    #[test]
+    fn window_tabbing_goes_off_and_never_panics() {
+        // Off the main thread (where the harness usually runs a test) it only says so.
+        no_window_tabs();
+        if let Some(mtm) = MainThreadMarker::new() {
+            assert!(!NSWindow::allowsAutomaticWindowTabbing(mtm));
+        }
     }
 
     #[test]

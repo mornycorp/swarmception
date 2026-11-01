@@ -15,6 +15,8 @@ swarmception-model = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
 
 [lints]
 workspace = true
