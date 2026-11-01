@@ -43,6 +43,8 @@ pub struct Drawn {
     pub clicked: Option<Option<u64>>,
     /// The journey traced, its legs' labels in order.
     pub journey: Vec<String>,
+    /// What each brick in main's wall says, oldest first.
+    pub marks: Vec<String>,
 }
 
 /// What the floor is asked to show besides the scene: the ticket hovered last frame, the
@@ -614,9 +616,10 @@ impl Floor<'_> {
         if fresh > 0.0 {
             self.painter.rect_filled(rect.expand(2.0 + 3.0 * fresh), 4.0, PASSED.gamma_multiply(0.5 * fresh));
         }
-        let label = block.issue.map(|i| format!("#{i}")).unwrap_or_default();
+        let label = &block.mark;
         let highlight = block.issue.filter(|i| self.marks.hovered == Some(*i)).map(|_| self.ring());
-        paint_chip(&self.painter, rect, &Chip { colour: block.colour, look: Look::Plain, label: &label, ground: self.pal.card, highlight, glow: 0.0 });
+        paint_chip(&self.painter, rect, &Chip { colour: block.colour, look: Look::Plain, label, ground: self.pal.card, highlight, glow: 0.0 });
+        self.drawn.marks.push(block.mark.clone());
         match block.issue {
             Some(issue) => self.pointed(rect, issue, &block.tooltip),
             None => self.tooltip(rect, ("block", block.t.0, block.pr), &block.tooltip),
@@ -684,14 +687,18 @@ impl Floor<'_> {
             phase(GATING, "in the gate"),
             (Look::Plain, "merged: a brick on main"),
         ];
+        let grey = swarmception_domain::factory::NO_TICKET_COLOUR;
         let room = rect.with_min_y(rect.top() + 17.0);
         let rows = ((room.height() / 15.0).floor().max(1.0)) as usize;
-        let columns = items.len().div_ceil(rows);
+        let items = items.iter().map(|(look, label)| (sample, *look, *label)).chain([(grey, Look::Plain, "grey !13: a merge, no ticket")]);
+        let count = 9; // the eight looks, and the grey brick
+        let rows = rows.min(count);
+        let columns = count.div_ceil(rows);
         let width = room.width() / columns.max(1) as f32;
-        for (n, (look, label)) in items.iter().enumerate() {
+        for (n, (colour, look, label)) in items.enumerate() {
             let at = room.left_top() + vec2((n / rows) as f32 * width, (n % rows) as f32 * 15.0 + 7.0);
             let swatch = Rect::from_center_size(at + vec2(11.0, 0.0), vec2(18.0, 10.0));
-            paint_chip(&self.painter, swatch, &Chip { colour: sample, look: *look, label: "", ground, highlight: None, glow: 0.0 });
+            paint_chip(&self.painter, swatch, &Chip { colour, look, label: "", ground, highlight: None, glow: 0.0 });
             fit(&self.painter, at + vec2(26.0, 0.0), Align2::LEFT_CENTER, label, (Self::font(10.5), self.pal.text), width - 30.0);
         }
     }

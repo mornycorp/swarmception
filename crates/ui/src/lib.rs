@@ -31,7 +31,7 @@ pub use factory::{FactoryPane, FactoryView, Source as FactorySource, Speed};
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::{Looking, TimelinePane};
+pub use timeline::{Looking, Selection, TimelinePane};
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time.
 pub const UI_STATE_VERSION: u32 = 2;
@@ -268,12 +268,12 @@ impl Shell {
         self.light_timeline(ui.ctx());
     }
 
-    /// The ticket hovered in the factory, its bars selected on the timeline; the selection the
-    /// last one made cleared when the pointer leaves it.
+    /// The ticket hovered in the factory, its bars selected on the timeline; the person's own
+    /// selection put back when the pointer leaves it.
     fn light_timeline(&mut self, ctx: &egui::Context) {
         let hovered = if self.ui.panes.factory { self.factory.hovered() } else { None };
         if hovered != self.lit {
-            self.timeline.light_ticket(&mut self.engine, hovered, self.lit.is_some());
+            self.timeline.light_ticket(&mut self.engine, hovered);
             self.lit = hovered;
             ctx.request_repaint();
         }

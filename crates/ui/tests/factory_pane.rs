@@ -60,13 +60,33 @@ fn repo() -> PathBuf {
         std::fs::create_dir_all(dir.join("tracking").join(instance)).unwrap();
         std::fs::write(dir.join("tracking").join(instance).join("work.jsonl"), text + "\n").unwrap();
     }
-    let run = |args: &[&str]| {
-        let out = std::process::Command::new("git").current_dir(&dir).args(args).output().unwrap();
+    // Each git call at `at` (the commit's time), as a test user.
+    let run_at = |at: &str, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", at)
+            .env("GIT_COMMITTER_DATE", at)
+            .output()
+            .unwrap();
         assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
     };
+    let run = |args: &[&str]| run_at("2026-10-31T02:00:00Z", args);
     run(&["init", "-q", "-b", "tracking"]);
     run(&["add", "."]);
-    run(&["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "events"]);
+    run(&["commit", "-q", "-m", "events"]);
+    // Main: a setup PR no ticket names (#13, 03:20), then #7's PR (#8, 03:45).
+    run(&["checkout", "-q", "--orphan", "main"]);
+    run(&["rm", "-rqf", "."]);
+    run(&["commit", "-q", "--allow-empty", "-m", "start"]);
+    for (pr, at) in [("13", "2026-10-31T03:20:00Z"), ("8", "2026-10-31T03:45:00Z")] {
+        let branch = format!("pr-{pr}");
+        run(&["checkout", "-q", "-b", &branch]);
+        run_at(at, &["commit", "-q", "--allow-empty", "-m", "work"]);
+        run(&["checkout", "-q", "main"]);
+        run_at(at, &["merge", "-q", "--no-ff", "-m", &format!("Merge pull request #{pr} from mornycorp/{branch}"), &branch]);
+    }
     dir
 }
 
@@ -270,5 +290,80 @@ fn clicking_a_ticket_traces_its_journey() {
     click(&mut shell, on);
     assert_eq!(shell.ui_state().factory.ticket, None, "a second click stops tracing");
     assert!(shell.factory().drawn().journey.is_empty());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
+    use swarmception_domain::factory::NO_TICKET_COLOUR;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:50:00Z").unwrap());
+    let mut texts = Vec::new();
+    for _ in 0..3 {
+        texts = frame(&mut shell, &ctx);
+    }
+    let blocks = shell.factory().scene().unwrap().shipping.blocks.clone();
+    let marks: Vec<(&str, Option<u64>)> = blocks.iter().map(|b| (b.mark.as_str(), b.issue)).collect();
+    assert_eq!(marks, [("!13", None), ("#7", Some(7))], "the setup PR, then #7's");
+    assert_eq!(blocks[0].colour, NO_TICKET_COLOUR);
+    assert_eq!(blocks[0].tooltip[0], "Merge pull request #13 from mornycorp/pr-13");
+    assert_eq!(shell.factory().drawn().marks, ["!13", "#7"], "each brick says what it is");
+    assert!(texts.iter().any(|t| t == "!13"), "{texts:?}");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
+    use timeline_engine::ranges_cmds::{InstantParams, RangeParams, SelectInstant, Toggle};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let hover_and_leave = |shell: &mut Shell, issue: u64| {
+        let on = chips(shell, issue)[0].center();
+        frame_with(shell, &ctx, vec![egui::Event::PointerMoved(on)]);
+        frame(shell, &ctx);
+        frame(shell, &ctx);
+        assert_eq!(shell.factory().hovered(), Some(issue));
+        let lit = selected(shell);
+        // Straight on to another ticket, then away.
+        let next = chips(shell, 11)[0].center();
+        frame_with(shell, &ctx, vec![egui::Event::PointerMoved(next)]);
+        frame(shell, &ctx);
+        frame_with(shell, &ctx, vec![egui::Event::PointerGone]);
+        frame(shell, &ctx);
+        assert_eq!(shell.factory().hovered(), None);
+        lit
+    };
+
+    // The person selected two bars of #11 and focused the second.
+    let bars = |shell: &mut Shell, issue| {
+        shell.engine().call::<swarmception_engine::factory_cmds::TicketBars>(swarmception_engine::factory_cmds::TicketParams { issue }).unwrap().bars
+    };
+    let mine = bars(&mut shell, 11);
+    assert!(mine.len() >= 2);
+    for bar in &mine {
+        shell.timeline().widget().session().call::<Toggle>(RangeParams { track: bar.track.clone(), range: bar.range }).unwrap();
+    }
+    let before = shell.timeline().selection().unwrap();
+    let lit = hover_and_leave(&mut shell, 7);
+    assert_ne!(lit, selected(&mut shell), "the hover showed #7's bars instead");
+    assert_eq!(shell.timeline().selection().unwrap(), before, "and put the person's selection back exactly");
+
+    // An instant selected (the merge pin), with its playhead: put back too.
+    shell.timeline().widget().session().call::<SelectInstant>(InstantParams { track: "merged".into(), instant: 0 }).unwrap();
+    let before = shell.timeline().selection().unwrap();
+    assert!(before.instant.is_some());
+    hover_and_leave(&mut shell, 9);
+    assert_eq!(shell.timeline().selection().unwrap(), before);
+
+    // Nothing selected stays nothing.
+    shell.timeline().widget().session().call::<timeline_engine::ranges_cmds::Clear>(NoParams {}).unwrap();
+    let before = shell.timeline().selection().unwrap();
+    hover_and_leave(&mut shell, 7);
+    assert_eq!(shell.timeline().selection().unwrap(), before);
     std::fs::remove_dir_all(dir).ok();
 }

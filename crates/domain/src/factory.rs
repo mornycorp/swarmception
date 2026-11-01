@@ -261,7 +261,10 @@ pub struct Block {
     pub issue: Option<u64>,
     /// `PR #<m>`, else the commit's start.
     pub label: String,
-    /// Its ticket's colour; main's own without one.
+    /// What its brick says: `#<issue>` for a ticket's merge; `!<m>`, its PR, for a merge no
+    /// ticket names (setup, docs); else the commit's start.
+    pub mark: String,
+    /// Its ticket's colour; [`NO_TICKET_COLOUR`] without one, so it reads as not a ticket.
     pub colour: [u8; 3],
     pub age: i64,
     pub tooltip: Vec<String>,
@@ -407,8 +410,8 @@ pub fn ticket_colour(issue: u64) -> [u8; 3] {
     hsv(hue, 0.58, 0.88)
 }
 
-/// Main's own colour, for a block no ticket names.
-pub const MAIN_COLOUR: [u8; 3] = [0x5b, 0x3f, 0xa8];
+/// A neutral grey, for a merge onto main that no ticket names: not a ticket.
+pub const NO_TICKET_COLOUR: [u8; 3] = [0x7a, 0x7d, 0x86];
 
 fn hsv(h: f64, s: f64, v: f64) -> [u8; 3] {
     let sector = (h * 6.0).floor();
@@ -903,16 +906,20 @@ fn main_block(merge: &MainMerge, issue: Option<u64>, t: Timestamp) -> Block {
     let short_commit = merge.commit.get(..8).unwrap_or(&merge.commit);
     let label = merge.pr.map_or_else(|| short_commit.to_owned(), |pr| format!("PR #{pr}"));
     let mut tooltip = vec![merge.subject.clone(), format!("{short_commit} · {}", merge.t)];
-    if let Some(issue) = issue {
-        tooltip.push(format!("ticket #{issue}"));
-    }
-    Block { t: merge.t, pr: merge.pr, issue, label, colour: issue.map_or(MAIN_COLOUR, ticket_colour), age: t.0.saturating_sub(merge.t.0), tooltip }
+    tooltip.push(issue.map_or_else(|| "no ticket's merge names it".to_owned(), |issue| format!("ticket #{issue}")));
+    let mark = match (issue, merge.pr) {
+        (Some(issue), _) => format!("#{issue}"),
+        (None, Some(pr)) => format!("!{pr}"),
+        (None, None) => short_commit.get(..7).unwrap_or(short_commit).to_owned(),
+    };
+    let colour = issue.map_or(NO_TICKET_COLOUR, ticket_colour);
+    Block { t: merge.t, pr: merge.pr, issue, label, mark, colour, age: t.0.saturating_sub(merge.t.0), tooltip }
 }
 
 fn ticket_block(issue: u64, pr: Option<u64>, at: Timestamp, t: Timestamp) -> Block {
     let label = pr.map_or_else(|| format!("#{issue}"), |pr| format!("PR #{pr}"));
     let tooltip = vec![format!("#{issue} merged"), at.to_string()];
-    Block { t: at, pr, issue: Some(issue), label, colour: ticket_colour(issue), age: t.0.saturating_sub(at.0), tooltip }
+    Block { t: at, pr, issue: Some(issue), label, mark: format!("#{issue}"), colour: ticket_colour(issue), age: t.0.saturating_sub(at.0), tooltip }
 }
 
 /// What happened in the `recent` seconds up to `t`, newest first.
@@ -1051,6 +1058,7 @@ mod tests {
         assert_eq!(scene.gate.recent[0].outcome, Outcome::Passed);
         assert_eq!(scene.shipping.blocks.iter().map(|b| (b.label.as_str(), b.issue)).collect::<Vec<_>>(), [("PR #173", Some(170))]);
         assert_eq!(scene.shipping.blocks[0].colour, ticket_colour(170));
+        assert_eq!(scene.shipping.blocks[0].mark, "#170");
         assert_eq!((scene.shipping.landed, scene.shipping.total, scene.shipping.merged_tickets), (1, 1, 1));
         let kinds: Vec<HappeningKind> = scene.happenings.iter().map(|h| h.kind).collect();
         assert_eq!(kinds, [HappeningKind::GatePassed, HappeningKind::Merged], "newest first, the main merge at 04:15 too old");
@@ -1153,6 +1161,24 @@ mod tests {
         let midway = journey(&activity, at("2026-10-31T01:17:00Z"), 5).unwrap();
         assert_eq!(midway.text, "bench 10m → dock 5m → gate 2m", "nothing after t");
         assert_eq!(journey(&activity, at("2026-10-31T02:05:00Z"), 99), None);
+    }
+
+    #[test]
+    fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
+        let merges: Vec<MainMerge> = [
+            "be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec",
+            "15bad2c0\u{1f}1793420255\u{1f}Merge pull request #174 from mornycorp/progress-7",
+            "a1b2c3d4e5\u{1f}1793420300\u{1f}Merge branch 'setup'",
+        ]
+        .into_iter()
+        .filter_map(parse_merge)
+        .collect();
+        let scene = scene(&Activity::of(&sample()), &merges, at("2026-10-31T05:00:00Z"), DEFAULT_RECENT);
+        let marks: Vec<(&str, [u8; 3])> = scene.shipping.blocks.iter().map(|b| (b.mark.as_str(), b.colour)).collect();
+        assert_eq!(marks, [("#170", ticket_colour(170)), ("!174", NO_TICKET_COLOUR), ("a1b2c3d", NO_TICKET_COLOUR)]);
+        let setup = &scene.shipping.blocks[1];
+        assert_eq!(setup.issue, None);
+        assert_eq!(setup.tooltip, ["Merge pull request #174 from mornycorp/progress-7", "15bad2c0 · 2026-10-31T04:17:35Z", "no ticket's merge names it"]);
     }
 
     #[test]

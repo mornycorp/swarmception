@@ -10,9 +10,9 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
-use timeline_engine::ranges_cmds::{Clear as ClearRanges, RangeParams, Toggle as ToggleRange};
+use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, InstantParams, RangeParams, SelectInstant, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
-use timeline_engine::state_cmds::{Get, Set, SetParams};
+use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Set, SetParams, TimelineState};
 use timeline_engine::view_cmds::{Fit, Zoom, ZoomParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire, RulerWire, SpanWire};
 
@@ -33,15 +33,34 @@ pub struct Looking {
 }
 
 /// The widget, and which of the engine's generations of rows it shows.
+/// The person's selection on the timeline: what a hover in the factory puts aside while it shows
+/// a ticket's bars, and puts back after.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Selection {
+    /// The selected ranges, by row key.
+    pub ranges: std::collections::BTreeMap<String, Vec<usize>>,
+    pub instant: Option<InstantRefWire>,
+    pub focus: Option<FocusWire>,
+    pub playhead: Option<u64>,
+}
+
+impl Selection {
+    fn of(state: TimelineState) -> Self {
+        Self { ranges: state.selected_ranges, instant: state.selected_instant, focus: state.focus, playhead: state.playhead }
+    }
+}
+
 pub struct TimelinePane {
     widget: timeline_egui::Timeline,
     loaded: Option<u64>,
     has_data: bool,
+    /// The person's selection, put aside while a hovered ticket's bars are selected.
+    saved: Option<Selection>,
 }
 
 impl Default for TimelinePane {
     fn default() -> Self {
-        Self { widget: timeline_egui::Timeline::new(timeline_engine::Session::new()), loaded: None, has_data: false }
+        Self { widget: timeline_egui::Timeline::new(timeline_engine::Session::new()), loaded: None, has_data: false, saved: None }
     }
 }
 
@@ -156,22 +175,60 @@ impl TimelinePane {
         let _ = session.call::<Set>(params);
     }
 
-    /// Selects `issue`'s bars (`timeline.ticketBars`, then the widget's `ranges.toggle` for each,
-    /// which leaves the playhead where it is), after clearing the selection when `clear`; none
-    /// selects nothing. A bar in a collapsed group isn't shown, so it isn't selected.
-    pub fn light_ticket(&mut self, engine: &mut Session, issue: Option<u64>, clear: bool) {
+    /// The selection on the timeline now: its ranges or instant, its focus and its playhead.
+    pub fn selection(&mut self) -> Option<Selection> {
+        let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
+        Some(Selection::of(state))
+    }
+
+    /// Shows `issue`'s bars selected while it is hovered in the factory, and puts the person's
+    /// own selection back, exactly, once nothing is: the first hover puts it aside, a hover
+    /// moving from ticket to ticket keeps it aside (never saving what a hover selected), and
+    /// leaving restores it. The bars come from `timeline.ticketBars` and are selected with the
+    /// widget's `ranges.toggle`, which leaves the playhead where it is; a bar in a collapsed
+    /// group isn't shown, so it isn't selected. (The widget has no highlight that leaves the
+    /// selection alone: its overlays are the host's data, not a command's.)
+    pub fn light_ticket(&mut self, engine: &mut Session, issue: Option<u64>) {
         if !self.has_data {
             return;
         }
-        let session = self.widget.session();
-        if clear || issue.is_some() {
-            let _ = session.call::<ClearRanges>(NoParams {});
+        let Some(issue) = issue else {
+            if let Some(saved) = self.saved.take() {
+                self.restore(&saved);
+            }
+            return;
+        };
+        if self.saved.is_none() {
+            self.saved = self.selection();
         }
-        let Some(issue) = issue else { return };
+        let session = self.widget.session();
+        let _ = session.call::<ClearRanges>(NoParams {});
         let Ok(found) = engine.call::<TicketBars>(TicketParams { issue }) else { return };
         for bar in found.bars {
             let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
         }
+    }
+
+    /// Puts `saved` back: its ranges (or its instant: the widget holds one or the other), then its
+    /// focus and its playhead, which selecting moved.
+    fn restore(&mut self, saved: &Selection) {
+        let session = self.widget.session();
+        let _ = session.call::<ClearRanges>(NoParams {});
+        for (track, ranges) in &saved.ranges {
+            for range in ranges {
+                let _ = session.call::<ToggleRange>(RangeParams { track: track.clone(), range: *range });
+            }
+        }
+        if let Some(instant) = &saved.instant {
+            let _ = session.call::<SelectInstant>(InstantParams { track: instant.track.clone(), instant: instant.instant });
+        }
+        let focus = saved.focus.as_ref().map_or_else(FocusParams::default, |f| FocusParams { key: Some(f.track.clone()), range: f.range });
+        let _ = session.call::<FocusTrack>(focus);
+        let playhead = match saved.playhead {
+            Some(item) => SetParams { playhead: Some(item), ..SetParams::default() },
+            None => SetParams { clear_playhead: true, ..SetParams::default() },
+        };
+        let _ = session.call::<Set>(playhead);
     }
 
     /// The clock times the window spans and the pointer is at, on the `Time` scale, in UTC as

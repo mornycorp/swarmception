@@ -76,7 +76,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   The factory pane, under the timeline, draws what `factory.at` returns: each ticket the same
   chip at every station (its fill its colour, its border its phase, its size by station),
   gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
-  timeline (`timeline.ticketBars`, the widget's `ranges.toggle`), clicking one traces its journey; its *t* follows the timeline (the pointer, else the playhead,
+  timeline (`timeline.ticketBars`, the widget's `ranges.toggle`; the person's own selection is put
+  aside on the first hover and put back exactly when the pointer leaves), clicking one traces its
+  journey; a merge onto main no ticket names is a grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
   else the window's end) or plays through the window, the playhead following.
   `UiState` (the panes shown, the factory's follow, play, speed and *t*) is serde data.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
