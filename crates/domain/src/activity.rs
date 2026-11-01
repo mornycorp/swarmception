@@ -124,6 +124,8 @@ pub struct Activity {
     pub issue_events: Vec<IssueEvent>,
     /// The first and last event's times; none with no events.
     pub extent: Option<(Timestamp, Timestamp)>,
+    /// Every event's time, of every file, oldest first: where the quiet gaps are.
+    pub times: Vec<Timestamp>,
     pub errors: Vec<FileError>,
 }
 
@@ -149,7 +151,9 @@ impl Activity {
             })
             .collect();
         issue_events.sort_by_key(|e| e.t);
-        Self { agents, issue_events, extent, errors }
+        let mut times: Vec<Timestamp> = files.iter().flat_map(|f| f.events.iter().map(|e| e.t)).collect();
+        times.sort_unstable();
+        Self { agents, issue_events, extent, times, errors }
     }
 
     /// The agent instance `instance`.

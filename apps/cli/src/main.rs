@@ -94,4 +94,10 @@ mod tests {
         assert!(lines(&[]).is_err());
         assert!(lines(&["commands"]).unwrap()[0].contains("repo.open"));
     }
+
+    #[test]
+    fn stats_get_is_a_command_here() {
+        assert!(lines(&["commands"]).unwrap()[0].contains("\"stats.get\""));
+        assert_eq!(lines(&["run", "stats.get", r#"{"start":"2026-10-31T00:00:00Z"}"#]), Err("disabled".into()), "no repository");
+    }
 }
