@@ -1,13 +1,17 @@
 //! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View, as data in
-//! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the timeline, for now) and the status bar, over the engine's commands.
+//! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the
+//! timeline, and under it the factory) and the status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
-//! timeline widget's (`view.fit`, `view.zoom`); what the shell keeps of its own, the panes shown,
-//! is [`UiState`], plain serde data.
+//! timeline widget's (`view.fit`, `view.zoom`); what the shell keeps of its own, the panes shown
+//! and the factory's time, is [`UiState`], plain serde data.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+mod factory;
+mod factory_chip;
+mod factory_paint;
 pub mod fonts;
 pub mod icons;
 pub mod menu;
@@ -23,22 +27,27 @@ use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
 
+pub use factory::{FactoryPane, FactoryView, Source as FactorySource, Speed};
+pub use factory_chip::{Look, Size, look};
+pub use factory_paint::{Drawn, Marks};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::TimelinePane;
+pub use timeline::{Looking, Selection, TimelinePane};
 
-/// [`UiState`]'s shape; an older one still reads.
-pub const UI_STATE_VERSION: u32 = 1;
+/// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time.
+pub const UI_STATE_VERSION: u32 = 2;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Panes {
     pub timeline: bool,
+    /// The factory, under the timeline when both show.
+    pub factory: bool,
 }
 
 impl Default for Panes {
     fn default() -> Self {
-        Self { timeline: true }
+        Self { timeline: true, factory: true }
     }
 }
 
@@ -48,11 +57,12 @@ impl Default for Panes {
 pub struct UiState {
     pub version: u32,
     pub panes: Panes,
+    pub factory: FactoryView,
 }
 
 impl Default for UiState {
     fn default() -> Self {
-        Self { version: UI_STATE_VERSION, panes: Panes::default() }
+        Self { version: UI_STATE_VERSION, panes: Panes::default(), factory: FactoryView::default() }
     }
 }
 
@@ -60,6 +70,11 @@ impl Default for UiState {
 pub struct Shell {
     engine: Session,
     timeline: TimelinePane,
+    factory: FactoryPane,
+    /// A time put on the factory (`--at`) that the timeline's playhead goes to once it has data.
+    playhead_to: Option<swarmception_model::Timestamp>,
+    /// The ticket whose bars the timeline has selected because it is hovered in the factory.
+    lit: Option<u64>,
     ui: UiState,
     /// The engine's revision `status` was read at.
     status_at: Option<(u64, u64)>,
@@ -81,6 +96,9 @@ impl Shell {
         let mut shell = Self {
             engine,
             timeline: TimelinePane::default(),
+            factory: FactoryPane::default(),
+            playhead_to: None,
+            lit: None,
             ui: UiState::default(),
             status_at: None,
             status: StatusResult::default(),
@@ -115,6 +133,20 @@ impl Shell {
         &mut self.timeline
     }
 
+    /// The factory pane, to read what it shows.
+    #[must_use]
+    pub const fn factory(&self) -> &FactoryPane {
+        &self.factory
+    }
+
+    /// Puts the factory at `t`, not following the timeline, and the timeline's playhead there.
+    pub const fn set_factory_at(&mut self, t: swarmception_model::Timestamp) {
+        self.ui.factory.t = Some(t);
+        self.ui.factory.follow = false;
+        self.ui.factory.playing = false;
+        self.playhead_to = Some(t);
+    }
+
     /// Whether a read is still going.
     #[must_use]
     pub const fn loading(&self) -> bool {
@@ -135,6 +167,7 @@ impl Shell {
             can_reload: self.status.repo.is_some() && !self.loading(),
             can_fit: self.timeline.has_data(),
             timeline: self.ui.panes.timeline,
+            factory: self.ui.panes.factory,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
         }
@@ -152,6 +185,7 @@ impl Shell {
                 ctx.request_repaint();
             }
             MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
+            MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), collapse: None }),
             MenuAction::Collapse => self.set_rows(SetRowsParams { grouping: None, collapse: Some(!self.spec.collapse) }),
             MenuAction::Fit => self.timeline.fit(),
@@ -212,13 +246,50 @@ impl Shell {
         }
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
-        egui::CentralPanel::default().show(ui, |ui| {
-            if self.ui.panes.timeline {
+        if self.ui.panes.factory {
+            self.step_factory(ui.ctx());
+        }
+        egui::CentralPanel::default().show(ui, |ui| match (self.ui.panes.timeline, self.ui.panes.factory) {
+            (true, true) => {
+                let height = ui.available_height();
+                egui::Panel::bottom("factory")
+                    .resizable(true)
+                    .default_size(height * 0.58)
+                    .size_range(140.0..=(height - 100.0).max(140.0))
+                    .show(ui, |ui| self.factory.ui(ui, &mut self.ui.factory, &self.status));
                 self.timeline.ui(ui, &self.status);
-            } else {
-                ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline shows the timeline."));
+            }
+            (true, false) => self.timeline.ui(ui, &self.status),
+            (false, true) => self.factory.ui(ui, &mut self.ui.factory, &self.status),
+            (false, false) => {
+                ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline or View ▸ Factory shows one."));
             }
         });
+        self.light_timeline(ui.ctx());
+    }
+
+    /// The ticket hovered in the factory, its bars selected on the timeline; the person's own
+    /// selection put back when the pointer leaves it.
+    fn light_timeline(&mut self, ctx: &egui::Context) {
+        let hovered = if self.ui.panes.factory { self.factory.hovered() } else { None };
+        if hovered != self.lit {
+            self.timeline.light_ticket(&mut self.engine, hovered);
+            self.lit = hovered;
+            ctx.request_repaint();
+        }
+    }
+
+    /// The factory's time this frame (play, the timeline or neither), the timeline's playhead
+    /// where play or `--at` put it, and the scene at that time.
+    fn step_factory(&mut self, ctx: &egui::Context) {
+        let looking = self.timeline.looking(&mut self.engine);
+        let to = self.factory.step(ctx, &mut self.ui.factory, looking);
+        if let Some(t) = to.or_else(|| self.playhead_to.filter(|_| self.timeline.has_data())) {
+            self.timeline.put_playhead(&mut self.engine, t);
+            self.playhead_to = None;
+        }
+        let recent = factory::recent(&self.ui.factory, looking);
+        self.factory.sync(&mut self.engine, &self.ui.factory, recent);
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -340,11 +411,14 @@ mod tests {
 
     #[test]
     fn ui_state_reads_back_and_defaults() {
-        let state = UiState { panes: Panes { timeline: false }, ..UiState::default() };
+        let state = UiState { panes: Panes { timeline: false, factory: true }, ..UiState::default() };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<UiState>(&text).unwrap(), state);
         assert_eq!(serde_json::from_str::<UiState>("{}").unwrap(), UiState::default());
         assert!(serde_json::from_str::<UiState>(r#"{"nope":1}"#).is_err());
+        // Version 1, before the factory, still reads, with the factory's defaults.
+        let old: UiState = serde_json::from_str(r#"{"version":1,"panes":{"timeline":false}}"#).unwrap();
+        assert_eq!((old.panes.timeline, old.panes.factory, old.factory), (false, true, FactoryView::default()));
     }
 
     #[test]
@@ -352,13 +426,15 @@ mod tests {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
         let state = shell.menu_state();
-        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, grouping: Grouping::Flat, collapse: false });
+        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false });
 
         shell.run_menu(&ctx, MenuAction::Timeline);
+        shell.run_menu(&ctx, MenuAction::Factory);
         shell.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
         shell.run_menu(&ctx, MenuAction::Collapse);
         let state = shell.menu_state();
         assert!(!state.timeline);
+        assert!(!state.factory);
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
         assert_eq!(state.checked(MenuAction::Collapse), Some(true));
         assert!(!shell.ui_state().panes.timeline);

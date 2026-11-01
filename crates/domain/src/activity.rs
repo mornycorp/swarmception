@@ -338,12 +338,22 @@ fn read_sub(agent: &mut Agent, reading: &mut Reading, event: &Event) {
             reading.subs.insert(sub.clone(), open);
         }
         Kind::SubStop { sub } => {
-            if let Some(mut done) = reading.subs.remove(sub) {
-                done.span.end = t.max(done.span.start);
-                done.rc = event.note.as_deref().and_then(rc_of);
-                done.stop_note = event.note.clone();
-                agent.subs.push(done);
-            }
+            // A stop with no start (a gate whose start went unlogged) is an instant at the stop.
+            let mut done = reading.subs.remove(sub).unwrap_or_else(|| Sub {
+                sub: sub.clone(),
+                name: None,
+                model: None,
+                span: Span { start: t, end: t, open: false },
+                start_note: None,
+                stop_note: None,
+                rc: None,
+                issues: Vec::new(),
+                prs: Vec::new(),
+            });
+            done.span.end = t.max(done.span.start);
+            done.rc = event.note.as_deref().and_then(rc_of);
+            done.stop_note = event.note.clone();
+            agent.subs.push(done);
         }
         _ => {}
     }
@@ -539,6 +549,17 @@ pub(crate) mod tests {
         assert!(!dead.sessions[0].span.open);
         assert_eq!(dead.sessions[0].ended_by.as_deref(), Some("mini-8d44f3"));
         assert!(!dead.work[0].span.open);
+    }
+
+    #[test]
+    fn a_stop_with_no_start_is_an_instant() {
+        let coordinator = r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T20:00:00Z"}
+{"event":"sub.stop","note":"rc=1; cause=test; kind=docs","sub":"gate-pr153","t":"2026-10-31T20:04:02Z"}"#;
+        let activity = Activity::of(&[parse_file("m-1", coordinator)]);
+        let gate = &activity.agents[0].subs[0];
+        assert!(gate.is_gate());
+        assert_eq!((gate.span.start.to_string().as_str(), gate.span.end.to_string().as_str()), ("2026-10-31T20:04:02Z", "2026-10-31T20:04:02Z"));
+        assert_eq!(gate.rc, Some(1));
     }
 
     #[test]
