@@ -5,3 +5,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"ready-3594efa","t":"2026-11-01T08:29:23Z"}
 {"event":"submit","issue":18,"mr":19,"t":"2026-11-01T08:29:29Z"}
 {"event":"work","issue":18,"note":"revision after the owner's review: one chip a ticket's whole life","t":"2026-11-01T08:51:43Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-16e547b","t":"2026-11-01T08:51:50Z"}
