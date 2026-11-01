@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 
+use swarmception_domain::Stats;
 use swarmception_engine::Session;
 use swarmception_engine::engine_cmds::CommandsResult;
 use swarmception_engine::repo_cmds::StatusResult;
@@ -100,7 +101,7 @@ fn a_reload_before_an_open_is_disabled() {
 #[test]
 fn every_command_takes_hostile_params_without_panicking() {
     let commands: CommandsResult = call(&mut Session::new(), "engine.commands", "");
-    assert!(commands.commands.len() >= 9);
+    assert!(commands.commands.len() >= 10);
     let hostile = [
         "",
         "null",
@@ -124,4 +125,27 @@ fn every_command_takes_hostile_params_without_panicking() {
         }
     }
     assert_eq!(Session::new().execute("no.such", "").unwrap_err().code(), "unknown_command");
+}
+
+#[test]
+fn stats_over_a_repo_and_a_window() {
+    let dir = repo();
+    let mut session = Session::new();
+    assert_eq!(session.execute("stats.get", "").unwrap_err().code(), "disabled", "no repository yet");
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let stats: Stats = call(&mut session, "stats.get", "");
+    assert_eq!((stats.start.to_string(), stats.end.to_string()), ("2026-10-31T03:00:00Z".to_owned(), "2026-10-31T03:46:00Z".to_owned()));
+    assert_eq!(stats.on_shift_seconds, 32 * 60, "worker-1's session; the coordinator's isn't a worker's");
+    assert_eq!(stats.active_seconds, 3 * 60, "03:01 to 03:30 has no event: quiet");
+    assert_eq!((stats.landed, stats.landed_per_active_hour), (1, Some(20.0)));
+    assert_eq!((stats.gates.runs, stats.gates.passed), (1, 1));
+    assert_eq!(stats.median_dock_wait_seconds, Some(15 * 60));
+    let early: Stats = call(&mut session, "stats.get", r#"{"start":"2026-10-31T03:00:00Z","end":1793416200}"#);
+    assert_eq!((early.end.to_string().as_str(), early.landed, early.active_seconds), ("2026-10-31T03:10:00Z", 0, 60));
+    for bad in [r#"{"start":"yesterday"}"#, r#"{"start":"2026-10-31T04:00:00Z","end":"2026-10-31T03:00:00Z"}"#] {
+        assert_eq!(session.execute("stats.get", bad).unwrap_err().code(), "invalid", "{bad}");
+    }
+    assert_eq!(session.execute("stats.get", r#"{"start":true}"#).unwrap_err().code(), "bad_params");
+    std::fs::remove_dir_all(dir).ok();
 }

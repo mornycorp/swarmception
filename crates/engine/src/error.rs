@@ -39,6 +39,10 @@ pub enum Refusal {
     Source { message: String },
     /// The timeline widget refused the data built from the rows.
     Timeline { message: String },
+    /// A time that isn't `YYYY-MM-DDTHH:MM:SSZ`.
+    BadTime { text: String },
+    /// A window that ends before it starts.
+    BackwardWindow { start: swarmception_model::Timestamp, end: swarmception_model::Timestamp },
 }
 
 impl fmt::Display for Refusal {
@@ -46,6 +50,8 @@ impl fmt::Display for Refusal {
         match self {
             Self::NotADirectory { path } => write!(f, "{path} is not a directory"),
             Self::Source { message } | Self::Timeline { message } => write!(f, "{message}"),
+            Self::BadTime { text } => write!(f, "{text:?} is not a UTC time (YYYY-MM-DDTHH:MM:SSZ) or seconds since the epoch"),
+            Self::BackwardWindow { start, end } => write!(f, "the window ends ({end}) before it starts ({start})"),
         }
     }
 }

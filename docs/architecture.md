@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (the menus as data; macOS's system menu bar) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the swarm's statistics: `stats`, `stats.get`) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -42,7 +42,12 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   merges; each bar and pin carries its label, style and tooltip. `timeline` builds
   swarm-timeline's host data (`TimelineData`) from the rows: the axis's items are the distinct
   times, with a `Time` (Spans) scale, positions in nanoseconds from the first time floored to
-  the hour. It depends on `timeline-core` (pure) and nothing else of the widget.
+  the hour. It depends on `timeline-core` (pure) and nothing else of the widget. `stats` reads
+  the swarm's statistics over a window (`Stats`): **tickets landed per active hour** (active:
+  the time a worker has a session going, less its pauses and every gap of over 15 minutes with no
+  event at all), its hourly series, the medians claim → merge and submit → merge, gate and
+  `ready` pass rates with failures by cause, sendbacks, work in progress and each worker's
+  utilisation; the module's docs define each figure.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -50,7 +55,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
   `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
-  `timeline.timeAt`. A session made with a waker reads in the background and lands through
+  `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
+  run by default). A session made with a waker reads in the background and lands through
   `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
@@ -156,5 +162,6 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |
 | 2026-10-31 | minor | The menus as data; on macOS in the system menu bar (#3) |
 | 2026-10-31 | major | First version, from swarm-core's template |
