@@ -2,3 +2,4 @@
 {"event":"claim","issue":40,"mr":41,"t":"2026-11-01T11:40:22Z"}
 {"event":"work","issue":40,"t":"2026-11-01T11:40:25Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-194948b","t":"2026-11-01T11:52:45Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-194948b","t":"2026-11-01T11:52:59Z"}
