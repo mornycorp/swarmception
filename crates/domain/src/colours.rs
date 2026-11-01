@@ -9,6 +9,10 @@
 //! - **The fixed colours**: claimed [`CLAIMED`] yellow, waiting for merge [`WAITING`] blue, sent
 //!   back [`SENT_BACK`] red, stopped [`STOPPED`] grey, and every merge onto main [`MAIN_MERGE`]
 //!   green; [`NO_TICKET`], a neutral grey for what is no ticket's.
+//!
+//! All of them are soft pastels (#34, the owner's: "a bit neon"): a ticket's colour at
+//! saturation [`SATURATION`] and value [`VALUE`], the fixed colours a little more saturated than
+//! that (at most [`MAX_SATURATION`]) so a phase still stands apart from the tickets around it.
 
 use crate::rows::Style;
 use crate::tickets::Phase;
@@ -16,16 +20,17 @@ use crate::tickets::Phase;
 /// A colour as red, green and blue bytes (sRGB).
 pub type Rgb = [u8; 3];
 
-/// Claimed: yellow.
-pub const CLAIMED: Rgb = [0xf2, 0xc9, 0x4c];
-/// Waiting for merge: blue.
-pub const WAITING: Rgb = [0x3b, 0x82, 0xf6];
-/// Sent back: red.
-pub const SENT_BACK: Rgb = [0xea, 0x52, 0x57];
+/// Claimed: a soft yellow (hue 45°, saturation 0.48, value 0.92).
+pub const CLAIMED: Rgb = [0xeb, 0xce, 0x7a];
+/// Waiting for merge: a soft blue (hue 217°, saturation 0.48, value 0.93).
+pub const WAITING: Rgb = [0x7b, 0xa7, 0xed];
+/// Sent back: a soft red (hue 358°, saturation 0.46, value 0.91).
+pub const SENT_BACK: Rgb = [0xe8, 0x7d, 0x81];
 /// Stopped: grey.
 pub const STOPPED: Rgb = [0x9a, 0x9a, 0x9a];
-/// A merge onto main: green, one colour for all of them.
-pub const MAIN_MERGE: Rgb = [0x2e, 0xb8, 0x5c];
+/// A merge onto main: a soft green (hue 140°, saturation 0.44, value 0.83), one colour for all of
+/// them.
+pub const MAIN_MERGE: Rgb = [0x77, 0xd4, 0x96];
 /// A neutral grey, for what is no ticket's (a merge onto main that no ticket names).
 pub const NO_TICKET: Rgb = [0x7a, 0x7d, 0x86];
 
@@ -40,8 +45,12 @@ pub const CLEARANCE: f64 = 20.0;
 const ARCS: [(f64, f64); 3] = [(75.0, 118.0), (162.0, 192.0), (247.0, 336.0)];
 /// The golden angle as a fraction of the wheel: 137.5° / 360°.
 const GOLDEN: f64 = 0.381_966_011_250_105;
-const SATURATION: f64 = 0.52;
-const VALUE: f64 = 1.0;
+/// A ticket's colour's saturation: a pastel (0.52 before #34).
+pub const SATURATION: f64 = 0.34;
+/// A ticket's colour's value: a touch under full, so the pastels don't glare (1.0 before #34).
+pub const VALUE: f64 = 0.93;
+/// The most saturated any of the swarm's colours is: none of them neon (#34).
+pub const MAX_SATURATION: f64 = 0.5;
 
 /// A ticket's own colour: hue `issue` × 137.5°, spread over [`ARCS`], so neighbouring ids differ
 /// by a third of the hues there are and the same issue is the same colour everywhere.
@@ -211,6 +220,30 @@ mod tests {
         assert_eq!(style_colour(Style::MainMerge, Some(58)), MAIN_MERGE);
         assert_eq!(style_colour(Style::MainMerge, None), MAIN_MERGE);
         assert_eq!(style_colour(Style::Merged, None), NO_TICKET);
+    }
+
+    /// HSV's saturation and value of `colour`, 0 to 1.
+    fn saturation_value(colour: Rgb) -> (f64, f64) {
+        let [r, g, b] = colour.map(|c| f64::from(c) / 255.0);
+        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
+        (if max <= f64::EPSILON { 0.0 } else { (max - min) / max }, max)
+    }
+
+    #[test]
+    fn every_colour_is_a_soft_pastel_and_the_phases_stand_apart_from_the_tickets() {
+        for issue in 0..2_000 {
+            let (s, v) = saturation_value(ticket_colour(issue));
+            assert!((s - SATURATION).abs() < 0.01 && (v - VALUE).abs() < 0.01, "#{issue}: saturation {s:.2}, value {v:.2}");
+        }
+        for fixed in FIXED {
+            let (s, v) = saturation_value(fixed);
+            assert!(s <= MAX_SATURATION, "{fixed:?} is too saturated: {s:.2}");
+            assert!(s >= SATURATION + 0.08, "{fixed:?} at saturation {s:.2} is as pale as a ticket's");
+            assert!(v < 0.95, "{fixed:?} at value {v:.2} glares");
+        }
+        for grey in [STOPPED, NO_TICKET] {
+            assert!(saturation_value(grey).0 < 0.1, "{grey:?} is grey");
+        }
     }
 
     #[test]

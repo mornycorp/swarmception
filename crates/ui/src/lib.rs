@@ -198,7 +198,6 @@ impl Shell {
             factory: self.ui.panes.factory,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
-            titles: self.spec.titles,
         }
     }
 
@@ -239,7 +238,6 @@ impl Shell {
             MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
             MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
-            MenuAction::Titles => self.set_rows(SetRowsParams { titles: Some(!self.spec.titles), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
         }
     }
@@ -398,9 +396,8 @@ impl Shell {
             ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / its rows");
             ui.separator();
             ui.toggle_value(&mut spec.collapse, icons::COLLAPSE).on_hover_text("Collapse: leave out rows with nothing in them");
-            ui.toggle_value(&mut spec.titles, icons::TAG).on_hover_text("Titles on bars: label each ticket's bars with its title on GitHub");
             if spec != self.spec {
-                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse), titles: Some(spec.titles) });
+                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
             }
             ui.separator();
             let has = self.timeline.has_data();
@@ -520,10 +517,7 @@ mod tests {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
         let state = shell.menu_state();
-        assert_eq!(
-            state,
-            MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false, titles: true }
-        );
+        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false });
 
         shell.run_menu(&ctx, MenuAction::Timeline);
         shell.run_menu(&ctx, MenuAction::Factory);
@@ -541,9 +535,6 @@ mod tests {
 
         shell.run_menu(&ctx, MenuAction::Collapse);
         assert!(!shell.menu_state().collapse);
-        shell.run_menu(&ctx, MenuAction::Titles);
-        assert!(!shell.menu_state().titles);
-        assert!(!shell.engine().call::<GetRows>(NoParams {}).unwrap().titles, "the menu runs rows.set");
 
         // No repository: Reload is an error the status bar shows, never a panic.
         shell.run_menu(&ctx, MenuAction::Reload);

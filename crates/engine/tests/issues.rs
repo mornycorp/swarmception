@@ -191,9 +191,10 @@ fn issues_from_gh_reach_the_tooltips_the_labels_and_the_cache() {
     assert_eq!(held.title.as_deref(), Some("Seven: the ticket's own title"));
     assert_eq!(held.tooltip[1], "open · type::task · by owner", "open at t: it closed later");
 
-    // Titles off: the labels say the phase again.
-    let _: swarmception_domain::RowsSpec = call(&mut session, "rows.set", r#"{"titles":false}"#);
-    assert_eq!(bars_of(&mut session, 7)[0].label, "#7 claimed");
+    // Titles are always on: `rows.set` has no `titles` (#34), and the bars keep the title.
+    assert!(session.execute("rows.set", r#"{"titles":false}"#).is_err(), "rows.set refuses titles");
+    let _: swarmception_domain::RowsSpec = call(&mut session, "rows.set", r#"{"grouping":"workers","collapse":true}"#);
+    assert_eq!(bars_of(&mut session, 7)[0].label, "#7 Seven: the ticket's own title");
 
     // Another load with gh failing: the cache's issues, and why the fetch failed.
     let mut later = Session::new();

@@ -8,7 +8,7 @@
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline;
-//! `--no-titles` labels the bars with their phase, not their tickets' titles; `--screenshot`
+//! bars always carry their tickets' titles (#34); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
 //! agents can check the drawing by eye. On macOS the menus are in the system menu bar
 //! ([`mac_menu`]); elsewhere the window draws its own.
@@ -48,7 +48,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--no-titles] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -83,7 +83,6 @@ impl Options {
                     });
                 }
                 "--collapse" => options.rows.collapse = Some(true),
-                "--no-titles" => options.rows.titles = Some(false),
                 "--panes" => options.panes = Some(panes(&value()?)?),
                 "--at" => {
                     let text = value()?;
@@ -291,7 +290,7 @@ mod tests {
     fn options_parse() {
         let options = parse(&["--repo", "../swarm-timeline", "--grouping", "workers", "--collapse", "--dark"]).unwrap();
         assert_eq!(options.repo, Some(PathBuf::from("../swarm-timeline")));
-        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true), titles: None });
+        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true) });
         assert_eq!(options.theme, Some(egui::Theme::Dark));
         assert!(parse(&["--repo"]).is_err());
         assert!(parse(&["--grouping", "tree"]).is_err());
@@ -305,8 +304,9 @@ mod tests {
         let options = parse(&["--trace", "#58", "--hover", "120"]).unwrap();
         assert_eq!((options.trace, options.hover), (Some(58), Some(120)));
         assert!(parse(&["--hover", "x"]).is_err());
-        let options = parse(&["--no-titles", "--hover-bar", "#17"]).unwrap();
-        assert_eq!((options.rows.titles, options.hover_bar), (Some(false), Some(17)));
+        let options = parse(&["--hover-bar", "#17"]).unwrap();
+        assert_eq!(options.hover_bar, Some(17));
+        assert!(parse(&["--no-titles"]).is_err(), "titles are always on (#34)");
 
         assert_eq!(parse(&["--help"]), Err(String::new()));
     }

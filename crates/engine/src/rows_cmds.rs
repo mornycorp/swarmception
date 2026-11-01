@@ -32,11 +32,10 @@ impl Command for Get {
 pub struct SetParams {
     pub grouping: Option<Grouping>,
     pub collapse: Option<bool>,
-    /// Bars labelled with their tickets' titles.
-    pub titles: Option<bool>,
 }
 
-/// `rows.set`: the tickets flat or by worker, collapsed or not, labelled with titles or not.
+/// `rows.set`: the tickets flat or by worker, collapsed or not. Bars always carry their
+/// tickets' titles: `titles` is no field of it (#34), so `{"titles":false}` is refused.
 pub struct Set;
 
 impl Command for Set {
@@ -46,11 +45,7 @@ impl Command for Set {
     type Result = RowsSpec;
 
     fn run(session: &mut Session, params: SetParams) -> Result<RowsSpec, EngineError> {
-        let spec = RowsSpec {
-            grouping: params.grouping.unwrap_or(session.spec.grouping),
-            collapse: params.collapse.unwrap_or(session.spec.collapse),
-            titles: params.titles.unwrap_or(session.spec.titles),
-        };
+        let spec = RowsSpec { grouping: params.grouping.unwrap_or(session.spec.grouping), collapse: params.collapse.unwrap_or(session.spec.collapse) };
 
         if spec != session.spec {
             session.spec = spec;
