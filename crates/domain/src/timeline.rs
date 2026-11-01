@@ -33,13 +33,59 @@ pub const fn colour([r, g, b]: Rgb) -> Colour {
     Colour::rgb(r, g, b)
 }
 
-/// The rows as the widget's data, with their tooltips.
+/// The rows as the widget's data, with their tooltips and their context menus' pages.
 #[derive(Debug, Clone, Default)]
 pub struct SwarmData {
     data: MemoryData,
     /// Position 0 of the `Time` scale, in nanoseconds from the Unix epoch.
     clock_epoch: Option<i64>,
     range_tips: BTreeMap<(TrackId, usize), Vec<String>>,
+    range_links: BTreeMap<(TrackId, usize), Vec<Link>>,
+}
+
+/// A page on GitHub a bar's context menu opens (#17): its ticket's issue, or a pull request (its
+/// ticket's, or a merge onto main's). Its [`Link::id`] is the widget's host item id, which the
+/// front end reads back with [`Link::parse`] and opens through `ticket.urls`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Link {
+    Issue(u64),
+    Pull(u64),
+}
+
+impl Link {
+    const ISSUE: &'static str = "github.issue:";
+    const PULL: &'static str = "github.pull:";
+
+    /// Its host item id: `github.issue:7`, `github.pull:8`.
+    #[must_use]
+    pub fn id(self) -> String {
+        match self {
+            Self::Issue(n) => format!("{}{n}", Self::ISSUE),
+            Self::Pull(n) => format!("{}{n}", Self::PULL),
+        }
+    }
+
+    /// The link a host item id names; none for another id.
+    #[must_use]
+    pub fn parse(id: &str) -> Option<Self> {
+        let number = |rest: &str| rest.parse::<u64>().ok().filter(|n| *n > 0);
+        id.strip_prefix(Self::ISSUE).and_then(number).map(Self::Issue).or_else(|| id.strip_prefix(Self::PULL).and_then(number).map(Self::Pull))
+    }
+
+    /// What its menu item says.
+    #[must_use]
+    pub fn label(self) -> String {
+        match self {
+            Self::Issue(n) => format!("Open Issue #{n}"),
+            Self::Pull(n) => format!("Open PR #{n}"),
+        }
+    }
+
+    /// The links of `bar`: its ticket's issue, then its pull request.
+    #[must_use]
+    pub fn of(bar: &Bar) -> Vec<Self> {
+        bar.ticket.map(Self::Issue).into_iter().chain(bar.pr.filter(|pr| Some(*pr) != bar.ticket).map(Self::Pull)).collect()
+    }
 }
 
 /// What [`build`] makes: the data, its time scale and where its positions count from.
@@ -146,6 +192,10 @@ impl Adder<'_> {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
         }
         self.built.range_tips.insert((track, place), bar.tooltip.clone());
+        let links = Link::of(bar);
+        if !links.is_empty() {
+            self.built.range_links.insert((track, place), links);
+        }
         Ok(())
     }
 }
@@ -189,6 +239,10 @@ impl TimelineData for SwarmData {
 
     fn range_flags(&self, track: TrackId, place: usize) -> RangeFlags {
         self.data.range_flags(track, place)
+    }
+
+    fn menu_items(&self, track: Option<TrackId>, range: Option<usize>, _item: Option<ItemIndex>) -> Vec<(String, String)> {
+        track.zip(range).and_then(|key| self.range_links.get(&key)).map(|links| links.iter().map(|l| (l.label(), l.id())).collect()).unwrap_or_default()
     }
 
     fn show_when_empty(&self, track: TrackId) -> bool {
@@ -255,6 +309,28 @@ mod tests {
                 assert_eq!(built.time_at(span.end()).0 - built.time_at(span.start()).0, 10, "{key}: a 10 s span");
             }
         }
+    }
+
+    #[test]
+    fn a_bars_menu_opens_its_issue_and_its_pr() {
+        use swarmception_model::{MainMerge, parse_merge};
+        let activity = Activity::of(&sample());
+        let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
+        let rows = rows(&activity, &merges, RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        let tree = built.data.tracks();
+        let track = |key: &str| tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
+        let items = built.data.menu_items(Some(track("tickets/2")), Some(1), None);
+        assert_eq!(items, [("Open Issue #170".to_owned(), "github.issue:170".to_owned()), ("Open PR #173".to_owned(), "github.pull:173".to_owned())]);
+        assert_eq!(built.data.menu_items(Some(track("main")), Some(0), None), [("Open PR #173".to_owned(), "github.pull:173".to_owned())]);
+        assert!(built.data.menu_items(Some(track("main")), None, None).is_empty(), "a row's own menu has none");
+        assert!(built.data.menu_items(None, None, None).is_empty());
+        for (_, id) in items {
+            assert_eq!(Link::parse(&id).map(Link::id), Some(id));
+        }
+        assert_eq!(Link::parse("github.issue:0"), None);
+        assert_eq!(Link::parse("github.pull:x"), None);
+        assert_eq!(Link::parse("other:1"), None);
     }
 
     #[test]

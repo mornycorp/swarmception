@@ -4,13 +4,16 @@
 //! `refs/heads/tracking` (and `main` the same way, or `master`), and never writes to either;
 //! `fetch` brings the remote's up to date. Every call has a deadline and capped output, and
 //! nothing reaches git's command line unchecked: the paths it reads are the branch's own,
-//! checked as instance ids.
+//! checked as instance ids. Beside the branch, the repository's GitHub issues ([`github`], #17):
+//! its `origin` as `owner/name`, `gh api` with a deadline, and a versioned cache per repository.
+
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
 mod git;
+pub mod github;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -19,6 +22,7 @@ use std::time::Duration;
 use swarmception_model::{AgentFile, MainMerge, is_instance_id, parse_file, parse_merge};
 
 pub use git::{Git, GitError};
+pub use github::{Github, GithubError, Slug};
 
 /// The refs a reader takes, in order.
 pub const REFS: [&str; 2] = ["refs/remotes/origin/tracking", "refs/heads/tracking"];

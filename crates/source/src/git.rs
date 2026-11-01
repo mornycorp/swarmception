@@ -39,6 +39,7 @@ impl std::error::Error for GitError {}
 /// Git in one repository, with a deadline and a cap for each call.
 #[derive(Debug, Clone)]
 pub struct Git {
+    program: PathBuf,
     dir: PathBuf,
     deadline: Duration,
     cap: usize,
@@ -47,7 +48,13 @@ pub struct Git {
 impl Git {
     #[must_use]
     pub fn new(dir: &Path, deadline: Duration, cap: usize) -> Self {
-        Self { dir: dir.to_path_buf(), deadline, cap }
+        Self::program(Path::new("git"), dir, deadline, cap)
+    }
+
+    /// Another program (`gh`) in place of git, run the same way: a deadline, a cap, no prompts.
+    #[must_use]
+    pub fn program(program: &Path, dir: &Path, deadline: Duration, cap: usize) -> Self {
+        Self { program: program.to_path_buf(), dir: dir.to_path_buf(), deadline, cap }
     }
 
     /// Runs `git <args>`, feeding it `input`: what it printed.
@@ -57,10 +64,12 @@ impl Git {
     /// [`GitError`]: it couldn't start, ran past the deadline, said too much or failed.
     pub fn run(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<Vec<u8>, GitError> {
         let shown = args.join(" ");
-        let mut child = Command::new("git")
+        let mut child = Command::new(&self.program)
             .current_dir(&self.dir)
             .args(args)
             .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GH_PROMPT_DISABLED", "1")
+            .env("NO_COLOR", "1")
             .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

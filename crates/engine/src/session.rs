@@ -1,19 +1,20 @@
-//! The session: the repository open, what its tracking branch held, the rows asked for and the
-//! timeline built from them. Reads run in the background when the session has a waker (the UI)
-//! and land through [`Session::poll`]; the CLI and tests read in the foreground.
+//! The session: the repository open, what its tracking branch held, its GitHub issues, the rows
+//! asked for and the timeline built from them. Reads run in the background when the session has
+//! a waker (the UI) and land through [`Session::poll`]; the CLI and tests read in the foreground.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
-use swarmception_domain::rows::rows;
+use swarmception_domain::rows::rows_with;
 use swarmception_domain::timeline::{Built, build};
 use swarmception_domain::{Activity, Node, RowsSpec};
-use swarmception_source::{SourceError, Tracking};
+use swarmception_source::{Github, SourceError, Tracking};
 
 use crate::command::Command;
 use crate::commands;
 use crate::error::{EngineError, Refusal, Unavailable};
+use crate::issues::{self, IssuesState};
 
 /// Called when a background read lands, so a front end that draws only on input draws again.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
@@ -45,6 +46,10 @@ pub struct Session {
     pub(crate) built: Option<Built>,
     pub(crate) error: Option<String>,
     pub(crate) job: Option<(Job, Receiver<Result<Tracking, SourceError>>)>,
+    /// The repository's GitHub issues, and their read going on.
+    pub(crate) issues: IssuesState,
+    /// Where the issues come from: `gh` and the cache directory.
+    github: Github,
     waker: Option<Waker>,
     /// Moved on by every new set of rows: a front end builds its timeline again.
     generation: u64,
@@ -63,6 +68,18 @@ impl Session {
     #[must_use]
     pub fn with_waker(waker: Waker) -> Self {
         Self { waker: Some(waker), ..Self::default() }
+    }
+
+    /// Reads the issues through `github` (its `gh`, its cache directory) from the next load on;
+    /// by default `gh` on the path and the user's cache directory.
+    pub fn set_github(&mut self, github: Github) {
+        self.github = github;
+    }
+
+    /// Whether the issues are still being read.
+    #[must_use]
+    pub const fn reading_issues(&self) -> bool {
+        self.issues.job.is_some()
     }
 
     /// Runs the command `id` with `params` (JSON text): its result as JSON text.
@@ -95,8 +112,20 @@ impl Session {
         self.revision = self.revision.wrapping_add(1);
     }
 
-    /// Takes in a background read that finished: whether anything changed.
+    /// Takes in a background read that finished, and the issues that came: whether anything
+    /// changed.
     pub fn poll(&mut self) -> bool {
+        let (moved, changed) = self.issues.poll();
+        if changed {
+            self.rebuild();
+        }
+        if moved {
+            self.touch();
+        }
+        self.poll_tracking() || moved
+    }
+
+    fn poll_tracking(&mut self) -> bool {
         let Some((_, receiver)) = &self.job else { return false };
         match receiver.try_recv() {
             Ok(result) => {
@@ -140,6 +169,32 @@ impl Session {
         Ok(())
     }
 
+    /// Reads the repository's GitHub issues: the cache, then `gh api` (#17); in the background
+    /// with a waker, else now. A new repository's issues start afresh.
+    pub(crate) fn start_issues(&mut self, fresh: bool) {
+        let Some(repo) = self.repo.clone() else { return };
+        if fresh {
+            self.issues = IssuesState::default();
+        }
+        let github = self.github.clone();
+        let Some(waker) = self.waker.clone() else {
+            let mut changed = false;
+            issues::read(&repo, &github, |news| changed |= self.issues.land(news));
+            if changed {
+                self.rebuild();
+            }
+            return;
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            issues::read(&repo, &github, |news| {
+                let _ = sender.send(news);
+                waker();
+            });
+        });
+        self.issues.job = Some(receiver);
+    }
+
     fn land(&mut self, result: Result<Tracking, SourceError>) {
         match result {
             Ok(tracking) => {
@@ -154,7 +209,8 @@ impl Session {
 
     /// The rows again, from the activity and the spec, and the timeline's data from them.
     pub(crate) fn rebuild(&mut self) {
-        self.rows = self.loaded.as_ref().map(|l| rows(&l.activity, &l.tracking.merges, self.spec)).unwrap_or_default();
+        self.rows = self.loaded.as_ref().map(|l| rows_with(&l.activity, &l.tracking.merges, self.spec, &self.issues.issues)).unwrap_or_default();
+
         self.built = match build(&self.rows, !self.spec.collapse) {
             Ok(built) => Some(built),
             Err(error) => {

@@ -27,3 +27,5 @@ pub const FLASK: &str = "\u{f0c3}";
 pub const COG: &str = "\u{f013}";
 pub const START: &str = "\u{f048}";
 pub const END: &str = "\u{f051}";
+pub const TAG: &str = "\u{f02b}";
+pub const ISSUES: &str = "\u{f06a}";

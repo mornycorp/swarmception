@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_model::{Kind, MainMerge, Role, Timestamp};
+use swarmception_model::{Issues, Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Span, Sub, stop_reason};
 use crate::colours::{NO_TICKET, Rgb, ticket_colour};
@@ -103,6 +103,8 @@ pub struct Crate {
     pub pr: Option<u64>,
     /// `#<issue>`.
     pub label: String,
+    /// Its title on GitHub, when the issues fetched have it ([`titled`]).
+    pub title: Option<String>,
     /// Its own colour, the same in every scene and on the timeline: [`ticket_colour`].
     pub colour: Rgb,
     pub state: CrateState,
@@ -635,7 +637,51 @@ fn crate_at(ticket: &Ticket, t: Timestamp, worker: Option<String>) -> Crate {
     milestone("began", ticket.began);
     milestone("finished", ticket.finished);
     milestone("merged", ticket.merged.as_ref().map(|m| m.t));
-    Crate { issue: ticket.issue, pr, label: format!("#{}", ticket.issue), colour: ticket_colour(ticket.issue), state, since, age, worker, note, tooltip }
+    Crate {
+        issue: ticket.issue,
+        pr,
+        label: format!("#{}", ticket.issue),
+        title: None,
+        colour: ticket_colour(ticket.issue),
+        state,
+        since,
+        age,
+        worker,
+        note,
+        tooltip,
+    }
+}
+
+/// The scene with what GitHub's `issues` say of its tickets (#17): each crate GitHub has carries
+/// its title, and its tooltip starts with the title, its state and labels as of the scene's *t*,
+/// and its pull request ([`crate::titles::header`]) in place of `#170 · PR #173`; a ticket's
+/// block on main, and a merge's whose PR GitHub has, start with the title too.
+pub fn titled(scene: &mut FactoryScene, issues: &Issues) {
+    if issues.is_empty() {
+        return;
+    }
+    let t = scene.t;
+    let bench_crates = scene.benches.iter_mut().flat_map(|b| b.crates.iter_mut());
+    let all = scene.upcoming.iter_mut().chain(scene.shelf.iter_mut()).chain(bench_crates).chain(scene.dock.iter_mut());
+    for c in all.chain(scene.gate.crates.iter_mut()).chain(scene.shipping.done.iter_mut()) {
+        let Some(header) = crate::titles::header(issues, c.issue, c.pr, Some(t)) else { continue };
+        c.title = crate::titles::title(issues, c.issue).map(str::to_owned);
+        if !c.tooltip.is_empty() {
+            c.tooltip.splice(0..1, header);
+        }
+    }
+    for block in &mut scene.shipping.blocks {
+        let title = match (block.issue, block.pr) {
+            (Some(issue), _) => {
+                crate::titles::title(issues, issue).map(|title| format!("#{issue} {}", crate::titles::short(title, crate::titles::TOOLTIP_TITLE)))
+            }
+            (None, Some(pr)) => crate::titles::title(issues, pr).map(|title| format!("PR #{pr} {}", crate::titles::short(title, crate::titles::TOOLTIP_TITLE))),
+            (None, None) => None,
+        };
+        if let Some(title) = title {
+            block.tooltip.insert(0, title);
+        }
+    }
 }
 
 fn in_span(span: &Span, t: Timestamp) -> bool {
@@ -973,6 +1019,36 @@ mod tests {
 
     fn bench<'a>(scene: &'a FactoryScene, name: &str) -> &'a Bench {
         scene.benches.iter().find(|b| b.actor.name == name).unwrap()
+    }
+
+    /// Every crate of `scene`, wherever it is.
+    fn all_crates(scene: &FactoryScene) -> Vec<&Crate> {
+        let benches = scene.benches.iter().flat_map(|b| &b.crates);
+        scene.upcoming.iter().chain(&scene.shelf).chain(benches).chain(&scene.dock).chain(&scene.gate.crates).chain(&scene.shipping.done).collect()
+    }
+
+    #[test]
+    fn titled_crates_say_their_title_as_of_t() {
+        let issues = crate::titles::tests::issues();
+        let mut waiting = sample_scene("2026-10-31T04:10:00Z");
+        let before = waiting.clone();
+        titled(&mut waiting, &issues);
+        let c = all_crates(&waiting).into_iter().find(|c| c.issue == 170).unwrap();
+        assert_eq!(c.title.as_deref(), Some("The spec, written down"));
+        assert_eq!(
+            c.tooltip[..3],
+            ["#170 The spec, written down", "open · type::task, area::docs · by cmaughan", "PR #173 Spec: the first draft"],
+            "open at t: it closed later"
+        );
+        let was = all_crates(&before).into_iter().find(|c| c.issue == 170).unwrap();
+        assert_eq!(c.tooltip[3..], was.tooltip[1..], "then the lines it had");
+        let mut merged = sample_scene("2026-10-31T04:30:00Z");
+        titled(&mut merged, &issues);
+        let block = merged.shipping.blocks.iter().find(|b| b.pr == Some(173) && b.issue.is_some()).unwrap();
+        assert_eq!(block.tooltip[0], "#170 The spec, written down");
+        let mut none = sample_scene("2026-10-31T04:10:00Z");
+        titled(&mut none, &swarmception_model::Issues::default());
+        assert_eq!(none, before, "no issues, no change");
     }
 
     #[test]

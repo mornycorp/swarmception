@@ -4,12 +4,17 @@
 //! the `Time` scale, the whole swarm, under a Clock ruler (the time of day, UTC). The ruler's
 //! menu still offers the Time ruler (seconds from the axis's origin).
 
+use swarmception_domain::timeline::Link;
 use swarmception_engine::Session;
+
 use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, TicketParams};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
+use timeline_engine::query_cmds::{Bars, BarsParams};
+use timeline_engine::tracks_cmds::{Layout, LayoutParams};
+
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, InstantParams, RangeParams, SelectInstant, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
 use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Set, SetParams, TimelineState};
@@ -56,11 +61,22 @@ pub struct TimelinePane {
     has_data: bool,
     /// The person's selection, put aside while a hovered ticket's bars are selected.
     saved: Option<Selection>,
+    /// Pages chosen from a bar's context menu (the widget's host items), for the shell to open.
+    links: Vec<Link>,
+    /// Where the widget was drawn last frame.
+    rect: Option<egui::Rect>,
 }
 
 impl Default for TimelinePane {
     fn default() -> Self {
-        Self { widget: timeline_egui::Timeline::new(timeline_engine::Session::new()), loaded: None, has_data: false, saved: None }
+        Self {
+            widget: timeline_egui::Timeline::new(timeline_engine::Session::new()),
+            loaded: None,
+            has_data: false,
+            saved: None,
+            links: Vec::new(),
+            rect: None,
+        }
     }
 }
 
@@ -69,6 +85,31 @@ impl TimelinePane {
     #[must_use]
     pub const fn has_data(&self) -> bool {
         self.has_data
+    }
+
+    /// Where on screen ticket `issue`'s first bar drawn last frame is (a stretch before its
+    /// merge), its middle: for a host to put the pointer on it (the app's `--hover-bar`, to see
+    /// its tooltip). None when none of its bars is drawn.
+    pub fn bar_point(&mut self, engine: &mut Session, issue: u64) -> Option<egui::Pos2> {
+        let rect = self.rect.filter(|_| self.has_data)?;
+        let found = engine.call::<TicketBars>(TicketParams { issue }).ok()?;
+        let session = self.widget.session();
+        let layout = session.call::<Layout>(LayoutParams { pane: rect.height(), scroll: 0.0 }).ok()?;
+        let merged = swarmception_domain::rows::MERGED_KEY;
+        let stretches_first = found.bars.iter().filter(|b| b.track != merged).chain(found.bars.iter().filter(|b| b.track == merged));
+        stretches_first.into_iter().find_map(|bar| {
+            let row = layout.rows.iter().find(|r| r.key == bar.track)?;
+            let drawn = session.call::<Bars>(BarsParams { tracks: Some(vec![bar.track.clone()]), label_char_width: None }).ok()?;
+            let range = drawn.tracks.first()?.ranges.iter().find(|r| r.range == bar.range)?;
+            let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
+            Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
+        })
+    }
+
+    /// The pages chosen from bars' context menus since the last call (#17): a bar's Open Issue
+    /// and Open PR, the widget's host items read back as [`Link`]s.
+    pub fn take_links(&mut self) -> Vec<Link> {
+        std::mem::take(&mut self.links)
     }
 
     /// The widget, for a host to drive.
@@ -264,8 +305,8 @@ impl TimelinePane {
             return;
         }
         self.widget.toolbar(ui);
-        egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| {
-            ui.add(&mut self.widget);
-        });
+        let shown = egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| ui.add(&mut self.widget).rect);
+        self.rect = Some(shown.inner);
+        self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));
     }
 }

@@ -17,6 +17,8 @@ pub enum Unavailable {
     Loading,
     /// The repository read, but holds no events.
     NoData,
+    /// The repository's `origin` isn't on GitHub (or it has none).
+    NoGithub,
 }
 
 impl fmt::Display for Unavailable {
@@ -25,6 +27,7 @@ impl fmt::Display for Unavailable {
             Self::NoRepo => write!(f, "no repository is open"),
             Self::Loading => write!(f, "the tracking branch is still being read"),
             Self::NoData => write!(f, "the tracking branch holds no events"),
+            Self::NoGithub => write!(f, "the repository's origin remote isn't on GitHub"),
         }
     }
 }

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (a colour per ticket; the top rows as 10 s spans) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the repository's GitHub issues: titles, tooltips, Open Issue / Open PR) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -31,7 +31,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   version 3) as types: each line of `tracking/<instance>/work.jsonl` parsed into an `Event`
   (`Kind::SessionStart`, `Claim`, `SubStart`, …; an unknown event kept as `Kind::Other`), its
   UTC time a `Timestamp` with its own calendar arithmetic. A line that doesn't read is a
-  `LineError` with its number; lines and notes are capped.
+  `LineError` with its number; lines and notes are capped. `issues` (#17): a repository's GitHub
+  issues and pull requests parsed from what `gh api --paginate …/issues?state=all` prints (an item
+  that doesn't read is skipped and counted; an issue's PR is the newest whose body closes it), and
+  `IssueCache`, their versioned JSON on disk, which reads from an older or newer build too.
 - **L1 `swarmception-domain`**: `activity` reads each instance's sessions (split at its pauses),
   its work on issues, its helper sub-agents (a gate's `rc`, the PRs its note names) and its marks,
   and applies what another instance ends (`of` on `session.stop` and `release`), and keeps every
@@ -58,18 +61,32 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   colour (`colours`, as on the timeline), up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
   worker's actor and helper; the gate's runs (a merge whose gate logged no `sub.start` counts as a
   run), main's blocks, and what happened in the `recent` seconds before *t*. Nothing after *t* is
-  told.
+  told; `titled` adds what GitHub says (each crate's title, its tooltip's title, state and labels
+  as of *t*). `titles` (#17) is the text from GitHub's issues: a bar's label with its ticket's
+  title (`#58 Architecture review`, on unless `RowsSpec::titles` is off), and the lines a
+  ticket's tooltips start with (title; state, labels, author; its PR); `rows_with` builds the rows
+  with them, and each bar carries its PR. `timeline`'s host data gives a ticket's bar (and a
+  merge onto main's) the context-menu items Open Issue and Open PR, as `Link`s by host item id.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
-  each call with a deadline and capped output, every path checked as an instance id.
+  each call with a deadline and capped output, every path checked as an instance id. `github`
+  (#17): the `origin` remote read as GitHub's `owner/name`, the issues fetched with `gh api
+  --paginate` (the same runner as git: a deadline, a cap, no prompts), and a cache per repository
+  in the user's cache directory (`~/Library/Caches/swarmception/issues/<owner>--<name>.json` on
+  macOS), written whole or not at all. No remote on GitHub, no `gh`, no network: a `GithubError`.
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
   `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
   `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
-  ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey). A session made with a waker reads in the background and lands through
-  `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
+  ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey),
+  `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR). Every load
+  (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
+  cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
+  where and why not is `repo.status`'s `issues`, and new issues build the rows again. Where they
+  come from (`gh`, the cache directory) is `Session::set_github`. A session made with a waker
+  reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
   the panes, the grouping, Collapse, Fit), as data (`menu`: `MenuAction`, `MenuState`) that the
@@ -90,9 +107,14 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   aside on the first hover and put back exactly when the pointer leaves), clicking one traces its
   journey; a merge onto main no ticket names is a grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
   else the window's end) or plays through the window, the playhead following.
+  Right-clicking a bar (the widget's host items) or a chip offers Open Issue and Open PR: the
+  shell runs `ticket.urls` and hands the page to egui's `open_url`. View ▸ Titles on Bars (and the
+  toolbar's tag) is `rows.set {titles}`; the status bar says how many issues came and from where,
+  or warns why none did.
   `UiState` (the panes shown, the factory's follow, play, speed and *t*) is serde data.
-- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--at`, `--screenshot`) and `swarmception-cli` (the engine headless: `commands`, `run`).
+- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`, `--no-titles`,
+  `--panes`, `--at`, `--hover`, `--hover-bar`, `--screenshot`) and `swarmception-cli` (the engine
+  headless: `commands`, `run`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the
 widget's (the view: zoom, pan, scale, selection). Nothing reaches across: the UI moves data from
@@ -185,7 +207,9 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-01 | minor | A colour per ticket from `colours`, shared with the factory; the top rows as 10 s spans; bars carry their ticket and colour, no more pins (#15) |
+| 2026-11-01 | minor | The repository's GitHub issues: fetched with `gh`, cached per repository; titles on bars and first in tooltips; `ticket.urls` and the bars' and chips' Open Issue / Open PR (#17) |
+| 2026-11-01 | minor | A colour per ticket from `colours`
+, shared with the factory; the top rows as 10 s spans; bars carry their ticket and colour, no more pins (#15) |
 | 2026-11-01 | minor | The factory's statistics strip, over `stats.get` for the window (#22) |
 | 2026-11-01 | minor | The factory: `factory.at`, `timeline.placeAt`, `timeline.ticketBars` and the Factory pane (#18) |
 | 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |
