@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Span, Sub, stop_reason};
+use crate::colours::{NO_TICKET, Rgb, ticket_colour};
 use crate::rows::duration;
 use crate::tickets::{Phase, Stretch, Ticket, tickets};
 
@@ -102,8 +103,8 @@ pub struct Crate {
     pub pr: Option<u64>,
     /// `#<issue>`.
     pub label: String,
-    /// Its own colour, the same in every scene: [`ticket_colour`].
-    pub colour: [u8; 3],
+    /// Its own colour, the same in every scene and on the timeline: [`ticket_colour`].
+    pub colour: Rgb,
     pub state: CrateState,
     /// When it came into this state; up next, when its first event comes.
     pub since: Timestamp,
@@ -264,8 +265,8 @@ pub struct Block {
     /// What its brick says: `#<issue>` for a ticket's merge; `!<m>`, its PR, for a merge no
     /// ticket names (setup, docs); else the commit's start.
     pub mark: String,
-    /// Its ticket's colour; [`NO_TICKET_COLOUR`] without one, so it reads as not a ticket.
-    pub colour: [u8; 3],
+    /// Its ticket's colour; [`NO_TICKET`] without one, so it reads as not a ticket.
+    pub colour: Rgb,
     pub age: i64,
     pub tooltip: Vec<String>,
 }
@@ -313,7 +314,7 @@ pub struct Happening {
     pub kind: HappeningKind,
     pub issue: Option<u64>,
     /// The ticket's colour, for one.
-    pub colour: Option<[u8; 3]>,
+    pub colour: Option<Rgb>,
     pub text: String,
 }
 
@@ -400,33 +401,6 @@ pub struct Journey {
     pub issue: u64,
     pub legs: Vec<Leg>,
     pub text: String,
-}
-
-/// A ticket's colour: hues a golden angle apart by issue, so tickets next to each other differ,
-/// and the same issue is the same colour everywhere.
-#[must_use]
-pub fn ticket_colour(issue: u64) -> [u8; 3] {
-    let hue = ((issue % 1_000_003) as f64 * 0.618_033_988_75).fract();
-    hsv(hue, 0.58, 0.88)
-}
-
-/// A neutral grey, for a merge onto main that no ticket names: not a ticket.
-pub const NO_TICKET_COLOUR: [u8; 3] = [0x7a, 0x7d, 0x86];
-
-fn hsv(h: f64, s: f64, v: f64) -> [u8; 3] {
-    let sector = (h * 6.0).floor();
-    let f = h * 6.0 - sector;
-    let (p, q, r) = (v * (1.0 - s), v * (1.0 - f * s), v * (1.0 - (1.0 - f) * s));
-    let (red, green, blue) = match sector as i64 % 6 {
-        0 => (v, r, p),
-        1 => (q, v, p),
-        2 => (p, v, r),
-        3 => (p, q, v),
-        4 => (r, p, v),
-        _ => (v, p, q),
-    };
-    let byte = |x: f64| (x * 255.0).round().clamp(0.0, 255.0) as u8;
-    [byte(red), byte(green), byte(blue)]
 }
 
 /// A short duration, for a label: `45s`, `12m`, `3h05`, `2d04h`.
@@ -912,7 +886,7 @@ fn main_block(merge: &MainMerge, issue: Option<u64>, t: Timestamp) -> Block {
         (None, Some(pr)) => format!("!{pr}"),
         (None, None) => short_commit.get(..7).unwrap_or(short_commit).to_owned(),
     };
-    let colour = issue.map_or(NO_TICKET_COLOUR, ticket_colour);
+    let colour = issue.map_or(NO_TICKET, ticket_colour);
     Block { t: merge.t, pr: merge.pr, issue, label, mark, colour, age: t.0.saturating_sub(merge.t.0), tooltip }
 }
 
@@ -1174,8 +1148,8 @@ mod tests {
         .filter_map(parse_merge)
         .collect();
         let scene = scene(&Activity::of(&sample()), &merges, at("2026-10-31T05:00:00Z"), DEFAULT_RECENT);
-        let marks: Vec<(&str, [u8; 3])> = scene.shipping.blocks.iter().map(|b| (b.mark.as_str(), b.colour)).collect();
-        assert_eq!(marks, [("#170", ticket_colour(170)), ("!174", NO_TICKET_COLOUR), ("a1b2c3d", NO_TICKET_COLOUR)]);
+        let marks: Vec<(&str, Rgb)> = scene.shipping.blocks.iter().map(|b| (b.mark.as_str(), b.colour)).collect();
+        assert_eq!(marks, [("#170", ticket_colour(170)), ("!174", NO_TICKET), ("a1b2c3d", NO_TICKET)]);
         let setup = &scene.shipping.blocks[1];
         assert_eq!(setup.issue, None);
         assert_eq!(setup.tooltip, ["Merge pull request #174 from mornycorp/progress-7", "15bad2c0 · 2026-10-31T04:17:35Z", "no ticket's merge names it"]);

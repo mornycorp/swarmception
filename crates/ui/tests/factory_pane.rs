@@ -295,7 +295,7 @@ fn clicking_a_ticket_traces_its_journey() {
 
 #[test]
 fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
-    use swarmception_domain::factory::NO_TICKET_COLOUR;
+    use swarmception_domain::colours::NO_TICKET as NO_TICKET_COLOUR;
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
     shell.set_factory_at(Timestamp::parse("2026-10-31T03:50:00Z").unwrap());
@@ -315,7 +315,8 @@ fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
 
 #[test]
 fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
-    use timeline_engine::ranges_cmds::{InstantParams, RangeParams, SelectInstant, Toggle};
+    use timeline_engine::ranges_cmds::{RangeParams, Toggle};
+    use timeline_engine::state_cmds::{Set, SetParams};
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
     shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
@@ -353,10 +354,13 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     assert_ne!(lit, selected(&mut shell), "the hover showed #7's bars instead");
     assert_eq!(shell.timeline().selection().unwrap(), before, "and put the person's selection back exactly");
 
-    // An instant selected (the merge pin), with its playhead: put back too.
-    shell.timeline().widget().session().call::<SelectInstant>(InstantParams { track: "merged".into(), instant: 0 }).unwrap();
+    // A merge's span selected alone, the playhead moved to its start: put back too.
+    let session = shell.timeline().widget().session();
+    session.call::<timeline_engine::ranges_cmds::Clear>(NoParams {}).unwrap();
+    session.call::<Toggle>(RangeParams { track: "merged".into(), range: 0 }).unwrap();
+    session.call::<Set>(SetParams { playhead: Some(0), ..SetParams::default() }).unwrap();
     let before = shell.timeline().selection().unwrap();
-    assert!(before.instant.is_some());
+    assert_eq!((before.ranges.get("merged").cloned(), before.playhead), (Some(vec![0]), Some(0)));
     hover_and_leave(&mut shell, 9);
     assert_eq!(shell.timeline().selection().unwrap(), before);
 

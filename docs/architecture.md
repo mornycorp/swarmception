@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory's statistics strip) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (a colour per ticket; the top rows as 10 s spans) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -39,8 +39,14 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   began, finished (its submit) and merged, and its stretches (claimed, working, waiting for merge,
   sent back, stopped). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed), under two rows at the top, the merges onto `main` and the tickets'
-  merges; each bar and pin carries its label, style and tooltip. `timeline` builds
-  swarm-timeline's host data (`TimelineData`) from the rows: the axis's items are the distinct
+  merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
+  `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
+  its colour and its tooltip. `colours` is the one source of colours, the timeline's and the
+  factory's (#15): a ticket's own colour from its issue number (hues a golden angle apart, kept
+  clear of the fixed colours' hues, legible labels on every one), in which its *working* bars and
+  its merge are drawn; claimed yellow, waiting for merge blue, sent back red, stopped grey, merges
+  onto main green. `timeline` builds
+  swarm-timeline's host data (`TimelineData`) from the rows, each range in its bar's colour: the axis's items are the distinct
   times, with a `Time` (Spans) scale, positions in nanoseconds from the first time floored to
   the hour. It depends on `timeline-core` (pure) and nothing else of the widget. `stats` reads
   the swarm's statistics over a window (`Stats`): **tickets landed per active hour** (active:
@@ -49,7 +55,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `ready` pass rates with failures by cause, sendbacks, work in progress and each worker's
   utilisation; the module's docs define each figure.
   `factory` is the swarm at one moment *t* as a factory (#18): each ticket a crate in its own
-  colour, up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
+  colour (`colours`, as on the timeline), up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
   worker's actor and helper; the gate's runs (a merge whose gate logged no `sub.start` counts as a
   run), main's blocks, and what happened in the `recent` seconds before *t*. Nothing after *t* is
   told.
@@ -179,6 +185,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | A colour per ticket from `colours`, shared with the factory; the top rows as 10 s spans; bars carry their ticket and colour, no more pins (#15) |
 | 2026-11-01 | minor | The factory's statistics strip, over `stats.get` for the window (#22) |
 | 2026-11-01 | minor | The factory: `factory.at`, `timeline.placeAt`, `timeline.ticketBars` and the Factory pane (#18) |
 | 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |

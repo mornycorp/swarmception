@@ -56,7 +56,6 @@ pub struct Marks {
 }
 
 const IDLE: Color32 = Color32::from_rgb(0x7f, 0xb0, 0x8f);
-const MAIN: Color32 = Color32::from_rgb(0x8e, 0x6c, 0xd4);
 
 const fn bench_colour(status: BenchStatus) -> Color32 {
     match status {
@@ -85,8 +84,7 @@ const fn happening_colour(kind: HappeningKind) -> Color32 {
         HappeningKind::Submitted => WAITING,
         HappeningKind::SentBack | HappeningKind::GateFailed => SENT_BACK,
         HappeningKind::Stopped | HappeningKind::Released => STOPPED,
-        HappeningKind::Merged | HappeningKind::Done | HappeningKind::GatePassed => PASSED,
-        HappeningKind::Landed => MAIN,
+        HappeningKind::Merged | HappeningKind::Done | HappeningKind::GatePassed | HappeningKind::Landed => PASSED,
     }
 }
 
@@ -687,7 +685,7 @@ impl Floor<'_> {
             phase(GATING, "in the gate"),
             (Look::Plain, "merged: a brick on main"),
         ];
-        let grey = swarmception_domain::factory::NO_TICKET_COLOUR;
+        let grey = swarmception_domain::colours::NO_TICKET;
         let room = rect.with_min_y(rect.top() + 17.0);
         let rows = ((room.height() / 15.0).floor().max(1.0)) as usize;
         let items = items.iter().map(|(look, label)| (sample, *look, *label)).chain([(grey, Look::Plain, "grey !13: a merge, no ticket")]);
@@ -713,7 +711,7 @@ impl Floor<'_> {
             .blocks
             .iter()
             .find(|b| b.issue == Some(journey.issue))
-            .map_or_else(|| swarmception_domain::factory::ticket_colour(journey.issue), |b| b.colour);
+            .map_or_else(|| swarmception_domain::colours::ticket_colour(journey.issue), |b| b.colour);
         let line = rgb(colour);
         let mut stacked = [0usize; 5];
         let mut points: Vec<Pos2> = Vec::new();

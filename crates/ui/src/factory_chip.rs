@@ -1,7 +1,8 @@
 //! The ticket chip (#18, the owner's review): one shape for a ticket's whole life, at every
-//! station. Its **fill** is always its ticket's own colour (`ticket_colour`, from its id); its
-//! **border** is its phase, the same colours everywhere (claimed yellow, working orange, waiting
-//! blue, in the gate cyan, sent back red, stopped grey). Up next, not started, it is a hollow
+//! station. Its **fill** is always its ticket's own colour (the domain's `ticket_colour`, from its
+//! id, as on the timeline); its **border** is its phase, the same colours everywhere: the
+//! timeline's from the domain's `colours` (claimed yellow, waiting blue, sent back red, stopped
+//! grey), and the factory's own two (working orange, in the gate cyan). Up next, not started, it is a hollow
 //! outline in its colour; merged, a plain brick with no border. Only its size changes, with how
 //! much it says: [`Size::Large`] at a bench, [`Size::Medium`] in the queues, [`Size::Small`] on the
 //! shelf and in main's wall.
@@ -12,15 +13,19 @@
 use std::collections::{HashMap, HashSet};
 
 use egui::{Align2, Color32, FontId, Rect, Stroke, StrokeKind, vec2};
+use swarmception_domain::colours;
 use swarmception_domain::factory::{CrateState, HappeningKind};
 
-pub const CLAIMED: Color32 = Color32::from_rgb(0xf2, 0xc9, 0x4c);
+pub const CLAIMED: Color32 = rgb(colours::CLAIMED);
+pub const WAITING: Color32 = rgb(colours::WAITING);
+pub const SENT_BACK: Color32 = rgb(colours::SENT_BACK);
+pub const STOPPED: Color32 = rgb(colours::STOPPED);
+/// Main's green: a merge onto it, a gate passed.
+pub const PASSED: Color32 = rgb(colours::MAIN_MERGE);
+/// The factory's own: a working border (its fill is the ticket's colour), a run going on.
 pub const WORKING: Color32 = Color32::from_rgb(0xff, 0x8c, 0x1a);
-pub const WAITING: Color32 = Color32::from_rgb(0x3b, 0x82, 0xf6);
+/// The factory's own: in a gate run.
 pub const GATING: Color32 = Color32::from_rgb(0x22, 0xd3, 0xee);
-pub const SENT_BACK: Color32 = Color32::from_rgb(0xe5, 0x48, 0x4d);
-pub const STOPPED: Color32 = Color32::from_rgb(0x9a, 0x9a, 0x9a);
-pub const PASSED: Color32 = Color32::from_rgb(0x2e, 0xb8, 0x5c);
 
 const GLIDE: f64 = 0.7;
 /// A brick's key in [`Motion`], beside its ticket's chip's.
@@ -90,11 +95,10 @@ pub const fn rgb(colour: [u8; 3]) -> Color32 {
     Color32::from_rgb(colour[0], colour[1], colour[2])
 }
 
-/// Black or white, whichever reads on `fill`.
+/// Black or white, whichever reads on `fill` (the domain's [`colours::ink`]).
 #[must_use]
 pub fn ink(fill: Color32) -> Color32 {
-    let luma = 0.299 * f32::from(fill.r()) + 0.587 * f32::from(fill.g()) + 0.114 * f32::from(fill.b());
-    if luma > 150.0 { Color32::from_rgb(0x1a, 0x1a, 0x1a) } else { Color32::WHITE }
+    rgb(colours::ink([fill.r(), fill.g(), fill.b()]))
 }
 
 /// What a chip shows besides its colour.

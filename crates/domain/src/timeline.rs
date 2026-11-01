@@ -1,6 +1,6 @@
 //! The timeline widget's host data (swarm-timeline's docs/spec.md §3) built from the rows: a
-//! track per row (a group, a Ranges row of bars, an Instants row of pins), and a `Time` scale.
-//! The axis's items are the distinct times the bars and pins name, in order; item `i` spans
+//! track per row (a group, or a Ranges row of bars, each range in its bar's colour), and a `Time`
+//! scale. The axis's items are the distinct times the bars name, in order; item `i` spans
 //! from its time to the next one's, so a bar is the run of items from its start up to its end,
 //! and the Unit scale (every item the same width) reads as event order with idle time cut out.
 //! Positions are nanoseconds from [`Built::origin`], the first time floored to the hour, so the
@@ -11,33 +11,26 @@ use std::collections::BTreeMap;
 
 use timeline_core::axis::Position;
 use timeline_core::data::{
-    CategoryId, Colour, DataError, Importance, Instant, InstantAt, Item, ItemIndex, MemoryData, Range, RangeExtent, RangeFlags, TimelineData, TrackId,
-    TrackKind, TrackTree,
+    CategoryId, Colour, DataError, Importance, Instant, Item, ItemIndex, MemoryData, Range, RangeExtent, RangeFlags, TimelineData, TrackId, TrackKind,
+    TrackTree,
 };
 use timeline_core::scale::{Availability, NamedScale, Scale};
 
 use swarmception_model::Timestamp;
 
-use crate::rows::{Bar, Node, Pin, Style};
+use crate::colours::Rgb;
+use crate::rows::{Bar, Node};
 
 /// The time scale's name.
 pub const TIME: &str = "Time";
-/// How long the last item lasts: past the last event, so a pin there shows.
+/// How long the last item lasts: past the last event, so a bar ending there shows.
 const LAST_ITEM_SECONDS: i64 = 60;
 const NANOS: i64 = 1_000_000_000;
 
-/// The colour each style draws in.
+/// A bar's colour as the widget's.
 #[must_use]
-pub const fn colour(style: Style) -> Colour {
-    match style {
-        Style::MainMerge => Colour::rgb(0x5b, 0x3f, 0xa8),
-        Style::Merged => Colour::rgb(0x8e, 0x6c, 0xd4),
-        Style::Claimed => Colour::rgb(0x6f, 0x9f, 0xd8),
-        Style::Working => Colour::rgb(0x3f, 0xa7, 0x6b),
-        Style::Waiting => Colour::rgb(0xe0, 0xa1, 0x2e),
-        Style::SentBack => Colour::rgb(0xd6, 0x45, 0x45),
-        Style::Stopped => Colour::rgb(0x9a, 0x9a, 0x9a),
-    }
+pub const fn colour([r, g, b]: Rgb) -> Colour {
+    Colour::rgb(r, g, b)
 }
 
 /// The rows as the widget's data, with their tooltips.
@@ -47,7 +40,6 @@ pub struct SwarmData {
     /// Position 0 of the `Time` scale, in nanoseconds from the Unix epoch.
     clock_epoch: Option<i64>,
     range_tips: BTreeMap<(TrackId, usize), Vec<String>>,
-    instant_tips: BTreeMap<(TrackId, usize), Vec<String>>,
 }
 
 /// What [`build`] makes: the data, its time scale and where its positions count from.
@@ -78,10 +70,8 @@ impl Built {
 pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     let mut times: Vec<Timestamp> = Vec::new();
     for leaf in rows.iter().flat_map(Node::leaves) {
-        match leaf {
-            Node::Ranges { bars, .. } => times.extend(bars.iter().flat_map(|b| [b.start, b.end])),
-            Node::Instants { pins, .. } => times.extend(pins.iter().map(|p| p.at)),
-            Node::Group { .. } => {}
+        if let Node::Ranges { bars, .. } = leaf {
+            times.extend(bars.iter().flat_map(|b| [b.start, b.end]));
         }
     }
     times.sort_unstable();
@@ -137,15 +127,6 @@ impl Adder<'_> {
                     self.bar(id, place, bar)?;
                 }
             }
-            Node::Instants { key, name, pins } => {
-                let id = data.add_track(parent, key.clone(), TrackKind::Instants, name.clone())?;
-                if self.show_empty {
-                    data.set_show_when_empty(id, true)?;
-                }
-                for (place, pin) in pins.iter().enumerate() {
-                    self.pin(id, place, pin)?;
-                }
-            }
         }
         Ok(())
     }
@@ -159,19 +140,12 @@ impl Adder<'_> {
     fn bar(&mut self, track: TrackId, place: usize, bar: &Bar) -> Result<(), DataError> {
         let first = self.item(bar.start);
         let last = self.item(bar.end).saturating_sub(1).max(first);
-        let range = Range { name: bar.label.clone(), extent: RangeExtent::Items { first, last }, colour: Some(colour(bar.style)), lane: None };
+        let range = Range { name: bar.label.clone(), extent: RangeExtent::Items { first, last }, colour: Some(colour(bar.colour)), lane: None };
         self.built.data.add_range(track, range)?;
         if bar.open {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
         }
         self.built.range_tips.insert((track, place), bar.tooltip.clone());
-        Ok(())
-    }
-
-    fn pin(&mut self, track: TrackId, place: usize, pin: &Pin) -> Result<(), DataError> {
-        let instant = Instant { name: pin.label.clone(), at: InstantAt::Item(self.item(pin.at)), colour: Some(colour(pin.style)) };
-        self.built.data.add_instant(track, instant)?;
-        self.built.instant_tips.insert((track, place), pin.tooltip.clone());
         Ok(())
     }
 }
@@ -210,7 +184,7 @@ impl TimelineData for SwarmData {
     }
 
     fn instant_tooltip(&self, track: TrackId, place: usize) -> Vec<String> {
-        self.instant_tips.get(&(track, place)).cloned().unwrap_or_else(|| self.data.instant_tooltip(track, place))
+        self.data.instant_tooltip(track, place)
     }
 
     fn range_flags(&self, track: TrackId, place: usize) -> RangeFlags {
@@ -259,6 +233,28 @@ mod tests {
         assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:25Z");
         assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:06:43Z", "up to the submit");
         assert_eq!(built.data.range_tooltip(ticket, 1)[0], "#170 · PR #173");
+    }
+
+    #[test]
+    fn each_range_is_drawn_in_its_bars_colour_and_a_merge_spans_ten_seconds() {
+        use swarmception_model::{MainMerge, parse_merge};
+        let activity = Activity::of(&sample());
+        let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
+        let rows = rows(&activity, &merges, RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        let scale = built.scales[0].scale().unwrap().clone();
+        let tree = built.data.tracks();
+        for leaf in rows.iter().flat_map(Node::leaves) {
+            let Node::Ranges { key, bars, .. } = leaf else { continue };
+            let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
+            let ranges = built.data.ranges(track).unwrap();
+            assert_eq!(ranges.iter().map(|r| r.colour).collect::<Vec<_>>(), bars.iter().map(|b| Some(colour(b.colour))).collect::<Vec<_>>(), "{key}");
+            if key == "main" || key == "merged" {
+                let RangeExtent::Items { first, last } = ranges[0].extent else { panic!() };
+                let span = scale.range_span(first, last).unwrap();
+                assert_eq!(built.time_at(span.end()).0 - built.time_at(span.start()).0, 10, "{key}: a 10 s span");
+            }
+        }
     }
 
     #[test]
