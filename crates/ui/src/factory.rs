@@ -28,6 +28,7 @@ use swarmception_model::Timestamp;
 
 use crate::factory_chip::Motion;
 use crate::factory_paint::{Drawn, Marks, paint};
+use crate::factory_stats::StatsStrip;
 use crate::icons;
 use crate::timeline::Looking;
 
@@ -136,6 +137,8 @@ pub struct FactoryPane {
     drawn: Drawn,
     /// The ticket under the pointer last frame.
     hovered: Option<u64>,
+    /// The statistics strip in the header, for the timeline's window.
+    strip: StatsStrip,
 }
 
 /// What a scene was asked for: *t*, `recent`, the traced ticket, and the engine's revision.
@@ -158,6 +161,18 @@ impl FactoryPane {
     #[must_use]
     pub const fn drawn(&self) -> &Drawn {
         &self.drawn
+    }
+
+    /// The statistics strip in the header.
+    #[must_use]
+    pub const fn strip(&self) -> &StatsStrip {
+        &self.strip
+    }
+
+    /// Asks `stats.get` for the timeline's visible window (the whole run without one) when the
+    /// window or the engine's data moved on.
+    pub fn sync_stats(&mut self, engine: &mut Session, looking: Option<Looking>) {
+        self.strip.sync(engine, looking.and_then(|l| l.window));
     }
 
     /// The ticket under the pointer, at any station.
@@ -243,6 +258,9 @@ impl FactoryPane {
     /// Draws the pane: its header (the clock, play, speed, follow) and the floor.
     pub fn ui(&mut self, ui: &mut egui::Ui, view: &mut FactoryView, status: &StatusResult) {
         ui.horizontal(|ui| self.header(ui, view));
+        if let Some(t) = self.scene.as_ref().map(|s| s.t) {
+            self.strip.ui(ui, t);
+        }
         ui.separator();
         let Some(scene) = &self.scene else {
             let text = match (&status.repo, &status.job) {

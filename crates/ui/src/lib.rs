@@ -12,6 +12,7 @@
 mod factory;
 mod factory_chip;
 mod factory_paint;
+mod factory_stats;
 pub mod fonts;
 pub mod icons;
 pub mod menu;
@@ -30,6 +31,7 @@ use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams a
 pub use factory::{FactoryPane, FactoryView, Source as FactorySource, Speed};
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
+pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use menu::{MenuAction, MenuState};
 pub use timeline::{Looking, Selection, TimelinePane};
 
@@ -290,6 +292,7 @@ impl Shell {
         }
         let recent = factory::recent(&self.ui.factory, looking);
         self.factory.sync(&mut self.engine, &self.ui.factory, recent);
+        self.factory.sync_stats(&mut self.engine, looking);
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory: `factory.at` and its pane) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory's statistics strip) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -73,6 +73,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the scale and
   window, and drives the widget through its own commands (`view.fit`, `view.zoom`, `state.set`).
+  The factory's header carries a statistics strip: what `stats.get` returns for the timeline's
+  visible window (landed per active hour, its hourly sparkline with *t*'s hour marked, and the
+  compact figures, each tooltip saying how it is computed), asked again only when the window or
+  the data moves on.
   The factory pane, under the timeline, draws what `factory.at` returns: each ticket the same
   chip at every station (its fill its colour, its border its phase, its size by station),
   gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
@@ -175,6 +179,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The factory's statistics strip, over `stats.get` for the window (#22) |
 | 2026-11-01 | minor | The factory: `factory.at`, `timeline.placeAt`, `timeline.ticketBars` and the Factory pane (#18) |
 | 2026-11-01 | minor | The swarm's statistics: the domain's `stats`, the command `stats.get` (#20) |
 | 2026-10-31 | minor | The menus as data; on macOS in the system menu bar (#3) |
