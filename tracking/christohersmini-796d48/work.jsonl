@@ -5,3 +5,4 @@
 {"event":"claim","issue":15,"mr":25,"t":"2026-11-01T09:16:25Z"}
 {"event":"work","issue":15,"t":"2026-11-01T09:16:28Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-3504c44","t":"2026-11-01T09:26:46Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-3504c44","t":"2026-11-01T09:26:50Z"}
