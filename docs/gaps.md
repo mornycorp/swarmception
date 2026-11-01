@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** minor (batch 1: tickets, packed rows, the clock, the macOS menu) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 2: the Factory, statistics, ticket colours, issue titles) · **Target:** M1
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -20,15 +20,17 @@ marked **Human:** with what is needed.
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
 | 1 | [G10 The macOS View menu holds the system's tab items](#g10-the-macos-view-menu-holds-the-systems-tab-items) | open | #9 | 0.5–1 h |
-| 2 | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | open | | 4–8 h |
-| 3 | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | open | | 3–6 h |
-| 4 | [G11 An abandoned ticket runs on to the last event](#g11-an-abandoned-ticket-runs-on-to-the-last-event) | open | | 1–2 h |
-| 5 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
-| 6 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
-| 7 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 8 | [G7 Tickets carry their titles](#g7-tickets-carry-their-titles) | open | | 2–4 h |
-| 9 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
-| 10 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | open | | 8–16 h |
+| 2 | [G11 An abandoned ticket runs on to the last event](#g11-an-abandoned-ticket-runs-on-to-the-last-event) | open | | 1–2 h |
+| 3 | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | open | | 4–8 h |
+| 4 | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | open | | 3–6 h |
+| 5 | [G12 A highlight that leaves the selection alone](#g12-a-highlight-that-leaves-the-selection-alone) | open | | 1–3 h |
+| 6 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
+| 7 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
+| 8 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22 | 4–8 h |
+| 9 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
+| 10 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 11 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| — | [G7 Tickets carry their titles](#g7-tickets-carry-their-titles) | done | #17 | |
 | — | [G1 The ruler reads clock time](#g1-the-ruler-reads-clock-time) | done | #2 | |
 
 ## G10 The macOS View menu holds the system's tab items
@@ -46,7 +48,32 @@ marked **Human:** with what is needed.
   each holding a packed row to the end (measured 2026-10-31, `--repo ../swarm-timeline`).
 - **Left:** end a ticket's open stretch when its worker's session ends (or a coordinator's
   `session.stop --of` ends it), marked as abandoned rather than open.
+- **Not this:** a ticket stopped as `done` while claimed or worked on (a review whose output is
+  issues) now ends there, done without a merge: mc-engine's #58 is 7 min 25 s, not 9 h 35 min
+  (#13, PR #14, measured 2026-11-01). The Factory shows #40 at arch-review's bench for hours
+  for the same reason as the timeline.
 - **Evidence:** `crates/domain/src/tickets.rs`.
+- **Estimate:** 1–2 agent-hours.
+
+## G12 A highlight that leaves the selection alone
+
+- **Missing:** hovering a Factory chip selects its ticket's bars on the timeline, and the
+  widget has no highlight apart from the selection, so the Factory sets the person's selection
+  aside and puts it back on leave (#18, PR #19). A highlight command in swarm-timeline (an
+  emphasis on ranges that isn't the selection) would make it plain.
+- **Left:** a swarm-timeline issue and the command there; the Factory's hover moves to it.
+- **Evidence:** `crates/ui/src/factory.rs`; `crates/ui/tests/factory_pane.rs`
+  (`a_persons_selection_survives_hovering_a_chip_and_leaving_it`).
+- **Estimate:** 1–3 agent-hours, most in swarm-timeline.
+
+## G13 Issues fetched incrementally
+
+- **Missing:** every load (Reload too) runs `gh api --paginate` for all the repo's issues and
+  PRs: about 1.4 s for mc-engine's 166 (#17, PR #26, measured 2026-11-01). A `since=` or ETag
+  fetch over the cache would make a reload near free on a big repo.
+- **Left:** also linking an issue to its PR by branch name, not only closing keywords and the
+  tracking branch's `mr`.
+- **Evidence:** `crates/source/src/github.rs`, `crates/model/src/issues.rs`.
 - **Estimate:** 1–2 agent-hours.
 
 ## G1 The ruler reads clock time
@@ -98,9 +125,14 @@ marked **Human:** with what is needed.
 
 ## G7 Tickets carry their titles
 
-- **Missing:** a ticket row is named `#170 · PR #173`; its issue's title would say what it is.
-  The tracking branch doesn't hold it: it needs `gh` (an L2 source with a deadline, cached).
-- **Estimate:** 2–4 agent-hours.
+- **Done** (#17, PR #26): each load reads the repo's issues and PRs through `gh api` (90 s
+  deadline), cached per repo and versioned (`~/Library/Caches/swarmception/issues/`), refreshed
+  in the background; no GitHub, `gh` or network leaves the timeline loading and the status bar
+  saying why. Bars read `#58 <title>` (View ▸ Titles on Bars); tooltips lead with the title,
+  state, labels and the PR; a bar's or a chip's context menu opens the issue or the PR
+  (`ticket.urls`).
+- **Evidence:** `crates/source/src/github.rs`, `crates/engine/tests/issues.rs`,
+  `crates/ui/tests/ticket_links.rs`; screenshots checked 2026-11-01.
 
 ## G8 Opening a repository from the app
 
@@ -110,14 +142,25 @@ marked **Human:** with what is needed.
 
 ## G9 Swarm analytics panes
 
-- **Missing:** the tracking format's conventions support gate analytics (pass/fail, transient
-  causes, send-backs), per-worker throughput and model/effort comparison: panes beside the
+- **Done:**
+  - **The Factory pane** (#18, PR #19): the swarm at a time *t* as a factory (up next, benches,
+    dock, gate, main's wall), one chip per ticket for its whole life, following the timeline or
+    playing; `factory.at`.
+  - **Statistics** (#20, PR #21; #22, PR #23): `stats.get {start?, end?}` and a strip in the
+    Factory's header for the visible window. Tickets landed per active hour (active = a worker on
+    shift, less gaps over 15 min with no events): mc-engine 7.8 (75 in 9.65 h), swarm-timeline
+    10.3 (82 in 7.94 h), checked by hand against the raw events (measured 2026-11-01).
+  - **One colour per ticket** (#15, PR #25), shared by the timeline and the Factory.
+- **Left:** a gates pane (runs, causes, durations over time); model and effort compared per
+  worker; the Factory following the Unit scale, and a click on a chip selecting it on the
   timeline.
-- **Estimate:** 8–16 agent-hours, in issues of their own.
+- **Evidence:** `crates/domain/src/factory.rs`, `stats.rs`, `colours.rs`; `crates/ui/src/factory*.rs`.
+- **Estimate:** 4–8 agent-hours, in issues of their own.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Batch 2: G7 done (#17); G9 partial (#18, #20, #22, #15); G12, G13 new; G11 up |
 | 2026-10-31 | minor | Batch 1: G1 done (#2); G10 (#9) and G11 new; ranking moved |
 | 2026-10-31 | major | First version, from swarm-core's template |
