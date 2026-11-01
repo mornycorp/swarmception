@@ -19,7 +19,7 @@ pub enum At {
 }
 
 impl At {
-    fn time(&self) -> Result<Timestamp, EngineError> {
+    pub(crate) fn time(&self) -> Result<Timestamp, EngineError> {
         match self {
             Self::Seconds(seconds) => Ok(Timestamp(*seconds)),
             Self::Text(text) => Timestamp::parse(text).ok_or_else(|| Refusal::BadTime { text: text.chars().take(64).collect() }.into()),

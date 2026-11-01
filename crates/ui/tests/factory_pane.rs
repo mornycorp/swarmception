@@ -483,3 +483,95 @@ fn the_strip_asks_again_only_when_the_window_or_the_data_moves() {
     assert_eq!(shell.factory().strip().asks(), asks + 2);
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// A key pressed and let go, with no modifiers.
+fn key(key: egui::Key) -> Vec<egui::Event> {
+    let event = |pressed| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+    vec![event(true), event(false)]
+}
+
+/// A click at `at`, then frames for what it set going.
+fn click_at(shell: &mut Shell, ctx: &egui::Context, at: egui::Pos2) {
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame_with(shell, ctx, vec![egui::Event::PointerMoved(at), button(true)]);
+    frame_with(shell, ctx, vec![button(false)]);
+    frame(shell, ctx);
+}
+
+/// `key` pressed, then frames for the step to land: the text drawn last.
+fn press(shell: &mut Shell, ctx: &egui::Context, k: egui::Key) -> Vec<String> {
+    frame_with(shell, ctx, key(k));
+    frame(shell, ctx);
+    frame(shell, ctx)
+}
+
+#[test]
+fn stepping_by_key_moment_back_and_forth_names_each_and_moves_the_playhead() {
+    use swarmception_domain::moments::{Direction, Step};
+    use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, StepParams, StepTo};
+    use swarmception_ui::{Jump, Steps};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let at = |text: &str| Timestamp::parse(text).unwrap();
+    shell.set_factory_at(at("2026-10-31T03:10:00Z"));
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // A click on the floor away from any chip gives the factory the keyboard.
+    let floor = shell.factory().floor().unwrap();
+    let empty = floor.left_bottom() + egui::vec2(3.0, -3.0);
+    assert!(!shell.factory().drawn().chips.iter().any(|(_, r)| r.contains(empty)));
+    click_at(&mut shell, &ctx, empty);
+
+    let t = |shell: &Shell| shell.ui_state().factory.t;
+    let playhead = |shell: &mut Shell| shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap().playhead;
+    let item = |shell: &mut Shell, t| shell.engine().call::<PlaceAt>(PlaceAtParams { time: t }).unwrap().item;
+    // → from 03:10: the setup PR landing on main at 03:20, named beside the clock.
+    let texts = press(&mut shell, &ctx, egui::Key::ArrowRight);
+    let asked: Step = shell.engine().call::<StepTo>(StepParams { t: Some(at("2026-10-31T03:10:00Z")), direction: Direction::Next, kinds: Vec::new() }).unwrap();
+    assert_eq!(asked.t, Some(at("2026-10-31T03:20:00Z")));
+    assert_eq!(t(&shell), asked.t, "t is the step's");
+    let view = shell.ui_state().factory;
+    assert_eq!(shell.factory().moment(&view), Some(&asked), "the pane shows factory.step's answer");
+    assert_eq!(shell.factory().scene().unwrap().t, at("2026-10-31T03:20:00Z"));
+    assert_eq!(shell.factory().source(), FactorySource::Stepped);
+    assert!(texts.iter().any(|text| text == "PR #13 merged onto main"), "named beside the clock: {texts:?}");
+    let want = item(&mut shell, at("2026-10-31T03:20:00Z"));
+    assert_eq!(playhead(&mut shell), want, "the timeline's playhead follows");
+    assert!(!view.follow && !view.playing);
+
+    // ← twice: #11's claim at 03:05, then #7's work at 03:02.
+    let texts = press(&mut shell, &ctx, egui::Key::ArrowLeft);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:05:00Z")));
+    assert!(texts.iter().any(|text| text == "#11 claimed · worker-2"), "{texts:?}");
+    press(&mut shell, &ctx, egui::Key::ArrowLeft);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:02:00Z")));
+
+    // Only merges onto main: 03:20, 03:45, then none, t staying.
+    let mut state = shell.ui_state();
+    state.factory.steps = Steps::Merges;
+    shell.set_ui_state(state);
+    press(&mut shell, &ctx, egui::Key::ArrowRight);
+    let texts = press(&mut shell, &ctx, egui::Key::ArrowRight);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")));
+    assert!(texts.iter().any(|text| text == "#7 merged onto main (PR #8) · worker-1"), "{texts:?}");
+    let texts = press(&mut shell, &ctx, egui::Key::ArrowRight);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")), "no later merge: t stays");
+    assert!(texts.iter().any(|text| text == "no later merge onto main"), "{texts:?}");
+
+    // Home and End: the first and last events, as ⏮ / ⏭'s shift-click.
+    press(&mut shell, &ctx, egui::Key::Home);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:00:00Z")));
+    press(&mut shell, &ctx, egui::Key::End);
+    assert_eq!(t(&shell), Some(at("2026-10-31T04:30:00Z")));
+    assert_eq!(shell.factory().moment(&shell.ui_state().factory), None, "a jump names no moment");
+    shell.jump_factory(Jump::Step(Direction::Previous));
+    frame(&mut shell, &ctx);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")), "the shell's own way in: the last merge before");
+
+    // A click on the timeline takes the keyboard there: → is the timeline's, not the factory's.
+    click_at(&mut shell, &ctx, egui::pos2(700.0, 150.0));
+    press(&mut shell, &ctx, egui::Key::ArrowRight);
+    assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")));
+    std::fs::remove_dir_all(dir).ok();
+}

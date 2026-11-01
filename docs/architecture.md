@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the timeline's toolbar trimmed to what Swarmception needs, its view fixed by command; the bars' tooltips in colour) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory steps by key moment, back and forth: `factory.moments`, `factory.step`) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -70,7 +70,12 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `segments`, its stretches with the gate runs naming it carved out of its waits; `sent_back`), and
   what happened in the `recent` seconds before *t*. Nothing after *t* is
   told; `titled` adds what GitHub says (each crate's title, its tooltip's title, state and labels
-  as of *t*). `titles` (#17) is the text from GitHub's issues: a bar's label with its ticket's
+  as of *t*). `moments` (#33) are the factory's key moments, each named as a person says it
+  (`#120 sent back by the gate · alder`): a claim, work beginning, a submit (the stretches'
+  starts, so a resumed `work` is none), a gate run's pass or fail (a run that never said how it
+  went is none), a send back, a merge onto main (a ticket's merge without a main); `step` finds
+  the next or previous one of the kinds asked for, the moments at one second one step.
+  `titles` (#17) is the text from GitHub's issues: a bar's label with its ticket's
   title (`#58 Architecture review`, always: no option since #34), and the lines a
   ticket's tooltips start with (title; state, labels, author; its PR); `rows_with` builds the rows
   with them, and each bar carries its PR. `timeline`'s host data gives a ticket's bar (and a
@@ -88,7 +93,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
   `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
-  ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey),
+  ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
+  a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
+  from a time: its time, its moments and its name),
   `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR). Every load
   (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
@@ -132,14 +139,20 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   their phase colours, a red corner when it was sent back (the count in it from two), shrinking
   to the smallest size and then scrolling with the wheel, the newest rows first; a merge onto
   main no ticket names is a small grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
-  else the window's end) or plays through the window, the playhead following.
+  else the window's end) or plays through the window, the playhead following, or steps (#33):
+  ⏮ / ⏭, and ← / → while the factory has the keyboard (a press in it takes it, as one on the
+  timeline takes it there), put *t* at the key moment `factory.step` returns for the kinds
+  chosen beside them (`FactoryView::steps`: every moment, or only claims, work, submits, gate
+  runs, send backs or merges), the moment named beside the clock and the playhead following;
+  shift-click, Home and End go to the first and last event.
   Right-clicking a bar (the widget's host items) or a chip offers Open Issue and Open PR: the
   shell runs `ticket.urls` and hands the page to egui's `open_url`. Bars always carry titles (#34);
   the status bar says how many issues came and from where,
   or warns why none did.
-  `UiState` (the panes shown, the factory's follow, play, speed and *t*) is serde data.
+  `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by)
+  is serde data.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--at`, `--hover`, `--hover-bar`, `--screenshot`) and `swarmception-cli` (the engine
+  `--panes`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`) and `swarmception-cli` (the engine
   headless: `commands`, `run`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the
@@ -233,6 +246,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The factory steps by key moment, back and forth (#33): the domain's `moments`, `factory.moments` and `factory.step`; ⏮ / ⏭ and ← / →, the moment named beside the clock |
 | 2026-11-01 | minor | The timeline's toolbar shows only what Swarmception needs; the scale, origin, minimap and click fixed by command; the bars' tooltips in colour from the domain (#35) |
 | 2026-11-01 | minor | Tickets' colours from a fixed, curated palette (scheme B, #40), the phase colours retuned to sit with it |
 | 2026-11-01 | minor | Main's wall (#32): bricks sized by claim → merge, their phases along them, sendbacks marked; the blocks carry `took`, `segments`, `sent_back` |

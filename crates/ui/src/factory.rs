@@ -9,7 +9,12 @@
 //!   *t* holds, so its tooltips can be read;
 //! - **playing**, *t* runs on through the timeline's window at [`Speed`], looping, and the
 //!   timeline's playhead follows it;
-//! - otherwise *t* stays where it was put (`--at`, or where following or play left it).
+//! - **stepping** (#33), ⏮ / ⏭ (and ← / → while the factory has the keyboard: a click in it
+//!   takes it) put *t* at the previous / next key moment of the kinds [`Steps`] names, from
+//!   `factory.step`: a claim, work beginning, a submit, a gate's pass or fail, a send back, a
+//!   merge onto main. The moment is named beside the clock, the chips glide to it, and the
+//!   timeline's playhead follows. Shift-click (or Home / End) goes to the first / last event;
+//! - otherwise *t* stays where it was put (`--at`, or where following, play or a step left it).
 //!
 //! A ticket is the same chip at every station ([`crate::factory_chip`]), gliding and resizing
 //! between them when *t* moves, and what happened in the last stretch of *t* glows, fading as it
@@ -21,8 +26,9 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_domain::factory::FactoryScene;
+use swarmception_domain::moments::{Direction, MomentKind, Step};
 use swarmception_engine::Session;
-use swarmception_engine::factory_cmds::{At, AtParams};
+use swarmception_engine::factory_cmds::{At, AtParams, StepParams, StepTo};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_model::Timestamp;
 
@@ -68,6 +74,66 @@ impl Speed {
     }
 }
 
+/// The key moments a step takes (#33): every kind, or one sort.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Steps {
+    #[default]
+    All,
+    Claims,
+    Work,
+    Submits,
+    /// Gate runs passing or failing.
+    Gates,
+    SendBacks,
+    Merges,
+}
+
+impl Steps {
+    pub const ALL: [Self; 7] = [Self::All, Self::Claims, Self::Work, Self::Submits, Self::Gates, Self::SendBacks, Self::Merges];
+
+    /// The kinds of moment it takes: none named, every kind.
+    #[must_use]
+    pub fn kinds(self) -> Vec<MomentKind> {
+        match self {
+            Self::All => Vec::new(),
+            Self::Claims => vec![MomentKind::Claim],
+            Self::Work => vec![MomentKind::Work],
+            Self::Submits => vec![MomentKind::Submit],
+            Self::Gates => vec![MomentKind::GatePass, MomentKind::GateFail],
+            Self::SendBacks => vec![MomentKind::Sendback],
+            Self::Merges => vec![MomentKind::Merge],
+        }
+    }
+
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::All => "every moment",
+            Self::Claims => "claims",
+            Self::Work => "work beginning",
+            Self::Submits => "submits",
+            Self::Gates => "gate runs",
+            Self::SendBacks => "send backs",
+            Self::Merges => "merges onto main",
+        }
+    }
+
+    /// Its name on the command line and in the state: `all`, `merges`, `sendBacks`, …
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Claims => "claims",
+            Self::Work => "work",
+            Self::Submits => "submits",
+            Self::Gates => "gates",
+            Self::SendBacks => "sendBacks",
+            Self::Merges => "merges",
+        }
+    }
+}
+
 /// The factory's time, as the shell keeps it: plain data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -81,12 +147,31 @@ pub struct FactoryView {
     pub t: Option<Timestamp>,
     /// The ticket whose journey through the stations is traced.
     pub ticket: Option<u64>,
+    /// The key moments ⏮ / ⏭ step through.
+    pub steps: Steps,
 }
 
 impl Default for FactoryView {
     fn default() -> Self {
-        Self { follow: true, playing: false, speed: Speed::default(), t: None, ticket: None }
+        Self { follow: true, playing: false, speed: Speed::default(), t: None, ticket: None, steps: Steps::All }
     }
+}
+
+/// Where a step or jump asked for puts *t*.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Jump {
+    /// To the previous or next key moment (`factory.step`), or the first or last of them.
+    Step(Direction),
+    /// To the first event, or the last.
+    First,
+    Last,
+}
+
+/// A step that landed, and the *t* it left the factory at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Landed {
+    at: Option<Timestamp>,
+    step: Step,
 }
 
 /// Where this frame's *t* came from.
@@ -100,6 +185,8 @@ pub enum Source {
     Playing,
     /// Held while the pointer is over the factory.
     Held,
+    /// On a key moment a step put it at.
+    Stepped,
     /// Put there (`--at`, or where following or play left it).
     #[default]
     Set,
@@ -115,6 +202,7 @@ impl Source {
             Self::WindowEnd => "following the timeline window's end",
             Self::Playing => "playing through the timeline's window",
             Self::Held => "held while the pointer is over the factory",
+            Self::Stepped => "on a key moment",
             Self::Set => "set here",
             Self::Last => "at the last event",
         }
@@ -140,6 +228,10 @@ pub struct FactoryPane {
     hovered: Option<u64>,
     /// The statistics strip in the header, for the timeline's window.
     strip: StatsStrip,
+    /// A step or jump asked for, to run once there is a scene.
+    jump: Option<Jump>,
+    /// The step that landed last.
+    landed: Option<Landed>,
 }
 
 /// What a scene was asked for: *t*, `recent`, the traced ticket, and the engine's revision.
@@ -162,6 +254,12 @@ impl FactoryPane {
     #[must_use]
     pub const fn drawn(&self) -> &Drawn {
         &self.drawn
+    }
+
+    /// The rectangle the floor was drawn in last frame.
+    #[must_use]
+    pub const fn floor(&self) -> Option<egui::Rect> {
+        self.rect
     }
 
     /// The statistics strip in the header.
@@ -210,9 +308,80 @@ impl FactoryPane {
             view.t = Some(t);
             self.source = source;
         } else {
-            self.source = if view.t.is_some() { Source::Set } else { Source::Last };
+            self.source = match view.t {
+                Some(_) if self.moment(view).is_some_and(|step| step.t.is_some()) => Source::Stepped,
+                Some(_) => Source::Set,
+                None => Source::Last,
+            };
         }
         None
+    }
+
+    /// Asks for a step or jump, run at the next [`Self::jump`] once there is a scene.
+    pub const fn ask(&mut self, jump: Jump) {
+        self.jump = Some(jump);
+    }
+
+    /// Runs the step or jump asked for: *t* to the key moment `factory.step` names (the kinds
+    /// `view.steps` says), or to the first or last event, play and following off. The time the
+    /// timeline's playhead should be put at; none when nothing moved (no moment that way: the
+    /// step's text says so beside the clock).
+    pub fn jump(&mut self, engine: &mut Session, view: &mut FactoryView) -> Option<Timestamp> {
+        let scene = self.scene.as_ref()?;
+        let jump = self.jump.take()?;
+        let t = match jump {
+            Jump::First => scene.first,
+            Jump::Last => scene.last,
+            Jump::Step(direction) => {
+                let from = view.t.or(Some(scene.t));
+                let step = engine.call::<StepTo>(StepParams { t: from, direction, kinds: view.steps.kinds() }).ok()?;
+                let t = step.t;
+                self.landed = Some(Landed { at: t.or(view.t), step });
+                t
+            }
+        }?;
+        if !matches!(jump, Jump::Step(_)) {
+            self.landed = None;
+        }
+        view.t = Some(t);
+        view.follow = false;
+        view.playing = false;
+        Some(t)
+    }
+
+    /// The step that put the factory at its *t* (or found no moment from it), while *t* is
+    /// still there: what is named beside the clock.
+    #[must_use]
+    pub fn moment(&self, view: &FactoryView) -> Option<&Step> {
+        self.landed.as_ref().filter(|l| l.at == view.t).map(|l| &l.step)
+    }
+
+    /// ← / → (a step back or on) and Home / End (the first or last event) while the factory has
+    /// the keyboard, which a press anywhere in it takes, as a press on the timeline takes it there.
+    fn keys(&mut self, ui: &egui::Ui, pane: egui::Rect) {
+        let id = ui.scope_id().with("factory-keys");
+        ui.interact(pane, id, egui::Sense::focusable_noninteractive());
+        let pressed_here = ui.input(|i| (i.pointer.any_pressed() || i.pointer.any_click()) && i.pointer.interact_pos().is_some_and(|p| pane.contains(p)));
+        if pressed_here {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+        if !ui.memory(|m| m.has_focus(id)) {
+            return;
+        }
+        let filter = egui::EventFilter { horizontal_arrows: true, ..egui::EventFilter::default() };
+        ui.memory_mut(|m| m.set_focus_lock_filter(id, filter));
+        let keys = [
+            (egui::Key::ArrowLeft, Jump::Step(Direction::Previous)),
+            (egui::Key::ArrowRight, Jump::Step(Direction::Next)),
+            (egui::Key::Home, Jump::First),
+            (egui::Key::End, Jump::Last),
+        ];
+        for (key, jump) in keys {
+            if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, key)) {
+                self.ask(jump);
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     /// Play's next *t*: on by `dt` at the view's speed through the window (else the swarm's
@@ -258,6 +427,7 @@ impl FactoryPane {
 
     /// Draws the pane: its header (the clock, play, speed, follow) and the floor.
     pub fn ui(&mut self, ui: &mut egui::Ui, view: &mut FactoryView, status: &StatusResult) {
+        self.keys(ui, ui.max_rect());
         ui.horizontal(|ui| self.header(ui, view));
         if let Some(t) = self.scene.as_ref().map(|s| s.t) {
             self.strip.ui(ui, t);
@@ -289,12 +459,17 @@ impl FactoryPane {
         }
     }
 
-    fn header(&self, ui: &mut egui::Ui, view: &mut FactoryView) {
+    fn header(&mut self, ui: &mut egui::Ui, view: &mut FactoryView) {
         ui.label(egui::RichText::new(format!("{}  Factory", icons::FACTORY)).strong());
         ui.separator();
         let clock = self.scene.as_ref().map_or_else(String::new, |s| s.text.replacen('T', " ", 1).replace('Z', " UTC"));
         ui.label(egui::RichText::new(format!("{}  {clock}", icons::CLOCK)).monospace().strong());
-        ui.weak(self.source.text());
+        match self.moment(view) {
+            Some(step) => moment_label(ui, step),
+            None => {
+                ui.weak(self.source.text());
+            }
+        }
         ui.separator();
         let play = if view.playing { icons::PAUSE } else { icons::PLAY };
         if ui.button(play).on_hover_text("Play: run t through the timeline's window, looping; the timeline's playhead follows").clicked() {
@@ -305,18 +480,44 @@ impl FactoryPane {
                 ui.selectable_value(&mut view.speed, speed, speed.label());
             }
         });
-        let scene = self.scene.as_ref();
-        if ui.button(icons::START).on_hover_text("To the first event").clicked() {
-            view.t = scene.and_then(|s| s.first);
-            view.follow = false;
+        ui.separator();
+        let steps = view.steps.label();
+        let back = ui.button(icons::START).on_hover_text(format!("Step back to the previous key moment ({steps}; ←)\nShift-click: to the first event (Home)"));
+        if back.clicked() {
+            self.ask(if ui.input(|i| i.modifiers.shift) { Jump::First } else { Jump::Step(Direction::Previous) });
         }
-        if ui.button(icons::END).on_hover_text("To the last event").clicked() {
-            view.t = scene.and_then(|s| s.last);
-            view.follow = false;
+        let on = ui.button(icons::END).on_hover_text(format!("Step on to the next key moment ({steps}; →)\nShift-click: to the last event (End)"));
+        if on.clicked() {
+            self.ask(if ui.input(|i| i.modifiers.shift) { Jump::Last } else { Jump::Step(Direction::Next) });
         }
+        egui::ComboBox::from_id_salt("factory-steps").selected_text(format!("by {steps}")).width(140.0).show_ui(ui, |ui| {
+            for kind in Steps::ALL {
+                ui.selectable_value(&mut view.steps, kind, kind.label());
+            }
+        });
         ui.separator();
         ui.toggle_value(&mut view.follow, format!("{}  Follow the timeline", icons::FOLLOW))
             .on_hover_text("t follows the pointer over the timeline, else its playhead, else its window's end");
+    }
+}
+
+/// A step's landing beside the clock: its ticket's colour, what happened, and in its tooltip
+/// every moment at that second with its note, and its place among them all.
+fn moment_label(ui: &mut egui::Ui, step: &Step) {
+    let colour = step.moments.first().map(|m| crate::factory_chip::rgb(m.colour));
+    if let Some(colour) = colour {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, colour);
+    }
+    let text = if step.t.is_some() { egui::RichText::new(&step.text).strong() } else { egui::RichText::new(&step.text).weak().italics() };
+    let mut lines: Vec<String> =
+        step.moments.iter().map(|m| m.note.as_ref().map_or_else(|| m.text.clone(), |note| format!("{}\n    {note}", m.text))).collect();
+    if let Some(index) = step.index {
+        lines.push(format!("key moment {index} of {}", step.count));
+    }
+    let label = ui.label(text);
+    if !lines.is_empty() {
+        label.on_hover_text(lines.join("\n"));
     }
 }
 
@@ -389,9 +590,9 @@ mod tests {
 
     #[test]
     fn the_view_reads_back_and_defaults() {
-        let view = FactoryView { follow: false, playing: true, speed: Speed::Hour, t: Some(Timestamp(42)), ticket: Some(7) };
+        let view = FactoryView { follow: false, playing: true, speed: Speed::Hour, t: Some(Timestamp(42)), ticket: Some(7), steps: Steps::SendBacks };
         let text = serde_json::to_string(&view).unwrap();
-        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","t":42,"ticket":7}"#);
+        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","t":42,"ticket":7,"steps":"sendBacks"}"#);
         assert_eq!(serde_json::from_str::<FactoryView>(&text).unwrap(), view);
         assert_eq!(serde_json::from_str::<FactoryView>("{}").unwrap(), FactoryView::default());
         assert!(serde_json::from_str::<FactoryView>(r#"{"speed":"warp"}"#).is_err());

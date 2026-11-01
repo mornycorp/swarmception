@@ -8,7 +8,8 @@
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline;
-//! bars always carry their tickets' titles (#34); `--screenshot`
+//! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
+//! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
 //! agents can check the drawing by eye. On macOS the menus are in the system menu bar
 //! ([`mac_menu`]); elsewhere the window draws its own.
@@ -27,6 +28,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
 use swarmception_domain::Grouping;
+use swarmception_domain::moments::Direction;
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
 use swarmception_model::Timestamp;
 
@@ -48,7 +50,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -62,6 +64,8 @@ struct Options {
     trace: Option<u64>,
     hover: Option<u64>,
     hover_bar: Option<u64>,
+    step: Option<Direction>,
+    steps: Option<swarmception_ui::Steps>,
     theme: Option<egui::Theme>,
     size: Option<(f32, f32)>,
     screenshot: Option<PathBuf>,
@@ -91,6 +95,21 @@ impl Options {
                 "--trace" => options.trace = Some(issue(&value()?)?),
                 "--hover" => options.hover = Some(issue(&value()?)?),
                 "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
+                "--step" => {
+                    options.step = Some(match value()?.as_str() {
+                        "next" => Direction::Next,
+                        "previous" => Direction::Previous,
+                        "first" => Direction::First,
+                        "last" => Direction::Last,
+                        other => return Err(format!("--step takes next, previous, first or last, not {other}")),
+                    });
+                }
+                "--steps" => {
+                    let text = value()?;
+                    let ids = swarmception_ui::Steps::ALL.map(swarmception_ui::Steps::id);
+                    let steps = swarmception_ui::Steps::ALL.into_iter().find(|s| s.id() == text);
+                    options.steps = Some(steps.ok_or_else(|| format!("--steps takes one of {}, not {text}", ids.join(", ")))?);
+                }
                 "--dark" => options.theme = Some(egui::Theme::Dark),
                 "--light" => options.theme = Some(egui::Theme::Light),
                 "--size" => {
@@ -185,6 +204,13 @@ fn set_up(shell: &mut swarmception_ui::Shell, options: &Options) -> Result<(), S
     if let Some(ticket) = options.trace {
         let state = shell.ui_state();
         shell.set_ui_state(swarmception_ui::UiState { factory: swarmception_ui::FactoryView { ticket: Some(ticket), ..state.factory }, ..state });
+    }
+    if let Some(steps) = options.steps {
+        let state = shell.ui_state();
+        shell.set_ui_state(swarmception_ui::UiState { factory: swarmception_ui::FactoryView { steps, ..state.factory }, ..state });
+    }
+    if let Some(direction) = options.step {
+        shell.jump_factory(swarmception_ui::Jump::Step(direction));
     }
     Ok(())
 }
@@ -307,6 +333,10 @@ mod tests {
         let options = parse(&["--hover-bar", "#17"]).unwrap();
         assert_eq!(options.hover_bar, Some(17));
         assert!(parse(&["--no-titles"]).is_err(), "titles are always on (#34)");
+        let options = parse(&["--step", "previous", "--steps", "sendBacks"]).unwrap();
+        assert_eq!((options.step, options.steps), (Some(Direction::Previous), Some(swarmception_ui::Steps::SendBacks)));
+        assert!(parse(&["--step", "sideways"]).is_err());
+        assert!(parse(&["--steps", "lunches"]).is_err());
 
         assert_eq!(parse(&["--help"]), Err(String::new()));
     }

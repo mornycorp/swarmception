@@ -226,3 +226,47 @@ fn the_factory_at_a_moment_and_the_timeline_place_of_a_time() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn the_factorys_key_moments_and_a_step_through_them() {
+    use swarmception_domain::moments::{MomentKind, Step};
+    use swarmception_engine::factory_cmds::MomentsResult;
+    let dir = repo();
+    let mut session = Session::new();
+    assert_eq!(session.execute("factory.step", "").unwrap_err().code(), "disabled", "no repository");
+    assert_eq!(session.execute("factory.moments", "").unwrap_err().code(), "disabled");
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+
+    // #7: claimed 03:01, submitted 03:30, merged 03:45 in a gate that passed at 03:46.
+    let all: MomentsResult = call(&mut session, "factory.moments", "");
+    let texts: Vec<&str> = all.moments.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["#7 claimed · worker-1", "#7 submitted (PR #8) · worker-1", "#7 merged (PR #8) · worker-1", "gate-pr8 passed · #7"]);
+    assert_eq!(all.total, 4);
+    let merges: MomentsResult = call(&mut session, "factory.moments", r#"{"start":"2026-10-31T03:02:00Z","kinds":["merge","gatePass"]}"#);
+    assert_eq!(merges.moments.iter().map(|m| m.kind).collect::<Vec<_>>(), [MomentKind::Merge, MomentKind::GatePass]);
+    let t = |text: &str| swarmception_model::Timestamp::parse(text).unwrap();
+    let window: MomentsResult =
+        call(&mut session, "factory.moments", &format!("{{\"start\":{},\"end\":{}}}", t("2026-10-31T03:02:00Z").0, t("2026-10-31T03:45:00Z").0));
+    assert_eq!(window.total, 2, "the submit and the merge");
+    let backward = session.execute("factory.moments", r#"{"start":"2026-10-31T04:00:00Z","end":"2026-10-31T03:00:00Z"}"#);
+    assert_eq!(backward.unwrap_err().code(), "invalid", "a window that ends before it starts");
+
+    let next: Step = call(&mut session, "factory.step", &format!("{{\"t\":{}}}", t("2026-10-31T03:10:00Z").0));
+    assert_eq!((next.t, next.text.as_str(), next.index, next.count), (Some(t("2026-10-31T03:30:00Z")), "#7 submitted (PR #8) · worker-1", Some(2), 4));
+    let back: Step = call(&mut session, "factory.step", &format!("{{\"t\":{},\"direction\":\"previous\"}}", t("2026-10-31T03:30:00Z").0));
+    assert_eq!(back.t, Some(t("2026-10-31T03:01:00Z")));
+    let merge: Step = call(&mut session, "factory.step", r#"{"kinds":["merge"]}"#);
+    assert_eq!((merge.t, merge.count), (Some(t("2026-10-31T03:45:00Z")), 1), "from nowhere, the first merge");
+    let last: Step = call(&mut session, "factory.step", r#"{"direction":"last"}"#);
+    assert_eq!(last.text, "gate-pr8 passed · #7");
+    let none: Step = call(&mut session, "factory.step", &format!("{{\"t\":{},\"kinds\":[\"merge\"]}}", t("2026-10-31T03:45:00Z").0));
+    assert_eq!((none.t, none.text.as_str()), (None, "no later merge onto main"));
+    for params in [r#"{"direction":"sideways"}"#, r#"{"kinds":["teatime"]}"#, r#"{"t":"soon"}"#, r#"{"step":1}"#] {
+        assert_eq!(session.execute("factory.step", params).unwrap_err().code(), "bad_params", "{params}");
+    }
+    for params in [r#"{"t":-9223372036854775808}"#, r#"{"t":9223372036854775807,"direction":"previous"}"#] {
+        let _: Step = call(&mut session, "factory.step", params);
+    }
+    std::fs::remove_dir_all(dir).ok();
+}
