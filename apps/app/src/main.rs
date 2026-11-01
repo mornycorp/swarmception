@@ -124,6 +124,9 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // Before the window and the menu bar: macOS would add its tab items to View (#9).
+    #[cfg(target_os = "macos")]
+    mac_menu::no_window_tabs();
     let repo = options.repo.clone().or_else(|| std::env::current_dir().ok());
     let (width, height) = options.size.unwrap_or((1_400.0, 860.0));
     let viewport = egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([480.0, 320.0]);
