@@ -13,6 +13,7 @@ mod factory;
 mod factory_chip;
 mod factory_paint;
 mod factory_stats;
+mod factory_tip;
 pub mod fonts;
 pub mod icons;
 pub mod menu;
@@ -316,11 +317,26 @@ impl Shell {
             }
         });
         self.light_timeline(ui.ctx());
+        if let Some(hour) = self.factory.strip().drawn().chosen {
+            self.show_hour(hour);
+            ui.ctx().request_repaint();
+        }
         let mut links = self.timeline.take_links();
         links.extend(self.factory.drawn().open);
         for link in links {
             self.open_link(ui.ctx(), link);
         }
+    }
+
+    /// The hour starting at `start`, its bar clicked in the factory's sparkline (#31): the
+    /// timeline's window on it, and the factory's *t* and the timeline's playhead at its last
+    /// second, so the factory shows what the hour ended with.
+    fn show_hour(&mut self, start: swarmception_model::Timestamp) {
+        let end = swarmception_model::Timestamp(start.0.saturating_add(3_600));
+        let t = swarmception_model::Timestamp(end.0.saturating_sub(1));
+        self.timeline.show_span(&mut self.engine, start, end);
+        self.ui.factory.t = Some(t);
+        self.timeline.put_playhead(&mut self.engine, t);
     }
 
     /// The ticket hovered in the factory, its bars selected on the timeline; the person's own

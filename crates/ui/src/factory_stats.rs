@@ -3,7 +3,8 @@
 //! again only when the window or the engine's data moves on, never every frame.
 //!
 //! Left to right: **landed per active hour**, large, with "N landed · H active h" beside it; a
-//! sparkline of the hourly series, the hour holding the factory's *t* marked; then, compact, the
+//! sparkline of the hourly series, the hour holding the factory's *t* marked, each bar clickable
+//! (#31: the shell zooms the timeline's window to that hour and puts *t* in it); then, compact, the
 //! median claim → merge, the median wait at the dock, the gates' pass rate (failures by cause in
 //! its tooltip), sendbacks per landed, the mean tickets working and in flight, and the workers'
 //! utilisation (each worker in its tooltip). Every figure's tooltip says how it is computed.
@@ -30,6 +31,11 @@ pub struct StripDrawn {
     /// The sparkline's bars, one an hour, and the one marked (holding *t*).
     pub bars: usize,
     pub marked: Option<usize>,
+    /// Where each bar was drawn, its hour's start: for a test to click one.
+    pub hours: Vec<(Timestamp, Rect)>,
+    /// The hour whose bar was clicked this frame, its start: the shell moves the timeline's
+    /// window to it and the factory's *t* with it (#31).
+    pub chosen: Option<Timestamp>,
 }
 
 /// What a strip was asked for: the window, and the engine's revision.
@@ -150,7 +156,7 @@ impl StatsStrip {
     fn sparkline(&mut self, ui: &mut egui::Ui, stats: &Stats, t: Timestamp) {
         let n = stats.hours.len();
         let width = (n as f32 * 7.0).clamp(60.0, 220.0);
-        let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::hover());
+        let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
         let painter = ui.painter_at(rect);
         let weak = ui.visuals().weak_text_color();
         painter.rect_stroke(rect, 2.0, Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color), StrokeKind::Inside);
@@ -172,14 +178,27 @@ impl StatsStrip {
             if Some(i) == marked {
                 painter.rect_stroke(bar.expand2(vec2(0.5, 1.5)), 1.0, Stroke::new(1.0, WORKING), StrokeKind::Outside);
             }
+            self.drawn.hours.push((hour.start, bar));
         }
         if n == 0 {
             painter.text(rect.center(), Align2::CENTER_CENTER, "no hours", FontId::proportional(10.0), weak);
         }
-        let hovered = response.hover_pos().and_then(|p| stats.hours.get(((p.x - rect.left()) / step).floor().max(0.0) as usize));
-        let tip = hovered
-            .map_or_else(|| "Landed per active hour, each clock hour (UTC) of the window; the hour holding the factory's t is marked.".to_owned(), hour_text);
-        response.on_hover_text(tip);
+        let under = |p: egui::Pos2| stats.hours.get(((p.x - rect.left()) / step).floor().max(0.0) as usize);
+        let hovered = response.hover_pos().and_then(under);
+        if let Some(hour) = hovered {
+            let x = rect.left() + step * stats.hours.iter().position(|h| h.start == hour.start).unwrap_or(0) as f32;
+            let bar = Rect::from_min_max(pos2(x, rect.top() + 1.0), pos2(x + step, rect.bottom() - 1.0));
+            painter.rect_stroke(bar, 1.0, Stroke::new(1.0, ui.visuals().strong_text_color()), StrokeKind::Inside);
+        }
+        if response.clicked() {
+            self.drawn.chosen = response.interact_pointer_pos().and_then(under).map(|h| h.start);
+        }
+        let response = if hovered.is_some() { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response };
+        let lines: Vec<String> = hovered.map_or_else(
+            || vec!["Landed per active hour".to_owned(), "Each clock hour (UTC) of the window; the hour holding the factory's t is marked.".to_owned()],
+            |hour| vec![format!("{} UTC", clock(hour.start)), hour_text(hour), "Click: the timeline and the factory to this hour".to_owned()],
+        );
+        crate::factory_tip::show(response, &lines);
         self.drawn.bars = n;
         self.drawn.marked = marked;
     }
@@ -277,13 +296,7 @@ fn workers_text(stats: &Stats, quiet: &str) -> String {
 
 /// One hour of the sparkline, for its tooltip.
 fn hour_text(hour: &Hour) -> String {
-    format!(
-        "{} UTC: {} landed in {} active · {} landed / active h",
-        clock(hour.start),
-        hour.landed,
-        short(hour.active_seconds),
-        rate(hour.landed_per_active_hour)
-    )
+    format!("{} landed in {} active · {} landed / active h", hour.landed, short(hour.active_seconds), rate(hour.landed_per_active_hour))
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (an abandoned ticket ends with its holder's session) · **Target:** M1
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the factory's layout: no ticker, the key along the bottom, short benches, the gate as its list, coloured tooltips, the sparkline's hours clickable) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -101,9 +101,16 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   The factory's header carries a statistics strip: what `stats.get` returns for the timeline's
   visible window (landed per active hour, its hourly sparkline with *t*'s hour marked, and the
   compact figures, each tooltip saying how it is computed), asked again only when the window or
-  the data moves on.
-  The factory pane, under the timeline, draws what `factory.at` returns: each ticket the same
-  chip at every station (its fill its colour, its border its phase, its size by station),
+  the data moves on. Clicking an hour's bar (#31) zooms the timeline's window to that hour
+  (`TimelinePane::show_span`: `timeline.placeAt`'s positions, clamped to the extent, through the
+  widget's `state.set`) and puts the factory's *t* and the playhead at its last second.
+  The factory pane, under the timeline, draws what `factory.at` returns, its stations left to
+  right and the key along the bottom in one row (two when narrow); the benches are short strips
+  (name, model and helper on one line, the status under it) in more columns when many workers
+  would not fit in one, the gate is its list of runs (✔/✖, tickets, cause, age) under what it is
+  gating (#31). The tooltips are the scene's lines in colour (`factory_tip`: phases in their
+  colours, passes green, failures red, durations emphasised, clock times quiet). Each ticket is
+  the same chip at every station (its fill its colour, its border its phase, its size by station),
   gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
   timeline (`timeline.ticketBars`, the widget's `ranges.toggle`; the person's own selection is put
   aside on the first hover and put back exactly when the pointer leaves), clicking one traces its
@@ -209,6 +216,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | The factory's layout (#31): no ticker, the key along the bottom, short bench strips, the gate as its list of runs, coloured tooltips, the sparkline's hours clickable; the factory's own colours softened |
 | 2026-11-01 | minor | An abandoned ticket: a claimed, working or sent back stretch ends where its holder's session did (#28) |
 | 2026-11-01 | minor | The repository's GitHub issues: fetched with `gh`, cached per repository; titles on bars and first in tooltips; `ticket.urls` and the bars' and chips' Open Issue / Open PR (#17) |
 | 2026-11-01 | minor | A colour per ticket from `colours`

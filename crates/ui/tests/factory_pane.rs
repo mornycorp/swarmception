@@ -157,10 +157,14 @@ fn the_pane_draws_what_factory_at_returns() {
     let runs: Vec<String> = asked.gate.running.iter().chain(&asked.gate.recent).map(|r| r.sub.clone()).collect();
     assert_eq!(drawn.runs, runs);
     assert_eq!(drawn.blocks, asked.shipping.blocks.len());
-    assert_eq!(drawn.happenings, asked.happenings.len());
     assert_eq!(drawn.hidden, 0, "everything fits at this size");
     for label in ["#7", "#9", "#11", "#13", "worker-1", "worker-2", "running gate-pr8 · 2m", "2026-10-31 03:42:00 UTC"] {
         assert!(texts.iter().any(|text| text.contains(label)), "{label} drawn: {texts:?}");
+    }
+    // #31: no ticker; the key along the bottom; the gate's list of runs, no press.
+    assert!(!texts.iter().any(|text| text.contains("JUST HAPPENED")), "{texts:?}");
+    for key in ["border = phase · fill = ticket", "waiting for merge", "in the gate"] {
+        assert!(texts.iter().any(|text| text == key), "{key} in the key: {texts:?}");
     }
 
     // The timeline's playhead went to the item 03:42 falls in.
@@ -408,6 +412,34 @@ fn the_strip_draws_what_stats_get_returns_for_the_window() {
     assert!(drawn.figures.contains(&format!("gates pass {}", percent(asked.gates.pass_rate))), "{:?}", drawn.figures);
     assert_eq!(drawn.figures.len(), 6);
     assert!(texts.contains(&drawn.headline), "the headline drawn: {texts:?}");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn clicking_an_hours_bar_zooms_the_timeline_to_it_and_moves_t_with_it() {
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let three = Timestamp::parse("2026-10-31T03:00:00Z").unwrap();
+    let hours = shell.factory().strip().drawn().hours.clone();
+    let bar = hours.iter().find(|(start, _)| *start == three).map(|(_, rect)| rect.center()).expect("03:00's bar drawn");
+    let button = |pressed| egui::Event::PointerButton { pos: bar, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(bar), button(true)]);
+    frame_with(&mut shell, &ctx, vec![button(false)]);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // The hour, as much of it as the timeline holds: its first event is at 03:00, its extent
+    // starts a minute later.
+    let end = Timestamp(three.0 + 3_600);
+    let (start, until) = window(&mut shell);
+    assert!(three <= start && start <= Timestamp(three.0 + 60) && until == end, "the timeline's window is that hour: {start:?} → {until:?}");
+    let t = shell.factory().scene().unwrap().t;
+    assert!(start <= t && t < end, "the factory's t is in it: {t:?}");
+    let strip = shell.factory().strip().stats().unwrap();
+    assert_eq!((strip.start, strip.end), (start, until), "and the strip is over it");
     std::fs::remove_dir_all(dir).ok();
 }
 
