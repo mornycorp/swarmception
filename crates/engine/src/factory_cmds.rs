@@ -1,17 +1,20 @@
 //! The factory (#18): the swarm at a moment, as a factory building the app
 //! (`swarmception_domain::factory`); the timeline's place for a time, so a front end can put the
-//! timeline's playhead where the factory is; and a ticket's bars on the timeline, so it can
-//! highlight them.
+//! timeline's playhead where the factory is; a ticket's bars on the timeline, so it can
+//! highlight them; and the factory's key moments (#33: `swarmception_domain::moments`), to step
+//! through them.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_domain::Node;
 use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, scene, titled};
+use swarmception_domain::moments::{Direction, Moment, MomentKind, Step as Landing, moments, step};
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
-use crate::error::{EngineError, Unavailable};
+use crate::error::{EngineError, Refusal, Unavailable};
 use crate::session::Session;
+use crate::stats_cmds::At as When;
 
 /// What `factory.at` shows.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -138,5 +141,102 @@ impl Command for TicketBars {
             })
             .collect();
         Ok(TicketBarsResult { bars })
+    }
+}
+
+/// The most moments `factory.moments` lists.
+pub const MAX_MOMENTS: usize = 4_096;
+
+/// Which key moments.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MomentsParams {
+    /// From this time on (seconds since the epoch, or `YYYY-MM-DDTHH:MM:SSZ`); the first's when
+    /// left out.
+    pub start: Option<When>,
+    /// Up to this time; the last's when left out.
+    pub end: Option<When>,
+    /// Only these kinds; every kind when left out or empty.
+    #[serde(default)]
+    pub kinds: Vec<MomentKind>,
+}
+
+/// The key moments in a window, in time order.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct MomentsResult {
+    /// The first [`MAX_MOMENTS`] of them.
+    pub moments: Vec<Moment>,
+    /// How many there are in the window, all told.
+    pub total: usize,
+}
+
+/// `factory.moments`: the factory's key moments (#33): claims, work beginning, submits, gate runs
+/// passing or failing, send backs and merges onto main, each named as a person would say it.
+pub struct Moments;
+
+impl Command for Moments {
+    const ID: &'static str = "factory.moments";
+    const LABEL: &'static str = "Key Moments";
+    const READ_ONLY: bool = true;
+    type Params = MomentsParams;
+    type Result = MomentsResult;
+
+    fn enabled(session: &Session) -> Result<(), Unavailable> {
+        session.has_data()
+    }
+
+    fn run(session: &mut Session, params: MomentsParams) -> Result<MomentsResult, EngineError> {
+        let start = params.start.as_ref().map(When::time).transpose()?;
+        let end = params.end.as_ref().map(When::time).transpose()?;
+        if let (Some(start), Some(end)) = (start, end)
+            && end < start
+        {
+            return Err(Refusal::BackwardWindow { start, end }.into());
+        }
+        let Some(loaded) = &session.loaded else { return Err(EngineError::Disabled { command: Self::ID.to_owned(), reason: Unavailable::NoData }) };
+        let within = |m: &Moment| start.is_none_or(|s| s <= m.t) && end.is_none_or(|e| m.t <= e);
+        let kinds = &params.kinds;
+        let mut all: Vec<Moment> =
+            moments(&loaded.activity, &loaded.tracking.merges).into_iter().filter(|m| within(m) && (kinds.is_empty() || kinds.contains(&m.kind))).collect();
+        let total = all.len();
+        all.truncate(MAX_MOMENTS);
+        Ok(MomentsResult { moments: all, total })
+    }
+}
+
+/// A step from a time.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StepParams {
+    /// From this moment, in seconds since the Unix epoch (UTC); before the first (for `next`) or
+    /// after the last (for `previous`) when left out.
+    pub t: Option<Timestamp>,
+    /// `next` (the default), `previous`, `first` or `last`.
+    #[serde(default)]
+    pub direction: Direction,
+    /// Only these kinds; every kind when left out or empty.
+    #[serde(default)]
+    pub kinds: Vec<MomentKind>,
+}
+
+/// `factory.step`: the factory's next (or previous, first, last) key moment from a time, of the
+/// kinds asked for (#33): its time, the moments at that second, and what to call it.
+pub struct StepTo;
+
+impl Command for StepTo {
+    const ID: &'static str = "factory.step";
+    const LABEL: &'static str = "Step to a Key Moment";
+    const READ_ONLY: bool = true;
+    type Params = StepParams;
+    type Result = Landing;
+
+    fn enabled(session: &Session) -> Result<(), Unavailable> {
+        session.has_data()
+    }
+
+    fn run(session: &mut Session, params: StepParams) -> Result<Landing, EngineError> {
+        let Some(loaded) = &session.loaded else { return Err(EngineError::Disabled { command: Self::ID.to_owned(), reason: Unavailable::NoData }) };
+        let all = moments(&loaded.activity, &loaded.tracking.merges);
+        Ok(step(&all, &params.kinds, params.t, params.direction))
     }
 }

@@ -34,7 +34,7 @@ use swarmception_engine::issues_cmds::Urls;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
 
-pub use factory::{FactoryPane, FactoryView, Source as FactorySource, Speed};
+pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed, Steps};
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
@@ -164,6 +164,12 @@ impl Shell {
         self.ui.factory.follow = false;
         self.ui.factory.playing = false;
         self.playhead_to = Some(t);
+    }
+
+    /// Steps the factory to a key moment, or jumps it to the first or last event (#33), as ⏮ / ⏭
+    /// and ← / → do: on the next frame that has a scene, the timeline's playhead following.
+    pub const fn jump_factory(&mut self, jump: Jump) {
+        self.factory.ask(jump);
     }
 
     /// Whether a read is still going.
@@ -351,12 +357,16 @@ impl Shell {
         }
     }
 
-    /// The factory's time this frame (play, the timeline or neither), the timeline's playhead
-    /// where play or `--at` put it, and the scene at that time.
+    /// The factory's time this frame (a step, play, the timeline or neither), the timeline's
+    /// playhead where a step, play or `--at` put it, and the scene at that time.
     fn step_factory(&mut self, ctx: &egui::Context) {
         let looking = self.timeline.looking(&mut self.engine);
+        let jumped = self.factory.jump(&mut self.engine, &mut self.ui.factory);
         let to = self.factory.step(ctx, &mut self.ui.factory, looking);
-        if let Some(t) = to.or_else(|| self.playhead_to.filter(|_| self.timeline.has_data())) {
+        if jumped.is_some() {
+            ctx.request_repaint();
+        }
+        if let Some(t) = jumped.or(to).or_else(|| self.playhead_to.filter(|_| self.timeline.has_data())) {
             self.timeline.put_playhead(&mut self.engine, t);
             self.playhead_to = None;
         }

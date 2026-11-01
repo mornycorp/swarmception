@@ -906,7 +906,7 @@ const fn outcome_name(outcome: Outcome) -> &'static str {
 
 /// Every gate run begun by `t`, by start: the gate sub-agents, then a run for each gate the
 /// merges and send-backs name that logged no `sub.start` or `sub.stop`.
-fn gate_runs(activity: &Activity, t: Timestamp) -> Vec<GateRun> {
+pub(crate) fn gate_runs(activity: &Activity, t: Timestamp) -> Vec<GateRun> {
     let subs: Vec<&Sub> = activity.agents.iter().flat_map(|a| &a.subs).filter(|s| s.is_gate()).collect();
     let mut runs: Vec<GateRun> = subs.iter().filter(|s| s.span.start <= t).map(|s| logged_run(s, t)).collect();
     let mut inferred: BTreeMap<&str, Vec<&IssueEvent>> = BTreeMap::new();
@@ -1117,7 +1117,7 @@ fn issue_happening(event: &IssueEvent, who: &str, t: Timestamp) -> Option<Happen
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::activity::tests::sample;
     use swarmception_model::{parse_file, parse_merge};
@@ -1231,13 +1231,13 @@ mod tests {
     }
 
     /// A gate that fails with a cause and sends a ticket back, which then goes through.
-    const FAILING: &str = r#"{"event":"session.start","machine":"mini","name":"worker-1","role":"worker","t":"2026-10-31T01:00:00Z"}
+    pub(crate) const FAILING: &str = r#"{"event":"session.start","machine":"mini","name":"worker-1","role":"worker","t":"2026-10-31T01:00:00Z"}
 {"event":"claim","issue":5,"mr":9,"t":"2026-10-31T01:00:00Z"}
 {"event":"work","issue":5,"t":"2026-10-31T01:00:05Z"}
 {"event":"submit","issue":5,"mr":9,"t":"2026-10-31T01:10:00Z"}
 {"event":"work","issue":5,"t":"2026-10-31T01:30:00Z"}
 {"event":"submit","issue":5,"mr":9,"t":"2026-10-31T01:40:00Z"}"#;
-    const GATES: &str = r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T01:00:00Z"}
+    pub(crate) const GATES: &str = r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T01:00:00Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #9 (#5); kind=smoke","sub":"gate-9","t":"2026-10-31T01:15:00Z"}
 {"event":"sub.stop","note":"rc=1; cause=build; kind=smoke","sub":"gate-9","t":"2026-10-31T01:19:00Z"}
 {"event":"sendback","issue":5,"mr":9,"note":"build: the API changed","sub":"gate-9","t":"2026-10-31T01:20:00Z"}
