@@ -27,7 +27,7 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_model::Timestamp;
 
 use crate::factory_chip::Motion;
-use crate::factory_paint::{Drawn, Marks, paint};
+use crate::factory_paint::{Drawn, Marks, WallView, paint};
 use crate::factory_stats::StatsStrip;
 use crate::icons;
 use crate::timeline::Looking;
@@ -134,6 +134,7 @@ pub struct FactoryPane {
     /// The rectangle the floor was drawn in last, to tell the pointer is over it.
     rect: Option<egui::Rect>,
     motion: Motion,
+    wall: WallView,
     drawn: Drawn,
     /// The ticket under the pointer last frame.
     hovered: Option<u64>,
@@ -276,7 +277,7 @@ impl FactoryPane {
         ui.allocate_rect(rect, egui::Sense::hover());
         self.rect = Some(rect);
         let marks = Marks { hovered: self.hovered, traced: view.ticket };
-        self.drawn = paint(ui, rect, scene, &mut self.motion, marks);
+        self.drawn = paint(ui, rect, scene, (&mut self.motion, &mut self.wall), marks);
         if self.drawn.hovered != self.hovered {
             self.hovered = self.drawn.hovered;
             ui.ctx().request_repaint();

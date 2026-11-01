@@ -47,8 +47,12 @@ pub struct Drawn {
     pub open: Option<Link>,
     /// The journey traced, its legs' labels in order.
     pub journey: Vec<String>,
-    /// What each brick in main's wall says, oldest first.
+    /// What each brick in main's wall says, oldest first: the bricks in view.
     pub marks: Vec<String>,
+    /// Each brick in view and where it belongs in the wall (where it lands once flown in).
+    pub bricks: Vec<(String, Rect)>,
+    /// The bricks scrolled out of view.
+    pub wall_hidden: usize,
 }
 
 /// What the floor is asked to show besides the scene: the ticket hovered last frame, the
@@ -57,6 +61,111 @@ pub struct Drawn {
 pub struct Marks {
     pub hovered: Option<u64>,
     pub traced: Option<u64>,
+}
+
+/// How main's wall is scrolled (#32): the points down from its newest row, 0 when it fits.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct WallView {
+    pub scroll: f32,
+}
+
+/// The gap between the wall's bricks, and the width of its scrollbar.
+const BRICK_GAP: f32 = 4.0;
+const SCROLLBAR: f32 = 7.0;
+/// The wall's brick sizes, the largest whose rows fit taken: the width of a ticket that took the
+/// median claim → merge time, and the height.
+const BRICK_SIZES: [(f32, f32); 3] = [(46.0, 26.0), (40.0, 23.0), (34.0, 20.0)];
+
+/// Where a brick goes in the wall: its row (0 on the ground), its left from the wall's, its width.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Place {
+    row: usize,
+    x: f32,
+    width: f32,
+}
+
+/// The wall laid out: each brick's place, how many rows, and the bricks' height.
+struct Wall {
+    places: Vec<Place>,
+    rows: usize,
+    height: f32,
+}
+
+/// The size of a brick's number, for a brick `height` tall.
+fn brick_font(height: f32) -> f32 {
+    (height * 0.45).clamp(8.0, 12.0)
+}
+
+/// A brick's width for a ticket that took `took` seconds when the median took `median`: in
+/// proportion, `base` at the median, no narrower than `least` (what its number needs; a merge no
+/// ticket names is that narrow), no wider than `most`, so one long ticket can't take the row.
+fn brick_width(took: Option<i64>, median: Option<i64>, (least, base, most): (f32, f32, f32)) -> f32 {
+    match (took, median) {
+        (Some(took), Some(median)) if median > 0 => (base * took.max(0) as f32 / median as f32).clamp(least, most.max(least)),
+        _ => least,
+    }
+}
+
+/// `blocks` laid in rows `room.x` wide from the ground up, the oldest first, at the largest of
+/// [`BRICK_SIZES`] whose rows fit in `room.y`; else at the smallest, to scroll. `labels`: each
+/// brick's number's width at 10 points, so no brick is too narrow to say it.
+fn wall_layout(blocks: &[Block], labels: &[f32], room: Vec2) -> Wall {
+    let mut took: Vec<i64> = blocks.iter().filter_map(|b| b.took).collect();
+    took.sort_unstable();
+    let median = took.get(took.len() / 2).copied();
+    let mut wall = Wall { places: Vec::new(), rows: 0, height: 20.0 };
+    for (base, height) in BRICK_SIZES {
+        let most = (base * 4.0).min(room.x * 0.6);
+        let widths: Vec<f32> = blocks
+            .iter()
+            .enumerate()
+            .map(|(n, b)| {
+                let least = (labels.get(n).copied().unwrap_or(0.0) * brick_font(height) / 10.0 + 8.0).max(base * 0.6);
+                brick_width(b.took, median, (least, base, most)).min(room.x.max(1.0))
+            })
+            .collect();
+        let places = pack(&widths, room.x);
+        let rows = places.last().map_or(0, |p| p.row + 1);
+        wall = Wall { places, rows, height };
+        if rows as f32 * (height + BRICK_GAP) - BRICK_GAP <= room.y {
+            break;
+        }
+    }
+    wall
+}
+
+/// A sent-back brick's mark at `rect`'s top right corner: a red corner, larger with the count in
+/// it from two; nothing for a ticket never sent back.
+fn sent_back_corner(painter: &egui::Painter, rect: Rect, times: usize) {
+    if times == 0 {
+        return;
+    }
+    let corner = if times > 1 { (rect.height() * 0.72).clamp(11.0, 17.0) } else { (rect.height() * 0.55).clamp(8.0, 13.0) };
+    let tr = rect.right_top();
+    let triangle = vec![tr, tr + vec2(0.0, corner), tr - vec2(corner, 0.0)];
+    painter.add(egui::Shape::convex_polygon(triangle, SENT_BACK, Stroke::new(1.0, SENT_BACK.lerp_to_gamma(Color32::BLACK, 0.3))));
+    if times > 1 {
+        let at = tr + vec2(-corner * 0.31, corner * 0.33);
+        painter.text(at, Align2::CENTER_CENTER, times.to_string(), FontId::proportional(corner * 0.62), Color32::BLACK);
+    }
+}
+
+/// Bricks of `widths` packed into rows `width` wide, left to right, a new row when the next
+/// brick doesn't fit.
+fn pack(widths: &[f32], width: f32) -> Vec<Place> {
+    let (mut row, mut x) = (0, 0.0);
+    widths
+        .iter()
+        .map(|w| {
+            if x > 0.0 && x + w > width {
+                row += 1;
+                x = 0.0;
+            }
+            let place = Place { row, x, width: *w };
+            x += w + BRICK_GAP;
+            place
+        })
+        .collect()
 }
 
 /// An idle bench: a quiet sea green (hue 150°, saturation 0.34, value 0.76), softer than main's.
@@ -161,10 +270,11 @@ impl Palette {
 }
 
 /// Draws `scene` in `rect`, with `marks`: what each station drew.
-pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, motion: &mut Motion, marks: Marks) -> Drawn {
+pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, state: (&mut Motion, &mut WallView), marks: Marks) -> Drawn {
+    let (motion, wall) = state;
     motion.begin(ui.input(|i| i.time), rect);
     let floor_click = ui.interact(rect, ui.scope_id().with("factory-floor"), egui::Sense::click()).clicked();
-    let mut floor = Floor { ui, painter: ui.painter_at(rect), pal: Palette::of(ui.visuals()), motion, drawn: Drawn::default(), scene, marks };
+    let mut floor = Floor { ui, painter: ui.painter_at(rect), pal: Palette::of(ui.visuals()), motion, drawn: Drawn::default(), scene, marks, wall };
     let key = floor.legend_layout(rect.width() - 8.0);
     let rows = key.iter().map(|item| item.row).max().map_or(1, |r| r + 1);
     let (stations, under) = rect.split_top_bottom_at_y(rect.max.y - LEGEND_ROW * rows as f32 - 6.0);
@@ -225,6 +335,7 @@ struct Floor<'a> {
     drawn: Drawn,
     scene: &'a FactoryScene,
     marks: Marks,
+    wall: &'a mut WallView,
 }
 
 impl Floor<'_> {
@@ -624,49 +735,120 @@ impl Floor<'_> {
         }
     }
 
-    /// The app on main: a block per merge, stacked from the ground up, the newest glowing.
+    /// The app on main (#32): a brick per merge, its width its ticket's claim → merge time, laid
+    /// in rows from the ground up, the oldest first; scrolled with the wheel when the wall
+    /// outgrows its room, the newest rows shown first.
     fn building(&mut self, site: Rect) {
         let blocks = &self.scene.shipping.blocks;
         let ground = Rect::from_min_max(pos2(site.left(), site.bottom() - 4.0), site.right_bottom());
         self.painter.rect_filled(ground, 1.0, PASSED.gamma_multiply(0.7));
-        let area = site.with_max_y(ground.top() - 2.0);
-        // The wall's bricks: the small chip when they fit, smaller as the wall grows.
-        let sizes = [Size::Small.dims(), vec2(26.0, 13.0), vec2(18.0, 10.0), vec2(12.0, 7.0), vec2(8.0, 5.0), vec2(5.0, 4.0)];
-        let gap = 3.0;
-        let fits = |size: Vec2| {
-            let cols = ((area.width() + gap) / (size.x + gap)).floor().max(1.0) as usize;
-            let rows = ((area.height() + gap) / (size.y + gap)).floor().max(0.0) as usize;
-            (cols, cols * rows)
-        };
-        let size = sizes.into_iter().find(|s| fits(*s).1 >= blocks.len()).unwrap_or(sizes[5]);
-        let (cols, room) = fits(size);
-        let skip = blocks.len().saturating_sub(room);
-        for (n, block) in blocks.iter().skip(skip).enumerate() {
-            let (col, row) = ((n % cols) as f32, (n / cols) as f32);
-            let min = pos2(area.left() + col * (size.x + gap), area.bottom() - (row + 1.0) * (size.y + gap) + gap);
-            self.block(Rect::from_min_size(min, size), block);
+        let area = site.with_max_y(ground.top() - 2.0).with_max_x(site.right() - SCROLLBAR);
+        let labels: Vec<f32> =
+            blocks.iter().map(|b| self.painter.layout_no_wrap(b.mark.clone(), FontId::proportional(10.0), Color32::WHITE).size().x).collect();
+        let wall = wall_layout(blocks, &labels, area.size());
+        let content = wall.rows as f32 * (wall.height + BRICK_GAP) - BRICK_GAP;
+        let overflow = (content - area.height()).max(0.0);
+        let hovered = self.ui.rect_contains_pointer(area);
+        let mut scroll = self.wall.scroll;
+        if hovered && overflow > 0.0 {
+            scroll -= self.ui.input(|i| i.smooth_scroll_delta.y);
         }
-        self.drawn.blocks = blocks.len() - skip;
+        scroll = scroll.clamp(0.0, overflow);
+        self.wall.scroll = scroll;
+        let painter = self.painter.with_clip_rect(area.intersect(self.painter.clip_rect()));
+        let mut shown = 0;
+        for (block, place) in blocks.iter().zip(&wall.places) {
+            let top = if overflow > 0.0 {
+                area.top() + (wall.rows - 1 - place.row) as f32 * (wall.height + BRICK_GAP) - scroll
+            } else {
+                area.bottom() - (place.row + 1) as f32 * (wall.height + BRICK_GAP) + BRICK_GAP
+            };
+            let rect = Rect::from_min_size(pos2(area.left() + place.x, top), vec2(place.width, wall.height));
+            if !area.intersects(rect) {
+                continue;
+            }
+            self.brick(&painter, rect, block, area);
+            shown += 1;
+        }
+        self.drawn.blocks = shown;
+        self.drawn.wall_hidden = blocks.len() - shown;
+        if overflow > 0.0 {
+            let track = Rect::from_min_max(pos2(site.right() - SCROLLBAR + 3.0, area.top()), pos2(site.right(), area.bottom()));
+            self.painter.rect_filled(track, 2.0, self.pal.edge.gamma_multiply(0.6));
+            let thumb = (area.height() / content * track.height()).max(12.0);
+            let at = track.top() + (track.height() - thumb) * (scroll / overflow);
+            self.painter.rect_filled(Rect::from_min_size(pos2(track.left(), at), vec2(track.width(), thumb)), 2.0, self.pal.weak);
+        }
     }
 
-    /// A merge's brick in the wall: its ticket's chip, small and plain (no border, its number
-    /// only), flown in from where the chip was; a merge no ticket names is main's own colour.
-    fn block(&mut self, rect: Rect, block: &Block) {
+    /// A merge's brick in the wall (#32): its ticket's colour, its number, a strip along its foot
+    /// with its life's phases in their colours (the time each took, to scale), a red corner when
+    /// it was sent back (the count in it from two). Flown in from where the ticket's chip was; a
+    /// merge no ticket names is a plain grey brick. Only the part inside `clip` takes the pointer.
+    fn brick(&mut self, wall: &egui::Painter, place: Rect, block: &Block, clip: Rect) {
+        self.drawn.bricks.push((block.mark.clone(), place));
         let rect = match block.issue {
-            Some(issue) => self.motion.land(issue, rect),
-            None => rect,
+            Some(issue) => self.motion.land(issue, place),
+            None => place,
         };
+        // In flight from the floor, it isn't held to the wall's room.
+        let flying = rect != place;
+        let floor = self.painter.clone();
+        let (painter, clip) = if flying { (&floor, floor.clip_rect()) } else { (wall, clip) };
         let fresh = self.fresh(block.age);
         if fresh > 0.0 {
-            self.painter.rect_filled(rect.expand(2.0 + 3.0 * fresh), 4.0, PASSED.gamma_multiply(0.5 * fresh));
+            painter.rect_filled(rect.expand(2.0 + 3.0 * fresh), 4.0, PASSED.gamma_multiply(0.5 * fresh));
         }
-        let label = &block.mark;
-        let highlight = block.issue.filter(|i| self.marks.hovered == Some(*i)).map(|_| self.ring());
-        paint_chip(&self.painter, rect, &Chip { colour: block.colour, look: Look::Plain, label, ground: self.pal.card, highlight, glow: 0.0 });
+        self.brick_face(painter, rect, block);
+        sent_back_corner(painter, rect, block.sent_back);
+        if let Some(ring) = block.issue.filter(|i| self.marks.hovered == Some(*i)).map(|_| self.ring()) {
+            painter.rect_stroke(rect.expand(2.5), 5.0, Stroke::new(2.0, ring), StrokeKind::Outside);
+        }
         self.drawn.marks.push(block.mark.clone());
-        match block.issue {
-            Some(issue) => self.pointed(rect, issue, block.pr, &block.tooltip),
-            None => self.tooltip(rect, ("block", block.t.0, block.pr), &block.tooltip),
+        let target = rect.intersect(clip);
+        if target.is_positive() {
+            match block.issue {
+                Some(issue) => self.pointed(target, issue, block.pr, &block.tooltip),
+                None => self.tooltip(target, ("block", block.t.0, block.pr), &block.tooltip),
+            }
+        }
+    }
+
+    /// A brick's body in its ticket's colour, its number, and its life's strip along its foot.
+    fn brick_face(&self, painter: &egui::Painter, rect: Rect, block: &Block) {
+        let fill = rgb(block.colour);
+        painter.rect(rect, 3.0, fill, Stroke::new(1.0, fill.lerp_to_gamma(Color32::BLACK, 0.35)), StrokeKind::Inside);
+        let strip_height = if block.segments.is_empty() { 0.0 } else { (rect.height() * 0.28).max(4.0) };
+        let face = rect.with_max_y(rect.bottom() - strip_height);
+        if strip_height > 0.0 {
+            let strip = Rect::from_min_max(pos2(rect.left() + 2.0, rect.bottom() - strip_height - 1.0), pos2(rect.right() - 2.0, rect.bottom() - 2.0));
+            self.phases(painter, strip, block);
+        }
+        let ink = ink(fill);
+        let galley = painter.layout_no_wrap(block.mark.clone(), FontId::proportional(brick_font(rect.height())), ink);
+        if galley.size().x <= face.width() - 4.0 {
+            painter.galley(Align2::CENTER_CENTER.anchor_size(face.center() + vec2(0.0, 0.5), galley.size()).min, galley, ink);
+        }
+    }
+
+    /// A brick's life along `strip`: each segment in its phase's colour, as long as its share of
+    /// the life; a segment too short to see gets a sliver, the rest giving way.
+    fn phases(&self, painter: &egui::Painter, strip: Rect, block: &Block) {
+        painter.rect_filled(strip.expand(0.5), 1.5, Color32::BLACK.gamma_multiply(0.45));
+        let total: i64 = block.segments.iter().map(|s| s.seconds.max(0)).sum();
+        if total <= 0 {
+            return;
+        }
+        let mut x = strip.left();
+        for segment in &block.segments {
+            let width = strip.width() * segment.seconds.max(0) as f32 / total as f32;
+            let colour = match look(segment.state) {
+                Look::Phase(colour) => colour,
+                Look::Hollow | Look::Plain => self.pal.weak,
+            };
+            let piece = Rect::from_min_max(pos2(x, strip.top()), pos2((x + width.max(1.0)).min(strip.right()), strip.bottom()));
+            painter.rect_filled(piece, 0.0, colour);
+            x += width;
         }
     }
 
@@ -684,7 +866,7 @@ impl Floor<'_> {
             phase(STOPPED, "stopped / shelved"),
             phase(WAITING, "waiting for merge"),
             phase(GATING, "in the gate"),
-            (Some((sample, Look::Plain)), "merged: a brick on main"),
+            (Some((sample, Look::Plain)), "merged: a brick, as wide as it took"),
             (Some((swarmception_domain::colours::NO_TICKET, Look::Plain)), "grey !13: a merge, no ticket"),
         ];
         let measured: Vec<f32> = items
@@ -824,6 +1006,64 @@ mod tests {
         assert!(height < BENCH_TWO_LINES);
         // None, or a room with no size: never a division by nothing.
         assert_eq!(bench_grid(0, vec2(0.0, 0.0)).0, 1);
+    }
+
+    fn block(took: Option<i64>) -> Block {
+        Block {
+            t: swarmception_model::Timestamp(0),
+            pr: None,
+            issue: took.map(|_| 1),
+            label: String::new(),
+            mark: String::new(),
+            colour: [0, 0, 0],
+            age: 0,
+            took,
+            segments: Vec::new(),
+            sent_back: 0,
+            tooltip: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_bricks_width_is_its_time_clamped() {
+        let sizes = (30.0, 46.0, 184.0);
+        let (least, base, most) = sizes;
+        assert_eq!(brick_width(Some(600), Some(600), sizes), base, "the median ticket is the base width");
+        assert_eq!(brick_width(Some(1_200), Some(600), sizes), base * 2.0, "twice as long, twice as wide");
+        assert_eq!(brick_width(Some(60_000), Some(600), sizes), most, "one long ticket can't take the row");
+        assert_eq!(brick_width(Some(1), Some(600), sizes), least, "a quick one still holds its number");
+        assert_eq!(brick_width(None, Some(600), sizes), least, "a merge no ticket names stays small");
+        assert_eq!(brick_width(Some(5), Some(0), sizes), least, "no median: nothing to divide by");
+    }
+
+    #[test]
+    fn the_wall_packs_rows_by_width_and_shrinks_before_it_scrolls() {
+        // A hundred bricks, every tenth one long, in a laptop's main column.
+        let blocks: Vec<Block> = (0..100).map(|n| block(Some(if n % 10 == 0 { 6_000 } else { 900 }))).collect();
+        let labels = vec![20.0; blocks.len()];
+        let wall = wall_layout(&blocks, &labels, vec2(290.0, 380.0));
+        assert_eq!(wall.places.len(), 100);
+        for place in &wall.places {
+            assert!(place.x + place.width <= 290.0 + 0.01, "{place:?} inside the row");
+        }
+        for pair in wall.places.windows(2) {
+            let (a, b) = (pair[0], pair[1]);
+            assert!(b.row > a.row || b.x >= a.x + a.width + BRICK_GAP - 0.01, "in order, never overlapping: {a:?} {b:?}");
+        }
+        assert_eq!(wall.height, 20.0, "too many for the larger sizes: the smallest, to scroll");
+        let long = wall.places[0].width;
+        assert!(long > wall.places[1].width * 2.0, "the long ones stand out: {long} vs {}", wall.places[1].width);
+        // A few bricks fit at the largest size.
+        let few = wall_layout(&blocks[..12], &labels, vec2(290.0, 380.0));
+        assert_eq!(few.height, 26.0);
+        assert!(few.rows as f32 * (few.height + BRICK_GAP) <= 380.0 + BRICK_GAP);
+        // Nothing, or no room: no rows, no panic.
+        assert_eq!(wall_layout(&[], &[], vec2(290.0, 380.0)).rows, 0);
+        assert_eq!(wall_layout(&blocks[..3], &[], vec2(0.0, 0.0)).places.len(), 3);
+        // No brick narrower than its number at the size it is drawn.
+        for (place, label) in wall.places.iter().zip(&labels) {
+            assert!(place.width >= label * brick_font(wall.height) / 10.0 + 8.0 - 0.01, "{place:?}");
+        }
     }
 
     #[test]
