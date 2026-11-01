@@ -33,22 +33,15 @@ pub enum Grouping {
     Workers,
 }
 
-/// Grouped how, collapsed or not, labelled with titles or not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+/// Grouped how, collapsed or not. A ticket's bars are always labelled with its title
+/// (`#58 Architecture review`) when GitHub's issues have it, else with its phase (`#58 working`):
+/// no option (#34).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RowsSpec {
     pub grouping: Grouping,
     /// Rows with nothing in them, and groups left with no rows, are left out.
     pub collapse: bool,
-    /// A ticket's bars are labelled with its title (`#58 Architecture review`) when GitHub's
-    /// issues have it, else with its phase (`#58 working`). On by default.
-    pub titles: bool,
-}
-
-impl Default for RowsSpec {
-    fn default() -> Self {
-        Self { grouping: Grouping::default(), collapse: false, titles: true }
-    }
 }
 
 /// What a bar shows; its colour follows from this and its ticket ([`style_colour`]).
@@ -161,11 +154,11 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
 }
 
 /// The rows, as [`rows`], with what GitHub's `issues` say of the tickets: their titles first in
-/// the tooltips, and on the bars' labels when `spec.titles` asks (#17).
+/// the tooltips, and on the bars' labels (#17, always since #34).
 #[must_use]
 pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
-    let text = Text { issues, titles: spec.titles };
+    let text = Text { issues };
     let mut rows = vec![
         Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
         Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets, issues) },
@@ -220,11 +213,10 @@ fn by_workers(activity: &Activity, tickets: &[Ticket], text: Text<'_>) -> Vec<No
     groups
 }
 
-/// What labels and tooltips say besides the events: GitHub's issues, and whether bars carry titles.
+/// What labels and tooltips say besides the events: GitHub's issues.
 #[derive(Clone, Copy)]
 struct Text<'a> {
     issues: &'a Issues,
-    titles: bool,
 }
 
 /// The lines a ticket's tooltips start with: what GitHub says of it (its title, state and labels,
@@ -336,8 +328,7 @@ fn stretch_bar(ticket: &Ticket, stretch: &Stretch, text: Text<'_>) -> Bar {
     tooltip.extend(stretch.abandoned.as_ref().map(Abandoned::text));
     tooltip.push(String::new());
     tooltip.extend(milestones(ticket));
-    let titled = text.titles.then(|| titles::label(text.issues, ticket.issue)).flatten();
-    let label = titled.unwrap_or_else(|| format!("#{} {phase}", ticket.issue));
+    let label = titles::label(text.issues, ticket.issue).unwrap_or_else(|| format!("#{} {phase}", ticket.issue));
     let pr = ticket_pr(ticket, text.issues);
     Bar { open: stretch.open, pr, ..Bar::new(stretch.start, stretch.end, label, Some(ticket.issue), stretch.phase.into(), tooltip) }
 }
@@ -517,11 +508,20 @@ mod tests {
         assert_eq!(merged[0].tooltip[0], "#170 The spec, written down");
         assert_eq!(merged[0].tooltip[3], "merged");
         assert_eq!(merged[0].label, "#170", "the top rows' spans are too short for titles");
-        // Titles off: the labels name the phase again; the tooltips keep the title.
-        let rows = rows_with(&activity, &merges(), RowsSpec { titles: false, ..RowsSpec::default() }, &issues);
-        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
-        assert_eq!(bars[1].label, "#170 working");
-        assert_eq!(bars[1].tooltip[0], "#170 The spec, written down");
+        // Whatever the spec, a ticket's own bars carry its title: there is no option (#34).
+        for spec in [RowsSpec { grouping: Grouping::Workers, collapse: true }, RowsSpec { grouping: Grouping::Flat, collapse: true }] {
+            let rows = rows_with(&activity, &merges(), spec, &issues);
+            let labels: Vec<&str> = rows
+                .iter()
+                .skip(2)
+                .flat_map(Node::leaves)
+                .filter_map(|l| if let Node::Ranges { bars, .. } = l { Some(bars) } else { None })
+                .flatten()
+                .filter(|b| b.ticket == Some(170))
+                .map(|b| b.label.as_str())
+                .collect();
+            assert!(!labels.is_empty() && labels.iter().all(|l| *l == "#170 The spec, written down"), "{spec:?}: {labels:?}");
+        }
     }
 
     #[test]
@@ -544,10 +544,11 @@ mod tests {
     }
 
     #[test]
-    fn rows_spec_reads_back_with_titles_on_by_default() {
-        assert!(RowsSpec::default().titles);
-        let old: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":true}"#).unwrap();
-        assert_eq!(old, RowsSpec { grouping: Grouping::Workers, collapse: true, titles: true }, "a spec from before #17 reads, titles on");
+    fn rows_spec_reads_back_and_has_no_titles_option() {
+        let spec: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":true}"#).unwrap();
+        assert_eq!(spec, RowsSpec { grouping: Grouping::Workers, collapse: true });
+        assert_eq!(serde_json::from_str::<RowsSpec>("{}").unwrap(), RowsSpec::default());
+        assert_eq!(serde_json::to_string(&RowsSpec::default()).unwrap(), r#"{"grouping":"flat","collapse":false}"#, "no titles field (#34)");
     }
 
     #[test]

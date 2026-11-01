@@ -65,7 +65,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   run), main's blocks, and what happened in the `recent` seconds before *t*. Nothing after *t* is
   told; `titled` adds what GitHub says (each crate's title, its tooltip's title, state and labels
   as of *t*). `titles` (#17) is the text from GitHub's issues: a bar's label with its ticket's
-  title (`#58 Architecture review`, on unless `RowsSpec::titles` is off), and the lines a
+  title (`#58 Architecture review`, always: no option since #34), and the lines a
   ticket's tooltips start with (title; state, labels, author; its PR); `rows_with` builds the rows
   with them, and each bar carries its PR. `timeline`'s host data gives a ticket's bar (and a
   merge onto main's) the context-menu items Open Issue and Open PR, as `Link`s by host item id.
@@ -110,11 +110,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   journey; a merge onto main no ticket names is a grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
   else the window's end) or plays through the window, the playhead following.
   Right-clicking a bar (the widget's host items) or a chip offers Open Issue and Open PR: the
-  shell runs `ticket.urls` and hands the page to egui's `open_url`. View ▸ Titles on Bars (and the
-  toolbar's tag) is `rows.set {titles}`; the status bar says how many issues came and from where,
+  shell runs `ticket.urls` and hands the page to egui's `open_url`. Bars always carry titles (#34);
+  the status bar says how many issues came and from where,
   or warns why none did.
   `UiState` (the panes shown, the factory's follow, play, speed and *t*) is serde data.
-- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`, `--no-titles`,
+- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
   `--panes`, `--at`, `--hover`, `--hover-bar`, `--screenshot`) and `swarmception-cli` (the engine
   headless: `commands`, `run`).
 

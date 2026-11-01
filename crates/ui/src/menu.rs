@@ -23,15 +23,13 @@ pub enum MenuAction {
     Grouping(Grouping),
     /// View ▸ Collapse Empty Rows: `rows.set` with collapse toggled.
     Collapse,
-    /// View ▸ Titles on Bars: `rows.set` with titles toggled (#17).
-    Titles,
     /// View ▸ Fit: the widget's `view.fit`.
     Fit,
 }
 
 impl MenuAction {
     /// Every item, in menu order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 9] = [
         Self::Reload,
         Self::Fetch,
         Self::Quit,
@@ -40,7 +38,6 @@ impl MenuAction {
         Self::Grouping(Grouping::Flat),
         Self::Grouping(Grouping::Workers),
         Self::Collapse,
-        Self::Titles,
         Self::Fit,
     ];
 
@@ -48,7 +45,7 @@ impl MenuAction {
     pub const FILE: [Option<Self>; 4] = [Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 9] = [
+    pub const VIEW: [Option<Self>; 8] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         None,
@@ -56,7 +53,6 @@ impl MenuAction {
         Some(Self::Grouping(Grouping::Workers)),
         None,
         Some(Self::Collapse),
-        Some(Self::Titles),
         Some(Self::Fit),
     ];
 
@@ -72,7 +68,6 @@ impl MenuAction {
             Self::Grouping(Grouping::Flat) => "view.flat",
             Self::Grouping(Grouping::Workers) => "view.workers",
             Self::Collapse => "view.collapse",
-            Self::Titles => "view.titles",
             Self::Fit => "view.fit",
         }
     }
@@ -95,7 +90,6 @@ impl MenuAction {
             Self::Grouping(Grouping::Flat) => "Flat",
             Self::Grouping(Grouping::Workers) => "By Worker",
             Self::Collapse => "Collapse Empty Rows",
-            Self::Titles => "Titles on Bars",
             Self::Fit => "Fit",
         }
     }
@@ -113,7 +107,6 @@ impl MenuAction {
             Self::Grouping(Grouping::Flat) => icons::FLAT,
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
             Self::Collapse => icons::COLLAPSE,
-            Self::Titles => icons::TAG,
             Self::Fit => icons::FIT,
         }
     }
@@ -136,8 +129,6 @@ pub struct MenuState {
     pub factory: bool,
     pub grouping: Grouping,
     pub collapse: bool,
-    /// Bars carry their tickets' titles.
-    pub titles: bool,
 }
 
 impl MenuState {
@@ -147,7 +138,7 @@ impl MenuState {
         match action {
             MenuAction::Reload | MenuAction::Fetch => self.can_reload,
             MenuAction::Fit => self.can_fit,
-            MenuAction::Quit | MenuAction::Timeline | MenuAction::Factory | MenuAction::Grouping(_) | MenuAction::Collapse | MenuAction::Titles => true,
+            MenuAction::Quit | MenuAction::Timeline | MenuAction::Factory | MenuAction::Grouping(_) | MenuAction::Collapse => true,
         }
     }
 
@@ -159,7 +150,6 @@ impl MenuState {
             MenuAction::Factory => Some(self.factory),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse => Some(self.collapse),
-            MenuAction::Titles => Some(self.titles),
             MenuAction::Reload | MenuAction::Fetch | MenuAction::Quit | MenuAction::Fit => None,
         }
     }
@@ -179,6 +169,13 @@ mod tests {
     }
 
     #[test]
+    fn there_is_no_titles_item() {
+        // Titles are always on the bars (#34): the View menu has no Titles on Bars.
+        assert_eq!(MenuAction::from_id("view.titles"), None);
+        assert!(MenuAction::ALL.iter().all(|a| a.label() != "Titles on Bars"));
+    }
+
+    #[test]
     fn the_menus_hold_every_item_once() {
         let listed: Vec<MenuAction> = MenuAction::FILE.iter().chain(&MenuAction::VIEW).flatten().copied().collect();
         assert_eq!(listed, MenuAction::ALL);
@@ -186,7 +183,7 @@ mod tests {
 
     #[test]
     fn state_enables_and_checks() {
-        let state = MenuState { can_reload: false, can_fit: true, timeline: true, factory: false, grouping: Grouping::Workers, collapse: false, titles: true };
+        let state = MenuState { can_reload: false, can_fit: true, timeline: true, factory: false, grouping: Grouping::Workers, collapse: false };
         assert!(!state.enabled(MenuAction::Reload));
         assert!(!state.enabled(MenuAction::Fetch));
         assert!(state.enabled(MenuAction::Fit));
@@ -196,8 +193,6 @@ mod tests {
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Flat)), Some(false));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
         assert_eq!(state.checked(MenuAction::Collapse), Some(false));
-        assert_eq!(state.checked(MenuAction::Titles), Some(true));
-        assert!(state.enabled(MenuAction::Titles));
 
         assert_eq!(state.checked(MenuAction::Reload), None);
     }
