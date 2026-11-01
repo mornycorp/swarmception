@@ -253,7 +253,8 @@ fn between(start: Timestamp, end: Timestamp) -> String {
     duration(end.0.saturating_sub(start.0))
 }
 
-/// The ticket's four times, those it has: claimed, began, finished, merged.
+/// The ticket's times, those it has: claimed, began, finished, merged, done (a `stop done` while
+/// worked on), and, done with no merge, that and the stop's note.
 fn milestones(ticket: &Ticket) -> Vec<String> {
     let mut lines = Vec::new();
     let mut line = |what: &str, t: Option<Timestamp>| {
@@ -265,8 +266,15 @@ fn milestones(ticket: &Ticket) -> Vec<String> {
     line("began", ticket.began);
     line("finished", ticket.finished);
     line("merged", ticket.merged.as_ref().map(|m| m.t));
-    if let (Some(from), Some(merged)) = (ticket.claimed.or(ticket.began), &ticket.merged) {
+    line("done", ticket.done.as_ref().map(|d| d.t));
+    let from = ticket.claimed.or(ticket.began);
+    if let (Some(from), Some(merged)) = (from, &ticket.merged) {
         lines.push(format!("claim to merge: {}", between(from, merged.t)));
+    } else if let Some(done) = &ticket.done {
+        if let Some(from) = from {
+            lines.push(format!("claim to done: {}", between(from, done.t)));
+        }
+        lines.push(done.note.as_ref().map_or_else(|| "done without a merge".to_owned(), |note| format!("done without a merge: {note}")));
     }
     lines
 }
@@ -368,6 +376,22 @@ mod tests {
         assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
         assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
         assert!(bars[1].tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bars[1].tooltip);
+    }
+
+    #[test]
+    fn a_ticket_done_without_a_merge_says_so() {
+        let files = [swarmception_model::parse_file("m-1", crate::tickets::tests::DONE)];
+        let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
+        let bars: Vec<&Bar> =
+            rows.iter().flat_map(Node::leaves).filter_map(|l| if let Node::Ranges { bars, .. } = l { Some(bars) } else { None }).flatten().collect();
+        let working = bars.iter().find(|b| b.label == "#58 working").unwrap();
+        assert!(!working.open);
+        assert_eq!(working.tooltip[1], "working: 2026-10-31T12:59:18Z → 2026-10-31T13:06:43Z (7 min 25 s)");
+        assert!(working.tooltip.contains(&"done      2026-10-31T13:06:43Z".to_owned()), "{:?}", working.tooltip);
+        assert!(working.tooltip.contains(&"claim to done: 7 min 27 s".to_owned()), "{:?}", working.tooltip);
+        assert_eq!(working.tooltip.last().map(String::as_str), Some("done without a merge: review filed as #66-#73"));
+        let claimed = bars.iter().find(|b| b.label == "#59 claimed").unwrap();
+        assert_eq!(claimed.tooltip.last().map(String::as_str), Some("done without a merge"));
     }
 
     #[test]
