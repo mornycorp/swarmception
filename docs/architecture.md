@@ -47,8 +47,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
   `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
   its colour and its tooltip. `colours` is the one source of colours, the timeline's and the
-  factory's (#15): a ticket's own colour from its issue number (hues a golden angle apart, kept
-  clear of the fixed colours' hues, legible labels on every one), in which its *working* bars and
+  factory's (#15): a ticket's own colour from its issue number (its entry in a fixed, curated palette of
+  eleven muted colours, the owner's scheme B (#40): consecutive ids never share one, none is
+  near a phase's hue, dark labels legible on every one), in which its *working* bars and
   its merge are drawn; claimed yellow, waiting for merge blue, sent back red, stopped grey, merges
   onto main green. `timeline` builds
   swarm-timeline's host data (`TimelineData`) from the rows, each range in its bar's colour: the axis's items are the distinct
@@ -223,6 +224,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Tickets' colours from a fixed, curated palette (scheme B, #40), the phase colours retuned to sit with it |
 | 2026-11-01 | minor | Main's wall (#32): bricks sized by claim → merge, their phases along them, sendbacks marked; the blocks carry `took`, `segments`, `sent_back` |
 | 2026-11-01 | minor | The factory's layout (#31): no ticker, the key along the bottom, short bench strips, the gate as its list of runs, coloured tooltips, the sparkline's hours clickable; the factory's own colours softened |
 | 2026-11-01 | minor | An abandoned ticket: a claimed, working or sent back stretch ends where its holder's session did (#28) |

@@ -1,18 +1,18 @@
 //! The one source of the swarm's colours (#15, the owner's): the timeline and the factory both
 //! take them from here, so a ticket and a phase look the same in both.
 //!
-//! - **A ticket's own colour** ([`ticket_colour`]), from its issue number: hues a golden angle
-//!   (137.5°) apart, so tickets next to each other differ clearly, kept out of the arcs around the
-//!   fixed colours' hues so a ticket never reads as a phase, and light enough to read on the dark
-//!   background with black labels on every hue. Its *working* stretches and its merge are drawn
-//!   in it.
+//! - **A ticket's own colour** ([`ticket_colour`]): its issue number's entry in [`PALETTE`], a
+//!   fixed, hand-picked set of muted colours (#40, the owner's scheme B, Tableau-like), taken in
+//!   turn so consecutive ids never share one. Its *working* stretches and its merge are drawn in
+//!   it.
 //! - **The fixed colours**: claimed [`CLAIMED`] yellow, waiting for merge [`WAITING`] blue, sent
 //!   back [`SENT_BACK`] red, stopped [`STOPPED`] grey, and every merge onto main [`MAIN_MERGE`]
-//!   green; [`NO_TICKET`], a neutral grey for what is no ticket's.
+//!   green; [`NO_TICKET`], a slate grey for what is no ticket's.
 //!
-//! All of them are soft pastels (#34, the owner's: "a bit neon"): a ticket's colour at
-//! saturation [`SATURATION`] and value [`VALUE`], the fixed colours a little more saturated than
-//! that (at most [`MAX_SATURATION`]) so a phase still stands apart from the tickets around it.
+//! The palette leaves the phases' own hues to them: it has no blue, no mid green, no amber and no
+//! red, and every entry keeps at least [`CLEARANCE`] of hue and [`DISTANCE`] of colour (OKLab)
+//! from each fixed colour, so a ticket never reads as a phase. Every colour takes a dark label at
+//! a contrast of 4.5 or more, and reads on the dark background.
 
 use crate::rows::Style;
 use crate::tickets::Phase;
@@ -20,57 +20,52 @@ use crate::tickets::Phase;
 /// A colour as red, green and blue bytes (sRGB).
 pub type Rgb = [u8; 3];
 
-/// Claimed: a soft yellow (hue 45°, saturation 0.48, value 0.92).
-pub const CLAIMED: Rgb = [0xeb, 0xce, 0x7a];
-/// Waiting for merge: a soft blue (hue 217°, saturation 0.48, value 0.93).
-pub const WAITING: Rgb = [0x7b, 0xa7, 0xed];
-/// Sent back: a soft red (hue 358°, saturation 0.46, value 0.91).
-pub const SENT_BACK: Rgb = [0xe8, 0x7d, 0x81];
+/// The tickets' colours, in the order consecutive ids take them (#40): each is far from the
+/// entries either side of it, warm and cool, light and mid in turn.
+pub const PALETTE: [Rgb; 11] = [
+    [0x45, 0xa6, 0xab], // teal
+    [0xf2, 0x8e, 0x2b], // orange
+    [0x98, 0xa2, 0xea], // periwinkle
+    [0xa7, 0xbc, 0x61], // olive
+    [0xdc, 0x7d, 0x97], // rose
+    [0x7c, 0xc6, 0xe6], // sky
+    [0xb7, 0x87, 0x5f], // brown
+    [0xe9, 0xa0, 0xcf], // pink
+    [0x7d, 0xd1, 0xb8], // mint
+    [0xab, 0x7c, 0xc7], // purple
+    [0xe2, 0xb2, 0x94], // sand
+];
+
+/// Claimed: a clear yellow, yellower than the proposal's amber so the palette's orange and sand
+/// keep clear of it.
+pub const CLAIMED: Rgb = [0xe6, 0xc8, 0x4f];
+/// Waiting for merge: a mid blue.
+pub const WAITING: Rgb = [0x5b, 0x8e, 0xc9];
+/// Sent back: a brick red, light enough for a dark label.
+pub const SENT_BACK: Rgb = [0xdc, 0x5f, 0x56];
 /// Stopped: grey.
-pub const STOPPED: Rgb = [0x9a, 0x9a, 0x9a];
-/// A merge onto main: a soft green (hue 140°, saturation 0.44, value 0.83), one colour for all of
-/// them.
-pub const MAIN_MERGE: Rgb = [0x77, 0xd4, 0x96];
-/// A neutral grey, for what is no ticket's (a merge onto main that no ticket names).
-pub const NO_TICKET: Rgb = [0x7a, 0x7d, 0x86];
+pub const STOPPED: Rgb = [0x8a, 0x8a, 0x8a];
+/// A merge onto main: a mid green, one colour for all of them.
+pub const MAIN_MERGE: Rgb = [0x5a, 0xa4, 0x69];
+/// A slate grey, for what is no ticket's (a merge onto main that no ticket names): bluer than
+/// [`STOPPED`].
+pub const NO_TICKET: Rgb = [0x7f, 0x87, 0x96];
 
-/// The fixed colours a ticket's colour keeps clear of.
+/// The fixed colours with a hue, which a ticket's colour keeps clear of.
 pub const FIXED: [Rgb; 4] = [CLAIMED, WAITING, SENT_BACK, MAIN_MERGE];
-/// How far, in degrees of hue, a ticket's colour keeps from each of [`FIXED`]'s.
+/// How far, in degrees of OKLCh hue, a ticket's colour keeps from each of [`FIXED`]'s.
 pub const CLEARANCE: f64 = 20.0;
-/// The arcs of hue, in degrees, a ticket's colour is taken from: the wheel less at least
-/// [`CLEARANCE`] around each fixed colour (yellow 45°, green 140°, blue 217°, red 358°; 30°
-/// round yellow and blue, which a light tint of a hue next to them looks most like), less the
-/// sliver of orange between red and yellow.
-const ARCS: [(f64, f64); 3] = [(75.0, 118.0), (162.0, 192.0), (247.0, 336.0)];
-/// The golden angle as a fraction of the wheel: 137.5° / 360°.
-const GOLDEN: f64 = 0.381_966_011_250_105;
-/// A ticket's colour's saturation: a pastel (0.52 before #34).
-pub const SATURATION: f64 = 0.34;
-/// A ticket's colour's value: a touch under full, so the pastels don't glare (1.0 before #34).
-pub const VALUE: f64 = 0.93;
-/// The most saturated any of the swarm's colours is: none of them neon (#34).
-pub const MAX_SATURATION: f64 = 0.5;
+/// How far, in OKLab, a ticket's colour keeps from every fixed colour and every other ticket's.
+pub const DISTANCE: f64 = 0.08;
+/// How far, in OKLab, consecutive ids' colours are apart at least.
+pub const NEIGHBOURS: f64 = 0.15;
 
-/// A ticket's own colour: hue `issue` × 137.5°, spread over [`ARCS`], so neighbouring ids differ
-/// by a third of the hues there are and the same issue is the same colour everywhere.
+/// A ticket's own colour: entry `issue` modulo [`PALETTE`]'s size, so consecutive ids differ and
+/// the same issue is the same colour everywhere.
 #[must_use]
 pub fn ticket_colour(issue: u64) -> Rgb {
-    let turn = ((issue % 1_000_003) as f64 * GOLDEN).fract();
-    hsv(hue(turn) / 360.0, SATURATION, VALUE)
-}
-
-/// The hue, in degrees, a `turn` (0 to 1) of [`ARCS`] lands on.
-fn hue(turn: f64) -> f64 {
-    let total: f64 = ARCS.iter().map(|(from, to)| to - from).sum();
-    let mut left = turn.clamp(0.0, 1.0) * total;
-    for (from, to) in ARCS {
-        if left <= to - from {
-            return from + left;
-        }
-        left -= to - from;
-    }
-    ARCS.last().map_or(0.0, |arc| arc.1)
+    const SIZE: u64 = PALETTE.len() as u64;
+    usize::try_from(issue % SIZE).ok().and_then(|i| PALETTE.get(i)).copied().unwrap_or(NO_TICKET)
 }
 
 /// The colour a phase of `issue`'s is drawn in: working in the ticket's own, the rest fixed.
@@ -116,50 +111,53 @@ pub fn contrast(a: Rgb, b: Rgb) -> f64 {
     (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
 }
 
+/// sRGB's byte, linear, 0 to 1.
+fn linear(byte: u8) -> f64 {
+    let c = f64::from(byte) / 255.0;
+    if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
+}
+
 /// The relative luminance of `colour`, 0 to 1 (WCAG 2's).
 #[must_use]
 pub fn luminance(colour: Rgb) -> f64 {
-    let linear = |byte: u8| {
-        let c = f64::from(byte) / 255.0;
-        if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
-    };
-    let [r, g, b] = colour;
-    0.0722f64.mul_add(linear(b), 0.2126f64.mul_add(linear(r), 0.7152 * linear(g)))
+    let [r, g, b] = colour.map(linear);
+    0.0722f64.mul_add(b, 0.2126f64.mul_add(r, 0.7152 * g))
 }
 
-/// The hue of `colour`, in degrees (0 for a grey).
+/// `colour` in OKLab (Björn Ottosson's): lightness 0 to 1, then the green–red and blue–yellow
+/// axes. Distances in it are close to how different two colours look.
+#[must_use]
+pub fn oklab(colour: Rgb) -> [f64; 3] {
+    let [r, g, b] = colour.map(linear);
+    let l = 0.051_445_992_9f64.mul_add(b, 0.412_221_470_8f64.mul_add(r, 0.536_332_536_3 * g)).cbrt();
+    let m = 0.107_396_956_6f64.mul_add(b, 0.211_903_498_2f64.mul_add(r, 0.680_699_545_1 * g)).cbrt();
+    let s = 0.629_978_700_5f64.mul_add(b, 0.088_302_461_9f64.mul_add(r, 0.281_718_837_6 * g)).cbrt();
+    [
+        (-0.004_072_046_8f64).mul_add(s, 0.210_454_255_3f64.mul_add(l, 0.793_617_785_0 * m)),
+        0.450_593_709_9f64.mul_add(s, 1.977_998_495_1f64.mul_add(l, -2.428_592_205_0 * m)),
+        (-0.808_675_766_0f64).mul_add(s, 0.025_904_037_1f64.mul_add(l, 0.782_771_766_2 * m)),
+    ]
+}
+
+/// How different two colours look: their distance in OKLab (0 the same; 0.02 just noticeable).
+#[must_use]
+pub fn distance(a: Rgb, b: Rgb) -> f64 {
+    let ([l1, a1, b1], [l2, a2, b2]) = (oklab(a), oklab(b));
+    (l1 - l2).hypot(a1 - a2).hypot(b1 - b2)
+}
+
+/// `colour`'s chroma in OKLCh: 0 for a grey, about 0.1 for the palette's muted colours.
+#[must_use]
+pub fn chroma(colour: Rgb) -> f64 {
+    let [_, a, b] = oklab(colour);
+    a.hypot(b)
+}
+
+/// The hue of `colour` in OKLCh, in degrees (0 for a grey).
 #[must_use]
 pub fn hue_of(colour: Rgb) -> f64 {
-    let [r, g, b] = colour.map(|c| f64::from(c) / 255.0);
-    let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-    let span = max - min;
-    if span <= f64::EPSILON {
-        return 0.0;
-    }
-    let sector = if (max - r).abs() <= f64::EPSILON {
-        ((g - b) / span).rem_euclid(6.0)
-    } else if (max - g).abs() <= f64::EPSILON {
-        (b - r) / span + 2.0
-    } else {
-        (r - g) / span + 4.0
-    };
-    sector * 60.0
-}
-
-fn hsv(h: f64, s: f64, v: f64) -> Rgb {
-    let sector = (h * 6.0).floor();
-    let f = h.mul_add(6.0, -sector);
-    let (p, q, r) = (v * (1.0 - s), v * f.mul_add(-s, 1.0), v * (1.0 - f).mul_add(-s, 1.0));
-    let (red, green, blue) = match sector as i64 % 6 {
-        0 => (v, r, p),
-        1 => (q, v, p),
-        2 => (p, v, r),
-        3 => (p, q, v),
-        4 => (r, p, v),
-        _ => (v, p, q),
-    };
-    let byte = |x: f64| (x * 255.0).round().clamp(0.0, 255.0) as u8;
-    [byte(red), byte(green), byte(blue)]
+    let [_, a, b] = oklab(colour);
+    if a.hypot(b) <= 1e-6 { 0.0 } else { b.atan2(a).to_degrees().rem_euclid(360.0) }
 }
 
 #[cfg(test)]
@@ -172,40 +170,65 @@ mod tests {
         d.min(360.0 - d)
     }
 
+    const DARK: Rgb = [0x1b, 0x1b, 0x1b];
+
     #[test]
-    fn a_tickets_colour_is_stable_and_neighbours_differ_clearly() {
+    fn a_tickets_colour_is_its_ids_palette_entry_and_the_entries_are_distinct() {
+        assert!((10..=12).contains(&PALETTE.len()), "enough entries that a packed row rarely repeats one");
         assert_eq!(ticket_colour(170), ticket_colour(170), "the same issue, the same colour");
-        for issue in 0..2_000 {
-            let (here, next) = (hue_of(ticket_colour(issue)), hue_of(ticket_colour(issue + 1)));
-            assert!(apart(here, next) >= 60.0, "#{issue} at {here:.0}° and #{} at {next:.0}° are too alike", issue + 1);
+        for issue in 0..100u64 {
+            assert_eq!(ticket_colour(issue), PALETTE[(issue % PALETTE.len() as u64) as usize]);
         }
-        assert_ne!(ticket_colour(u64::MAX), [0, 0, 0]);
-    }
-
-    #[test]
-    fn a_tickets_colour_keeps_clear_of_the_fixed_ones() {
-        let fixed: Vec<f64> = FIXED.iter().map(|&c| hue_of(c)).collect();
-        for issue in 0..2_000 {
-            let colour = ticket_colour(issue);
-            let hue = hue_of(colour);
-            for (fixed, f) in FIXED.iter().zip(&fixed) {
-                assert!(apart(hue, *f) >= CLEARANCE - 1.0, "#{issue} at {hue:.0}° is near {fixed:?} at {f:.0}°");
+        assert!(PALETTE.contains(&ticket_colour(u64::MAX)));
+        for (i, a) in PALETTE.iter().enumerate() {
+            for b in &PALETTE[i + 1..] {
+                assert!(distance(*a, *b) >= DISTANCE, "{a:?} and {b:?} are too alike: {:.3}", distance(*a, *b));
             }
-            assert!(!FIXED.contains(&colour) && colour != STOPPED && colour != NO_TICKET);
         }
     }
 
     #[test]
-    fn labels_read_on_every_tickets_colour_and_it_reads_on_the_dark_background() {
-        let dark = [0x1b, 0x1b, 0x1b];
+    fn consecutive_ids_never_share_a_colour() {
         for issue in 0..2_000 {
-            let colour = ticket_colour(issue);
-            assert!(contrast(colour, ink(colour)) >= 4.5, "#{issue}'s label on {colour:?}: {:.1}", contrast(colour, ink(colour)));
-            assert!(contrast(colour, dark) >= 4.5, "#{issue}'s {colour:?} on the background: {:.1}", contrast(colour, dark));
+            let (here, next) = (ticket_colour(issue), ticket_colour(issue + 1));
+            assert!(distance(here, next) >= NEIGHBOURS, "#{issue} {here:?} and #{} {next:?}: {:.3}", issue + 1, distance(here, next));
         }
-        for fixed in FIXED.into_iter().chain([STOPPED]) {
-            assert!(contrast(fixed, ink(fixed)) >= 4.5, "a label on {fixed:?}");
+    }
+
+    #[test]
+    fn a_tickets_colour_keeps_clear_of_the_phase_colours() {
+        for colour in PALETTE {
+            for fixed in FIXED {
+                let (h, f) = (hue_of(colour), hue_of(fixed));
+                assert!(apart(h, f) >= CLEARANCE, "{colour:?} at {h:.0}° is near {fixed:?} at {f:.0}°");
+            }
+            for fixed in FIXED.into_iter().chain([STOPPED, NO_TICKET]) {
+                assert!(distance(colour, fixed) >= DISTANCE, "{colour:?} looks like {fixed:?}: {:.3}", distance(colour, fixed));
+            }
+            assert!(chroma(colour) >= 0.06, "{colour:?} reads as a grey: chroma {:.3}", chroma(colour));
         }
+    }
+
+    #[test]
+    fn labels_read_on_every_colour_and_every_colour_reads_on_the_dark_background() {
+        for colour in PALETTE.into_iter().chain(FIXED).chain([STOPPED, NO_TICKET]) {
+            assert_eq!(ink(colour), BLACK, "a dark label on {colour:?}");
+            assert!(contrast(colour, ink(colour)) >= 4.5, "the label on {colour:?}: {:.1}", contrast(colour, ink(colour)));
+            assert!(contrast(colour, DARK) >= 4.5, "{colour:?} on the background: {:.1}", contrast(colour, DARK));
+        }
+    }
+
+    #[test]
+    fn every_colour_is_muted_not_neon() {
+        for colour in PALETTE.into_iter().chain(FIXED) {
+            let [l, ..] = oklab(colour);
+            assert!(chroma(colour) <= 0.17, "{colour:?} is neon: chroma {:.3}", chroma(colour));
+            assert!((0.6..=0.86).contains(&l), "{colour:?} at lightness {l:.2} is too dark or glares");
+        }
+        for grey in [STOPPED, NO_TICKET] {
+            assert!(chroma(grey) < 0.03, "{grey:?} is grey");
+        }
+        assert!(distance(STOPPED, NO_TICKET) > 0.02, "no ticket's slate is not stopped's grey");
     }
 
     #[test]
@@ -222,37 +245,15 @@ mod tests {
         assert_eq!(style_colour(Style::Merged, None), NO_TICKET);
     }
 
-    /// HSV's saturation and value of `colour`, 0 to 1.
-    fn saturation_value(colour: Rgb) -> (f64, f64) {
-        let [r, g, b] = colour.map(|c| f64::from(c) / 255.0);
-        let (max, min) = (r.max(g).max(b), r.min(g).min(b));
-        (if max <= f64::EPSILON { 0.0 } else { (max - min) / max }, max)
-    }
-
     #[test]
-    fn every_colour_is_a_soft_pastel_and_the_phases_stand_apart_from_the_tickets() {
-        for issue in 0..2_000 {
-            let (s, v) = saturation_value(ticket_colour(issue));
-            assert!((s - SATURATION).abs() < 0.01 && (v - VALUE).abs() < 0.01, "#{issue}: saturation {s:.2}, value {v:.2}");
-        }
-        for fixed in FIXED {
-            let (s, v) = saturation_value(fixed);
-            assert!(s <= MAX_SATURATION, "{fixed:?} is too saturated: {s:.2}");
-            assert!(s >= SATURATION + 0.08, "{fixed:?} at saturation {s:.2} is as pale as a ticket's");
-            assert!(v < 0.95, "{fixed:?} at value {v:.2} glares");
-        }
-        for grey in [STOPPED, NO_TICKET] {
-            assert!(saturation_value(grey).0 < 0.1, "{grey:?} is grey");
-        }
-    }
-
-    #[test]
-    fn hues() {
-        assert!(apart(hue_of(CLAIMED), 45.0) < 1.0);
-        assert!(apart(hue_of(MAIN_MERGE), 140.0) < 1.0);
-        assert!(apart(hue_of(WAITING), 217.0) < 1.0);
-        assert!(apart(hue_of(SENT_BACK), 358.0) < 1.0);
+    fn the_phases_keep_their_hues() {
+        let within = |colour: Rgb, from: f64, to: f64| (from..=to).contains(&hue_of(colour));
+        assert!(within(CLAIMED, 85.0, 110.0), "claimed is yellow: {:.0}°", hue_of(CLAIMED));
+        assert!(within(MAIN_MERGE, 135.0, 160.0), "merges are green: {:.0}°", hue_of(MAIN_MERGE));
+        assert!(within(WAITING, 240.0, 265.0), "waiting is blue: {:.0}°", hue_of(WAITING));
+        assert!(within(SENT_BACK, 15.0, 40.0), "sent back is red: {:.0}°", hue_of(SENT_BACK));
         assert!(hue_of(STOPPED).abs() < f64::EPSILON);
-        assert!((hue(0.0) - 75.0).abs() < 1e-9 && (hue(1.0) - 336.0).abs() < 1e-9);
+        let [l, a, b] = oklab([0xff, 0xff, 0xff]);
+        assert!((l - 1.0).abs() < 1e-3 && a.abs() < 1e-3 && b.abs() < 1e-3, "white is OKLab's white");
     }
 }
