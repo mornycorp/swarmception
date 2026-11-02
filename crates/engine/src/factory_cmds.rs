@@ -6,9 +6,9 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::Node;
 use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, scene, titled};
 use swarmception_domain::moments::{Direction, Moment, MomentKind, Step as Landing, moments, step};
+use swarmception_domain::rows::bars_where;
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
@@ -103,11 +103,7 @@ pub struct TicketParams {
 }
 
 /// A bar on the timeline: its row's key and its place among the row's bars (the widget's range).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-pub struct BarRef {
-    pub track: String,
-    pub range: usize,
-}
+pub use swarmception_domain::rows::BarRef;
 
 /// A ticket's bars on the timeline.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -128,18 +124,7 @@ impl Command for TicketBars {
     type Result = TicketBarsResult;
 
     fn run(session: &mut Session, params: TicketParams) -> Result<TicketBarsResult, EngineError> {
-        let bars = session
-            .rows
-            .iter()
-            .flat_map(Node::leaves)
-            .filter_map(|leaf| match leaf {
-                Node::Ranges { key, bars, .. } => Some((key, bars)),
-                _ => None,
-            })
-            .flat_map(|(key, bars)| {
-                bars.iter().enumerate().filter(|(_, bar)| bar.ticket == Some(params.issue)).map(|(range, _)| BarRef { track: key.clone(), range })
-            })
-            .collect();
+        let bars = bars_where(&session.rows, |_, bar| bar.ticket == Some(params.issue)).into_iter().map(|(found, _)| found).collect();
         Ok(TicketBarsResult { bars })
     }
 }

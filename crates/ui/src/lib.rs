@@ -45,7 +45,7 @@ pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::{Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane};
+pub use timeline::{Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane};
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
 /// details pane and what it is about.
@@ -93,6 +93,8 @@ pub struct Shell {
     details: DetailsPane,
     /// What the details followed last: the timeline's chosen bar, the factory's traced ticket.
     followed: (Option<(String, usize)>, Option<u64>),
+    /// The details' subject whose bars were last brought into view on the timeline (#55).
+    revealed: Option<Subject>,
     /// A time put on the factory (`--at`) that the timeline's playhead goes to once it has data.
     playhead_to: Option<swarmception_model::Timestamp>,
     ui: UiState,
@@ -129,6 +131,7 @@ impl Shell {
             factory: FactoryPane::default(),
             details: DetailsPane::default(),
             followed: (None, None),
+            revealed: None,
             playhead_to: None,
             ui: UiState::default(),
             status_at: None,
@@ -164,6 +167,11 @@ impl Shell {
     /// Shows the details of `subject`, as a selection does; ← goes back to what was before.
     pub fn select(&mut self, subject: swarmception_domain::details::Subject) {
         self.details.select(&mut self.ui.details, subject);
+    }
+
+    /// Back to what the details showed before, as the pane's ← does.
+    pub fn details_back(&mut self) {
+        self.details.back(&mut self.ui.details);
     }
 
     /// The engine's session, to run commands on.
@@ -358,7 +366,6 @@ impl Shell {
                 ui.centered_and_justified(|ui| ui.weak("Neither the timeline nor the factory is shown: View ▸ Timeline or View ▸ Factory shows one."));
             }
         });
-        self.light_timeline(ui.ctx());
         if let Some(hour) = self.factory.strip().drawn().chosen {
             self.show_hour(hour);
             ui.ctx().request_repaint();
@@ -370,6 +377,8 @@ impl Shell {
             self.open_link(ui.ctx(), link);
         }
         self.follow(ui.ctx());
+        self.reveal_details(ui.ctx());
+        self.light_timeline(ui.ctx());
     }
 
     /// What the details are of, following the selection (#47): a bar newly chosen on the
@@ -428,13 +437,31 @@ impl Shell {
         self.timeline.put_playhead(&mut self.engine, t);
     }
 
-    /// The ticket hovered in the factory, its bars highlighted on the timeline apart from the
-    /// person's selection (#48); the pane tells the widget only when it changes.
+    /// The timeline's highlight, apart from the person's selection: the ticket hovered in the
+    /// factory while it is (#48), else what the details pane shows (#55, `details.get`'s
+    /// `timeline`); the pane tells the widget only when it changes.
     fn light_timeline(&mut self, ctx: &egui::Context) {
         let hovered = if self.ui.panes.factory { self.factory.hovered() } else { None };
-        if self.timeline.light_ticket(&mut self.engine, hovered) {
+        let details = self.details.on_timeline(&self.ui.details).filter(|_| self.ui.panes.details).map(|on| on.bars.as_slice()).unwrap_or_default();
+        if self.timeline.light(&mut self.engine, hovered, details) {
             ctx.request_repaint();
         }
+    }
+
+    /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or
+    /// `--details`): its bars brought into view on the timeline when none is (#55), once its
+    /// details have come; the selection untouched.
+    fn reveal_details(&mut self, ctx: &egui::Context) {
+        if self.ui.details.subject.is_none() {
+            self.revealed = None;
+        }
+        if !self.ui.panes.details || !self.timeline.has_data() || self.ui.details.subject == self.revealed {
+            return;
+        }
+        let Some(on) = self.details.on_timeline(&self.ui.details).cloned() else { return };
+        self.revealed.clone_from(&self.ui.details.subject);
+        self.timeline.reveal(&mut self.engine, &on);
+        ctx.request_repaint();
     }
 
     /// The factory's time this frame (a step, play, the timeline or neither), the timeline's

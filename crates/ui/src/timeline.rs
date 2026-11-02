@@ -9,6 +9,10 @@
 //! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
 //! zoom in / out / fit buttons and the measurement (Δ).
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use swarmception_domain::details::OnTimeline;
+use swarmception_domain::rows::BarRef;
 use swarmception_domain::timeline::Link;
 use swarmception_engine::Session;
 
@@ -27,7 +31,7 @@ use timeline_engine::highlight_cmds::HighlightParams;
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, RangeParams, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
 use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Set, SetParams, TimelineState};
-use timeline_engine::view_cmds::{Fit, Zoom, ZoomParams};
+use timeline_engine::view_cmds::{Fit, Show, ShowParams, Zoom, ZoomParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire, RulerWire, SpanWire};
 
 use crate::icons;
@@ -77,13 +81,38 @@ impl Selection {
     }
 }
 
+/// What the timeline's highlight is of (#55): one owner, so a hover in the factory wins while it
+/// lasts and the details pane's subject has it back on leave.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Lit {
+    /// Nothing is highlighted.
+    #[default]
+    Nothing,
+    /// The bars of the ticket hovered in the factory (#48).
+    Hovered { ticket: u64 },
+    /// The bars of what the details pane shows (`details.get`'s `timeline`).
+    Details,
+}
+
+/// What the widget was told to highlight: the hovered ticket, else the details' bars, on a
+/// generation of rows.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct Lighting {
+    hovered: Option<u64>,
+    details: Vec<BarRef>,
+    generation: Option<u64>,
+}
+
 pub struct TimelinePane {
     widget: timeline_egui::Timeline,
     loaded: Option<u64>,
     has_data: bool,
-    /// The ticket hovered in the factory whose bars the widget highlights, and the generation of
-    /// rows they were highlighted on: highlighted again when either moves.
-    lit: (Option<u64>, Option<u64>),
+    /// What the widget highlights: told again when the hover, the details' bars or the rows'
+    /// generation move.
+    lit: Option<Lighting>,
+    /// Rows to bring into view vertically on the next frame, when none of them is (#55).
+    scroll_to: Option<Vec<String>>,
     /// Pages chosen from a bar's context menu (the widget's host items), for the shell to open.
     links: Vec<Link>,
     /// Where the widget was drawn last frame.
@@ -95,7 +124,7 @@ impl Default for TimelinePane {
         let mut session = timeline_engine::Session::new();
         // The session keeps the toolbar's spec across loads: set once.
         let _ = session.call::<SetToolbar>(ToolbarSetParams { show: Some(TOOLBAR.to_vec()), hide: Vec::new() });
-        Self { widget: timeline_egui::Timeline::new(session), loaded: None, has_data: false, lit: (None, None), links: Vec::new(), rect: None }
+        Self { widget: timeline_egui::Timeline::new(session), loaded: None, has_data: false, lit: None, scroll_to: None, links: Vec::new(), rect: None }
     }
 }
 
@@ -310,27 +339,97 @@ impl TimelinePane {
     }
 
     /// Highlights ticket `issue`'s bars while it is hovered in the factory, and clears the
-    /// highlight once nothing is (#48): the widget's highlight (`highlight.set`, drawn as rings
-    /// apart from the selection), so the person's selection, focus and playhead are never
-    /// touched and there is nothing to put back. The bars come from `timeline.ticketBars`. The
-    /// widget is told only when the ticket or the rows' generation moves (a load clears its
-    /// highlight, so a reload under a hover highlights again); whether it was told, so a host
-    /// can draw again.
+    /// highlight once nothing is (#48): [`Self::light`] with no details' bars.
     pub fn light_ticket(&mut self, engine: &mut Session, issue: Option<u64>) -> bool {
-        let wanted = (issue, self.loaded.filter(|_| self.has_data));
-        if wanted == self.lit {
+        self.light(engine, issue, &[])
+    }
+
+    /// The highlight's one owner (#48, #55): the bars of the ticket `hovered` in the factory
+    /// while there is one (`timeline.ticketBars`), else `details`, the bars of what the details
+    /// pane shows; nothing when neither has any. It is the widget's highlight (`highlight.set`,
+    /// drawn as rings apart from the selection), so the person's selection, focus and playhead
+    /// are never touched and there is nothing to put back: a hover's leave gives the details'
+    /// bars their highlight again. The widget is told only when what is wanted or the rows'
+    /// generation moves (a load clears its highlight, so a reload highlights again); whether it
+    /// was told, so a host can draw again.
+    pub fn light(&mut self, engine: &mut Session, hovered: Option<u64>, details: &[BarRef]) -> bool {
+        let details = if hovered.is_some() { Vec::new() } else { details.to_vec() };
+        let wanted = Lighting { hovered, details, generation: self.loaded.filter(|_| self.has_data) };
+        if self.lit.as_ref() == Some(&wanted) {
             return false;
         }
-        self.lit = wanted;
+        let bars = match hovered {
+            Some(issue) => engine.call::<TicketBars>(TicketParams { issue }).map(|found| found.bars).unwrap_or_default(),
+            None => wanted.details.clone(),
+        };
+        self.lit = Some(wanted);
         if !self.has_data {
             return false;
         }
-        let bars = issue.and_then(|issue| engine.call::<TicketBars>(TicketParams { issue }).ok()).map(|found| found.bars).unwrap_or_default();
         let ranges: Vec<RangeParams> = bars.into_iter().map(|bar| RangeParams { track: bar.track, range: bar.range }).collect();
         if ranges.is_empty() || self.widget.set_highlight(HighlightParams { ranges, instants: Vec::new() }).is_err() {
             self.widget.clear_highlight();
         }
         true
+    }
+
+    /// What the highlight is of, as the pane last told the widget.
+    #[must_use]
+    pub fn lit(&self) -> Lit {
+        match &self.lit {
+            Some(Lighting { hovered: Some(ticket), .. }) => Lit::Hovered { ticket: *ticket },
+            Some(Lighting { details, .. }) if !details.is_empty() => Lit::Details,
+            _ => Lit::Nothing,
+        }
+    }
+
+    /// Brings `on`'s bars into view when none of them is (#55), never touching the selection:
+    /// across, when none is drawn in the window, the window moves to them (`view.show`, kept in
+    /// the zoom history): the same width centred on them when they fit in it, else just wide
+    /// enough to hold them all; down, on the next frame, the tracks scroll to the first of their
+    /// rows when none is on screen. Whether the window moved.
+    pub fn reveal(&mut self, engine: &mut Session, on: &OnTimeline) -> bool {
+        if !self.has_data || on.bars.is_empty() {
+            return false;
+        }
+        self.scroll_to = Some(on.bars.iter().map(|bar| bar.track.clone()).collect());
+        let (Some(start), Some(end)) = (on.start, on.end) else { return false };
+        if self.drawn_any(&on.bars) {
+            return false;
+        }
+        let mut at = |time| engine.call::<PlaceAt>(PlaceAtParams { time }).ok().map(|p| p.position);
+        let Some((start, end)) = at(start).zip(at(end)) else { return false };
+        let session = self.widget.session();
+        let Some(state) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline) else { return false };
+        if state.scale != TIME {
+            return false;
+        }
+        let width = state.window.end.saturating_sub(state.window.start).max(1);
+        let span = end.saturating_sub(start).max(0);
+        let (from, to) = if span <= width {
+            let from = start.saturating_add(span / 2).saturating_sub(width / 2);
+            (from, from.saturating_add(width))
+        } else {
+            let pad = span / 20;
+            (start.saturating_sub(pad), end.saturating_add(pad))
+        };
+        session.call::<Show>(ShowParams { start: from, end: to }).is_ok()
+    }
+
+    /// Whether any of `bars` is drawn in the window (`query.bars`, whose ranges stand for `count`
+    /// bars from `range` where they are packed).
+    fn drawn_any(&mut self, bars: &[BarRef]) -> bool {
+        let mut tracks: Vec<String> = bars.iter().map(|bar| bar.track.clone()).collect();
+        tracks.dedup();
+        let Ok(drawn) = self.widget.session().call::<Bars>(BarsParams { tracks: Some(tracks), label_char_width: None }) else { return false };
+        bars.iter().any(|bar| {
+            drawn
+                .tracks
+                .iter()
+                .filter(|t| t.key == bar.track)
+                .flat_map(|t| &t.ranges)
+                .any(|r| r.range <= bar.range && bar.range < r.range.saturating_add(r.count.max(1)))
+        })
     }
 
     /// What the widget highlights: by row key, the ranges (`state.get`'s `highlight`).
@@ -371,8 +470,28 @@ impl TimelinePane {
             return;
         }
         self.widget.toolbar(ui);
-        let shown = egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| ui.add(&mut self.widget).rect);
+        let shown = egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| {
+            let rect = ui.add(&mut self.widget).rect;
+            let row = self.scroll_to.take().and_then(|tracks| hidden_row(&mut self.widget, rect, ui.clip_rect(), &tracks));
+            if let Some(row) = row {
+                ui.scroll_to_rect(row, Some(egui::Align::Center));
+            }
+            rect
+        });
         self.rect = Some(shown.inner);
         self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));
     }
+}
+
+/// Where the first of `tracks`' rows is, when none of them is on screen (`clip`) in the widget
+/// drawn at `rect`; none when one is, or none is laid out.
+fn hidden_row(widget: &mut timeline_egui::Timeline, rect: egui::Rect, clip: egui::Rect, tracks: &[String]) -> Option<egui::Rect> {
+    let layout = widget.session().call::<Layout>(LayoutParams { pane: rect.height(), scroll: 0.0 }).ok()?;
+    let rows: Vec<egui::Rect> = layout
+        .rows
+        .iter()
+        .filter(|row| tracks.contains(&row.key))
+        .map(|row| egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + row.y), egui::vec2(rect.width(), row.height)))
+        .collect();
+    (!rows.iter().any(|row| row.intersects(clip))).then(|| rows.first().copied()).flatten()
 }

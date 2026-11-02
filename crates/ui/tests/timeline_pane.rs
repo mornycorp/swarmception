@@ -158,6 +158,43 @@ fn a_hovered_tickets_highlight_leaves_the_selection_and_comes_back_after_a_reloa
 }
 
 #[test]
+fn the_highlight_has_one_owner_a_hover_while_it_lasts_then_the_details() {
+    use swarmception_domain::rows::BarRef;
+    use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
+    use swarmception_ui::Lit;
+    let (dir, mut engine, mut pane) = opened("2026-10-31T03:30:00Z");
+    let by_row = |bars: &[BarRef]| {
+        let mut rows = std::collections::BTreeMap::<String, Vec<usize>>::new();
+        for bar in bars {
+            rows.entry(bar.track.clone()).or_default().push(bar.range);
+        }
+        rows
+    };
+    let seven = engine.call::<TicketBars>(TicketParams { issue: 7 }).unwrap().bars;
+    // The details' bars: #7's first, as a details pane on it would hand them.
+    let details = vec![seven[0].clone()];
+    let before = pane.selection().unwrap();
+    assert_eq!(pane.lit(), Lit::Nothing);
+    assert!(pane.light(&mut engine, None, &details), "the widget is told");
+    assert_eq!((pane.highlighted(), pane.lit()), (by_row(&details), Lit::Details));
+    assert!(!pane.light(&mut engine, None, &details), "and not again while nothing moved");
+    // A hover wins while it lasts, whatever the details hold.
+    assert!(pane.light(&mut engine, Some(7), &details));
+    assert_eq!((pane.highlighted(), pane.lit()), (by_row(&seven), Lit::Hovered { ticket: 7 }));
+    assert!(!pane.light(&mut engine, Some(7), &[]), "the details moving under a hover tell the widget nothing");
+    // Its leave gives the details their highlight back.
+    assert!(pane.light(&mut engine, None, &details));
+    assert_eq!((pane.highlighted(), pane.lit()), (by_row(&details), Lit::Details));
+    assert_eq!(pane.selection().unwrap(), before, "the selection never touched");
+    // Bars the rows no longer have: nothing highlighted, never a panic.
+    assert!(pane.light(&mut engine, None, &[BarRef { track: "nope".into(), range: 3 }]));
+    assert!(pane.highlighted().is_empty());
+    assert!(pane.light(&mut engine, None, &[]));
+    assert_eq!((pane.highlighted().is_empty(), pane.lit()), (true, Lit::Nothing));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn bar_labels_and_tooltips_read_durations_in_hours_and_minutes() {
     use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
     use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};

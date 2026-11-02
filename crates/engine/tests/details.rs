@@ -229,6 +229,28 @@ fn a_bar_on_the_timeline_is_its_ticket_or_its_merge_onto_main() {
 
 #[cfg(unix)]
 #[test]
+fn details_name_their_bars_on_the_rows_the_timeline_shows() {
+    let (mut session, dirs) = session_over_repo();
+    for grouping in ["flat", "workers"] {
+        let _: swarmception_domain::RowsSpec = call(&mut session, "rows.set", &format!(r#"{{"grouping":"{grouping}"}}"#));
+        let mut seven: TicketBarsResult = call(&mut session, "timeline.ticketBars", r#"{"issue":7}"#);
+        seven.bars.sort();
+        let ticket: Details = call(&mut session, "details.get", r#"{"ticket":7}"#);
+        assert_eq!(ticket.timeline.bars, seven.bars, "{grouping}: a ticket's bars are timeline.ticketBars'");
+        assert!(ticket.timeline.start < ticket.timeline.end);
+        let merge: Details = call(&mut session, "details.get", r#"{"track":"main","range":0}"#);
+        assert!(merge.timeline.bars.iter().any(|b| b.track == "main" && b.range == 0), "{grouping}: the merge onto main's own bar");
+        assert!(seven.bars.iter().all(|b| merge.timeline.bars.contains(b)), "{grouping}: and its ticket's");
+        // Every bar named is one the rows have.
+        for bar in &merge.timeline.bars {
+            let _: Details = call(&mut session, "details.get", &format!(r#"{{"track":"{}","range":{}}}"#, bar.track, bar.range));
+        }
+    }
+    dirs.into_iter().for_each(|d| drop(std::fs::remove_dir_all(d)));
+}
+
+#[cfg(unix)]
+#[test]
 fn what_isnt_there_or_isnt_one_thing_is_refused() {
     let (mut session, dirs) = session_over_repo();
     for (params, code) in [

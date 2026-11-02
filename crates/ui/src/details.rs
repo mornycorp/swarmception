@@ -15,7 +15,7 @@ use egui::{Color32, FontId, RichText, Sense, TextFormat, vec2};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_domain::colours::{Rgb, ink};
-use swarmception_domain::details::{Details, Entry, PageKind, Subject};
+use swarmception_domain::details::{Details, Entry, OnTimeline, PageKind, Subject};
 use swarmception_domain::timeline::Link;
 use swarmception_domain::tooltip::TipLine;
 use swarmception_engine::Session;
@@ -86,6 +86,14 @@ impl DetailsPane {
     #[must_use]
     pub const fn details(&self) -> Option<&Details> {
         self.details.as_ref()
+    }
+
+    /// Where `view`'s subject is drawn on the timeline (#55), as `details.get` returned it: none
+    /// until its details have come, or when it refused.
+    #[must_use]
+    pub fn on_timeline(&self, view: &DetailsView) -> Option<&OnTimeline> {
+        let asked = self.asked.as_ref().map(|(subject, _)| subject);
+        self.details.as_ref().filter(|_| view.subject.is_some() && asked == Some(&view.subject)).map(|d| &d.timeline)
     }
 
     /// Why there are none, when `details.get` refused.
