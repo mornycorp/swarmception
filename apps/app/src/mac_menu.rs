@@ -66,7 +66,13 @@ const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
         MenuAction::Fetch => Some((Modifiers::META.union(Modifiers::SHIFT), Code::KeyR)),
         MenuAction::Quit => Some((Modifiers::META, Code::KeyQ)),
         MenuAction::Live => Some((Modifiers::META, Code::KeyL)),
-        MenuAction::Timeline | MenuAction::Factory | MenuAction::Details | MenuAction::Grouping(_) | MenuAction::Collapse | MenuAction::Fit => None,
+        MenuAction::Timeline
+        | MenuAction::Factory
+        | MenuAction::Details
+        | MenuAction::Gates
+        | MenuAction::Grouping(_)
+        | MenuAction::Collapse
+        | MenuAction::Fit => None,
     }
 }
 

@@ -1,7 +1,7 @@
 //! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View, as data in
 //! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the
-//! timeline, under it the factory, and beside them the details of what is selected) and the
-//! status bar, over the engine's commands.
+//! timeline, under it the gates and the factory, and beside them the details of what is
+//! selected) and the status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
 //! timeline widget's (`view.fit`; the zoom buttons are the widget's toolbar's since #35, which
 //! shows only [`TIMELINE_TOOLBAR`]); what the shell keeps of its own, the panes shown, the
@@ -19,6 +19,7 @@ mod factory_paint;
 mod factory_stats;
 mod factory_tip;
 pub mod fonts;
+mod gates;
 pub mod icons;
 pub mod menu;
 pub mod saved;
@@ -49,12 +50,14 @@ pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
+pub use gates::{GatesDrawn, GatesPane, RunDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::{Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
+pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
-/// details pane and what it is about; 4: the panes' sizes (#53).
-pub const UI_STATE_VERSION: u32 = 4;
+/// details pane and what it is about; 4: the panes' sizes (#53); 5: the gates pane and its
+/// height (#61).
+pub const UI_STATE_VERSION: u32 = 5;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -65,21 +68,25 @@ pub struct Panes {
     pub factory: bool,
     /// The details of what is selected, beside the others (#47).
     pub details: bool,
+    /// How the gate behaved over the window, under the timeline (#61).
+    pub gates: bool,
 }
 
 impl Default for Panes {
     fn default() -> Self {
-        Self { timeline: true, factory: true, details: true }
+        Self { timeline: true, factory: true, details: true, gates: true }
     }
 }
 
 /// The sizes the panes were last drawn at, in whole points, their margins included (#53): the
-/// details pane's width and the factory's height under the timeline. None: the pane's default.
+/// details pane's width, the factory's height under the timeline and the gates' (#61). None: the
+/// pane's default.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct PaneSizes {
     pub details: Option<u32>,
     pub factory: Option<u32>,
+    pub gates: Option<u32>,
 }
 
 /// What the shell keeps between frames: plain data, kept across a restart ([`saved`]).
@@ -113,6 +120,7 @@ pub struct Shell {
     timeline: TimelinePane,
     factory: FactoryPane,
     details: DetailsPane,
+    gates: GatesPane,
     /// What the details followed last: the timeline's chosen bar, the factory's traced ticket.
     followed: (Option<(String, usize)>, Option<u64>),
     /// The details' subject whose bars were last brought into view on the timeline (#55).
@@ -158,6 +166,7 @@ impl Shell {
             timeline: TimelinePane::default(),
             factory: FactoryPane::default(),
             details: DetailsPane::default(),
+            gates: GatesPane::default(),
             followed: (None, None),
             revealed: None,
             playhead_to: None,
@@ -305,6 +314,12 @@ impl Shell {
         &self.details
     }
 
+    /// The gates pane, to read what it shows (#61).
+    #[must_use]
+    pub const fn gates(&self) -> &GatesPane {
+        &self.gates
+    }
+
     /// Shows the details of `subject`, as a selection does; ← goes back to what was before.
     pub fn select(&mut self, subject: swarmception_domain::details::Subject) {
         self.details.select(&mut self.ui.details, subject);
@@ -391,6 +406,7 @@ impl Shell {
             timeline: self.ui.panes.timeline,
             factory: self.ui.panes.factory,
             details: self.ui.panes.details,
+            gates: self.ui.panes.gates,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
             live: self.live.on,
@@ -433,6 +449,7 @@ impl Shell {
             MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
             MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
             MenuAction::Details => self.ui.panes.details = !self.ui.panes.details,
+            MenuAction::Gates => self.ui.panes.gates = !self.ui.panes.gates,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
             MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
@@ -515,23 +532,11 @@ impl Shell {
                 .show(ui, |ui| self.details.ui(ui, &self.ui.details));
             self.ui.sizes.details = Some(whole_points(shown.response.rect.width()));
         }
-        egui::CentralPanel::default().show(ui, |ui| match (self.ui.panes.timeline, self.ui.panes.factory) {
-            (true, true) => {
-                let height = ui.available_height();
-                let shown = egui::Panel::bottom("factory")
-                    .resizable(true)
-                    .default_size(self.ui.sizes.factory.map_or(height * 0.58, points_f32))
-                    .size_range(140.0..=(height - 100.0).max(140.0))
-                    .show(ui, |ui| self.factory.ui(ui, &mut self.ui.factory, &self.status));
-                self.ui.sizes.factory = Some(whole_points(shown.response.rect.height()));
-                self.timeline.ui(ui, &self.status);
-            }
-            (true, false) => self.timeline.ui(ui, &self.status),
-            (false, true) => self.factory.ui(ui, &mut self.ui.factory, &self.status),
-            (false, false) => {
-                ui.centered_and_justified(|ui| ui.weak("Neither the timeline nor the factory is shown: View ▸ Timeline or View ▸ Factory shows one."));
-            }
-        });
+        self.sync_gates();
+        egui::CentralPanel::default().show(ui, |ui| self.central(ui));
+        if !self.ui.panes.gates {
+            self.gates.leave();
+        }
         if let Some(hour) = self.factory.strip().drawn().chosen {
             self.show_hour(hour);
             ui.ctx().request_repaint();
@@ -563,6 +568,9 @@ impl Shell {
         }
         if let Some((sub, at)) = self.factory.drawn().run_clicked.clone().filter(|_| self.ui.panes.factory) {
             self.select(Subject::Gate { sub, at: Some(at) });
+        }
+        if let Some(subject) = self.gates.drawn().chosen.clone().filter(|_| self.ui.panes.gates) {
+            self.select(subject);
         }
         if self.ui.panes.details {
             let drawn = self.details.drawn().clone();
@@ -605,14 +613,71 @@ impl Shell {
     }
 
     /// The timeline's highlight, apart from the person's selection: the ticket hovered in the
-    /// factory while it is (#48), else what the details pane shows (#55, `details.get`'s
-    /// `timeline`); the pane tells the widget only when it changes.
+    /// factory while it is (#48), else the tickets of the gate run hovered in the gates pane (#61),
+    /// else what the details pane shows (#55, `details.get`'s `timeline`); the pane tells the
+    /// widget only when it changes.
     fn light_timeline(&mut self, ctx: &egui::Context) {
-        let hovered = if self.ui.panes.factory { self.factory.hovered() } else { None };
+        let factory = if self.ui.panes.factory { self.factory.hovered() } else { None };
+        let gates = if self.ui.panes.gates { self.gates.hovered().clone() } else { Hover::Nothing };
+        let hovered = factory.map_or(gates, Hover::Ticket);
         let details = self.details.on_timeline(&self.ui.details).filter(|_| self.ui.panes.details).map(|on| on.bars.as_slice()).unwrap_or_default();
-        if self.timeline.light(&mut self.engine, hovered, details) {
+        if self.timeline.light_hover(&mut self.engine, hovered, details) {
             ctx.request_repaint();
         }
+    }
+
+    /// Asks `gates.list` for the timeline's window when the gates pane shows (the whole run when
+    /// the timeline doesn't), when the window or the data moved on (#61).
+    fn sync_gates(&mut self) {
+        if !self.ui.panes.gates {
+            return;
+        }
+        let window = if self.ui.panes.timeline { self.timeline.looking(&mut self.engine).and_then(|l| l.window) } else { None };
+        self.gates.sync(&mut self.engine, window);
+    }
+
+    /// The central area: the timeline, under it the gates (#61) and the factory, each as shown.
+    fn central(&mut self, ui: &mut egui::Ui) {
+        let panes = self.ui.panes;
+        if !panes.timeline && !panes.factory && !panes.gates {
+            ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline, Factory or Gates shows one."));
+            return;
+        }
+        let height = ui.available_height();
+        if panes.factory && (panes.timeline || panes.gates) {
+            let shown = egui::Panel::bottom("factory")
+                .resizable(true)
+                .default_size(self.ui.sizes.factory.map_or(height * 0.5, points_f32))
+                .size_range(140.0..=(height - 100.0).max(140.0))
+                .show(ui, |ui| self.factory.ui(ui, &mut self.ui.factory, &self.status));
+            self.ui.sizes.factory = Some(whole_points(shown.response.rect.height()));
+        } else if panes.factory {
+            self.factory.ui(ui, &mut self.ui.factory, &self.status);
+            return;
+        }
+        // Under the timeline once it has data: egui keeps a panel's first size, and a window's
+        // first frames can be tiny.
+        if panes.gates && panes.timeline && self.timeline.has_data() {
+            let height = ui.available_height();
+            let shown = egui::Panel::bottom("gates")
+                .resizable(true)
+                .default_size(self.ui.sizes.gates.map_or(170.0, points_f32))
+                .size_range(90.0..=(height - 80.0).max(90.0))
+                .show(ui, |ui| self.gates_ui(ui));
+            self.ui.sizes.gates = Some(whole_points(shown.response.rect.height()));
+            self.timeline.ui(ui, &self.status);
+        } else if panes.gates && !panes.timeline {
+            self.gates_ui(ui);
+        } else {
+            self.timeline.ui(ui, &self.status);
+        }
+    }
+
+    /// The gates pane, its runs under the timeline's window when the timeline shows.
+    fn gates_ui(&mut self, ui: &mut egui::Ui) {
+        let axis = if self.ui.panes.timeline { self.timeline.axis() } else { None };
+        let t = self.factory.scene().map(|s| s.t).filter(|_| self.ui.panes.factory);
+        self.gates.ui(ui, axis, self.ui.details.subject.as_ref(), t);
     }
 
     /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or
@@ -899,7 +964,7 @@ mod tests {
 
     #[test]
     fn ui_state_reads_back_and_defaults() {
-        let state = UiState { panes: Panes { timeline: false, factory: true, details: false }, ..UiState::default() };
+        let state = UiState { panes: Panes { timeline: false, factory: true, details: false, gates: false }, ..UiState::default() };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<UiState>(&text).unwrap(), state);
         assert_eq!(serde_json::from_str::<UiState>("{}").unwrap(), UiState::default());
@@ -910,6 +975,12 @@ mod tests {
         assert!(old.panes.details && old.details.subject.is_none(), "the details pane, with nothing selected");
         let selected: UiState = serde_json::from_str(r#"{"version":3,"details":{"subject":{"ticket":{"issue":47}}}}"#).unwrap();
         assert_eq!(selected.details.subject, Some(Subject::Ticket { issue: 47 }));
+        // Version 4, before the gates pane (#61): shown, at its default height; its choice and height kept.
+        let four: UiState = serde_json::from_str(r#"{"version":4,"panes":{"details":false},"sizes":{"factory":300}}"#).unwrap();
+        assert_eq!((four.panes.gates, four.sizes.gates, four.sizes.factory), (true, None, Some(300)));
+        let hidden =
+            UiState { panes: Panes { gates: false, ..Panes::default() }, sizes: PaneSizes { gates: Some(180), ..PaneSizes::default() }, ..UiState::default() };
+        assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&hidden).unwrap()).unwrap(), hidden);
     }
 
     #[test]
@@ -925,6 +996,7 @@ mod tests {
                 timeline: true,
                 factory: true,
                 details: true,
+                gates: true,
                 grouping: Grouping::Flat,
                 collapse: false,
                 live: false

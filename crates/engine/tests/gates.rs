@@ -1,0 +1,217 @@
+//! `gates.list` (#61) as a front end runs it: by id with JSON params, the reply read back as its
+//! result type, over a real repository whose tracking branch holds a gate run that sends a ticket
+//! back, its rerun that merges it, and the worker's `ready` checks; over this clone's own
+//! tracking branch, when it has one; and over the swarms `SWARMCEPTION_GATES_REPOS` names
+//! (paths, `:`-separated), printing each one's figures.
+
+use std::path::{Path, PathBuf};
+
+use swarmception_domain::Stats;
+use swarmception_domain::details::{Details, Subject};
+use swarmception_domain::gates::{GateResult, GatesList, Lane};
+use swarmception_engine::Session;
+use swarmception_engine::repo_cmds::StatusResult;
+use swarmception_source::Github;
+
+fn git_at(dir: &Path, at: &str, args: &[&str]) {
+    let out = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+        .args(args)
+        .env("GIT_AUTHOR_DATE", at)
+        .env("GIT_COMMITTER_DATE", at)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// #7 (PR #8): worked on with a failed `ready` check and its rerun, submitted, sent back by
+/// gate-8 on a conflict, submitted again and merged by gate-8b; main merges PR #8.
+fn repo() -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("swarmception-gates-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let files = [
+        (
+            "mini-aa1111",
+            vec![
+                r#"{"event":"session.start","machine":"mini","name":"worker-1","role":"worker","t":"2026-10-31T03:00:00Z"}"#,
+                r#"{"event":"claim","issue":7,"mr":8,"t":"2026-10-31T03:01:00Z"}"#,
+                r#"{"event":"work","issue":7,"t":"2026-10-31T03:02:00Z"}"#,
+                r#"{"event":"sub.start","name":"ready","sub":"ready-abc","t":"2026-10-31T03:15:00Z"}"#,
+                r#"{"event":"sub.stop","note":"rc=1; cause=clippy","sub":"ready-abc","t":"2026-10-31T03:18:00Z"}"#,
+                r#"{"event":"sub.start","name":"ready","sub":"ready-abc-rerun","t":"2026-10-31T03:20:00Z"}"#,
+                r#"{"event":"sub.stop","note":"rc=0","sub":"ready-abc-rerun","t":"2026-10-31T03:25:00Z"}"#,
+                r#"{"event":"submit","issue":7,"mr":8,"t":"2026-10-31T03:26:00Z"}"#,
+                r#"{"event":"work","issue":7,"t":"2026-10-31T03:50:00Z"}"#,
+                r#"{"event":"submit","issue":7,"mr":8,"t":"2026-10-31T04:00:00Z"}"#,
+            ],
+        ),
+        (
+            "mini-cc3333",
+            vec![
+                r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T03:00:00Z"}"#,
+                r#"{"event":"sub.start","name":"gate","note":"local gate: #8 (#7); kind=smoke","sub":"gate-8","t":"2026-10-31T03:30:00Z"}"#,
+                r#"{"event":"sendback","issue":7,"mr":8,"note":"cause=conflict","sub":"gate-8","t":"2026-10-31T03:40:00Z"}"#,
+                r#"{"event":"sub.stop","note":"rc=1; cause=conflict","sub":"gate-8","t":"2026-10-31T03:41:00Z"}"#,
+                r#"{"event":"sub.start","name":"gate","note":"local gate: #8 (#7); kind=smoke","sub":"gate-8b","t":"2026-10-31T04:05:00Z"}"#,
+                r#"{"event":"merge","issue":7,"mr":8,"sub":"gate-8b","t":"2026-10-31T04:10:00Z"}"#,
+                r#"{"event":"sub.stop","note":"rc=0; merged #8","sub":"gate-8b","t":"2026-10-31T04:11:00Z"}"#,
+            ],
+        ),
+    ];
+    for (instance, lines) in files {
+        std::fs::create_dir_all(dir.join("tracking").join(instance)).unwrap();
+        std::fs::write(dir.join("tracking").join(instance).join("work.jsonl"), lines.join("\n") + "\n").unwrap();
+    }
+    let early = "2026-10-31T02:00:00Z";
+    git_at(&dir, early, &["init", "-q", "-b", "tracking"]);
+    git_at(&dir, early, &["add", "."]);
+    git_at(&dir, early, &["commit", "-q", "-m", "events"]);
+    git_at(&dir, early, &["checkout", "-q", "--orphan", "main"]);
+    git_at(&dir, early, &["rm", "-rqf", "."]);
+    git_at(&dir, early, &["commit", "-q", "--allow-empty", "-m", "start"]);
+    git_at(&dir, early, &["checkout", "-q", "-b", "pr-8"]);
+    let merged = "2026-10-31T04:10:00Z";
+    git_at(&dir, merged, &["commit", "-q", "--allow-empty", "-m", "work"]);
+    git_at(&dir, early, &["checkout", "-q", "main"]);
+    git_at(&dir, merged, &["merge", "-q", "--no-ff", "-m", "Merge pull request #8 from mornycorp/pr-8", "pr-8"]);
+    git_at(&dir, early, &["checkout", "-q", "tracking"]);
+    dir
+}
+
+fn call<T: serde::de::DeserializeOwned>(session: &mut Session, id: &str, params: &str) -> T {
+    let reply = session.execute(id, params).unwrap_or_else(|e| panic!("{id} {params}: {e}"));
+    serde_json::from_str(&reply).unwrap_or_else(|e| panic!("{id}'s reply {reply}: {e}"))
+}
+
+fn open(session: &mut Session, dir: &Path) -> StatusResult {
+    session.set_github(Github { gh: PathBuf::from("/no/such/gh"), cache_dir: None });
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    call(session, "repo.open", &format!("{{\"path\":{path}}}"))
+}
+
+#[test]
+fn every_run_its_result_and_the_figures() {
+    let dir = repo();
+    let mut session = Session::new();
+    assert_eq!(session.execute("gates.list", "").unwrap_err().code(), "disabled", "no repository yet");
+    open(&mut session, &dir);
+    let list: GatesList = call(&mut session, "gates.list", "");
+    type Row<'a> = (&'a str, Lane, GateResult, Option<&'a str>, Option<&'a str>);
+    let runs: Vec<Row<'_>> = list.runs.iter().map(|r| (r.sub.as_str(), r.lane, r.result, r.cause.as_deref(), r.rerun_of.as_deref())).collect();
+    assert_eq!(
+        runs,
+        [
+            ("ready-abc", Lane::Ready, GateResult::Failed, Some("clippy"), None),
+            ("ready-abc-rerun", Lane::Ready, GateResult::Passed, None, Some("ready-abc")),
+            ("gate-8", Lane::Gate, GateResult::Failed, Some("conflict"), None),
+            ("gate-8b", Lane::Gate, GateResult::Passed, None, Some("gate-8")),
+        ]
+    );
+    let merged = &list.runs[3];
+    assert_eq!((merged.tickets.as_slice(), merged.prs.as_slice(), merged.duration_seconds), (&[7][..], &[8][..], 6 * 60));
+    let commit = merged.merges.first().and_then(|m| m.commit.clone()).expect("main's merge commit of PR #8");
+    assert_eq!(list.runs[2].sendbacks, [7]);
+    assert_eq!((list.gate.runs, list.gate.pass_rate, list.gate.median_seconds, list.gate.busy_seconds), (2, Some(0.5), Some((11 * 60 + 6 * 60) / 2), 17 * 60));
+    assert_eq!(list.gate.causes.iter().map(|c| (c.cause.as_str(), c.count)).collect::<Vec<_>>(), [("conflict", 1)]);
+    assert_eq!((list.ready.runs, list.ready.pass_rate, list.ready.reruns), (2, Some(0.5), 1));
+    assert_eq!((list.longest_queue.count, list.longest_queue.tickets.as_slice()), (1, &[7][..]));
+    // The pass rates are `stats.get`'s.
+    let stats: Stats = call(&mut session, "stats.get", "");
+    assert_eq!((list.gate.pass_rate, list.ready.pass_rate), (stats.gates.pass_rate, stats.ready.pass_rate));
+    // A run's subject is what the details pane tells: the gate run, with its merge's commit.
+    let details: Details = call(&mut session, "details.get", r#"{"gate":"gate-8b"}"#);
+    assert_eq!(details.subject, merged.subject);
+    assert!(details.entries.iter().any(|e| e.goes_to == Some(Subject::Merge { commit: commit.clone() })), "{commit}");
+    assert_eq!(list.runs[0].subject, Subject::Ticket { issue: 7 }, "a ready check: its ticket");
+
+    // A window: the runs it overlaps, the figures of those it started.
+    let window: GatesList = call(&mut session, "gates.list", r#"{"start":"2026-10-31T03:35:00Z","end":"2026-10-31T04:06:00Z"}"#);
+    let subs: Vec<&str> = window.runs.iter().map(|r| r.sub.as_str()).collect();
+    assert_eq!(subs, ["gate-8", "gate-8b"]);
+    assert_eq!((window.gate.runs, window.gate.busy_seconds, window.span_seconds), (1, 6 * 60 + 60, 31 * 60));
+    for bad in [r#"{"start":"teatime"}"#, r#"{"start":"2026-10-31T04:00:00Z","end":"2026-10-31T03:00:00Z"}"#] {
+        assert_eq!(session.execute("gates.list", bad).unwrap_err().code(), "invalid", "{bad}");
+    }
+    assert_eq!(session.execute("gates.list", r#"{"nope":1}"#).unwrap_err().code(), "bad_params");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A swarm's gate as `gates.list` reads it: consistent with itself and with `stats.get`.
+fn check_swarm(dir: &Path) -> (GatesList, Stats) {
+    let mut session = Session::new();
+    let status = open(&mut session, dir);
+    assert_eq!(status.error, None, "{}", dir.display());
+    let list: GatesList = call(&mut session, "gates.list", "");
+    let stats: Stats = call(&mut session, "stats.get", "");
+    for (figures, lane) in [(&list.gate, Lane::Gate), (&list.ready, Lane::Ready)] {
+        assert_eq!(figures.runs, figures.passed + figures.failed + figures.no_result + figures.running, "{lane:?}");
+        assert_eq!(figures.causes.iter().map(|c| c.count).sum::<usize>(), figures.failed, "{lane:?}");
+        assert_eq!(figures.runs, list.runs.iter().filter(|r| r.lane == lane).count(), "the whole run: every run started in it");
+        assert!(figures.busy_seconds <= list.span_seconds);
+        let hours: usize = list.hours.iter().map(|h| if lane == Lane::Gate { h.gate.runs } else { h.ready.runs }).sum();
+        assert_eq!(hours, figures.runs, "{lane:?}: each run in one hour");
+    }
+    let inferred = list.runs.iter().filter(|r| r.inferred).count();
+    assert_eq!((list.gate.runs - inferred, list.ready.runs), (stats.gates.runs, stats.ready.runs), "stats.get counts no inferred runs");
+    assert_eq!(list.ready.pass_rate, stats.ready.pass_rate);
+    if inferred == 0 {
+        assert_eq!(list.gate.pass_rate, stats.gates.pass_rate);
+    }
+    for run in &list.runs {
+        assert!(run.duration_seconds >= 0 && run.end.is_none_or(|end| end >= run.start), "{}", run.sub);
+        assert!(!run.tooltip.is_empty());
+    }
+    (list, stats)
+}
+
+fn print_figures(name: &str, list: &GatesList) {
+    let pct = |v: Option<f64>| v.map_or_else(|| "–".to_owned(), |v| format!("{:.1}%", v * 100.0));
+    for (lane, f) in [("gate", &list.gate), ("ready", &list.ready)] {
+        let causes: Vec<String> = f.causes.iter().map(|c| format!("{} {}", c.cause, c.count)).collect();
+        eprintln!(
+            "{name} {lane}: {} runs, {} passed, {} failed, {} no result, {} running · pass {} · median {:?} s · busy {} · reruns {} · causes: {}",
+            f.runs,
+            f.passed,
+            f.failed,
+            f.no_result,
+            f.running,
+            pct(f.pass_rate),
+            f.median_seconds,
+            pct(f.busy),
+            f.reruns,
+            causes.join(", ")
+        );
+    }
+    eprintln!("{name} longest queue: {} at {:?} {:?}", list.longest_queue.count, list.longest_queue.at.map(|t| t.to_string()), list.longest_queue.tickets);
+}
+
+/// This clone's own swarm, when it has a tracking branch.
+#[test]
+fn this_clones_own_gate_reads() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let has = std::process::Command::new("git").current_dir(&root).args(["rev-parse", "--verify", "-q", "refs/remotes/origin/tracking"]).output();
+    if !has.is_ok_and(|o| o.status.success()) {
+        eprintln!("no origin/tracking here: nothing to read");
+        return;
+    }
+    let (list, _) = check_swarm(&root);
+    print_figures("swarmception", &list);
+}
+
+/// The swarms `SWARMCEPTION_GATES_REPOS` names (mc-engine, swarm-timeline: their gates' causes
+/// and pass rates), when it is set.
+#[test]
+fn named_swarms_gates_read() {
+    let Ok(repos) = std::env::var("SWARMCEPTION_GATES_REPOS") else {
+        eprintln!("SWARMCEPTION_GATES_REPOS unset: nothing to read");
+        return;
+    };
+    for repo in repos.split(':').filter(|r| !r.is_empty()) {
+        let (list, _) = check_swarm(Path::new(repo));
+        assert!(!list.runs.is_empty(), "{repo}: a swarm with a gate");
+        print_figures(repo, &list);
+    }
+}

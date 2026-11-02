@@ -201,7 +201,7 @@ pub fn stats(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge], wind
 }
 
 /// A worker's own gate before it submits.
-fn is_ready(sub: &Sub) -> bool {
+pub(crate) fn is_ready(sub: &Sub) -> bool {
     !sub.is_gate() && (sub.sub.starts_with("ready") || sub.name.as_deref() == Some("ready"))
 }
 
@@ -321,16 +321,16 @@ fn per_hour(count: usize, seconds: i64) -> Option<f64> {
     (seconds > 0).then(|| count as f64 * HOUR as f64 / seconds as f64)
 }
 
-fn ratio(a: usize, b: usize) -> Option<f64> {
+pub(crate) fn ratio(a: usize, b: usize) -> Option<f64> {
     (b > 0).then(|| a as f64 / b as f64)
 }
 
-fn fraction(a: i64, b: i64) -> Option<f64> {
+pub(crate) fn fraction(a: i64, b: i64) -> Option<f64> {
     (b > 0).then(|| a as f64 / b as f64)
 }
 
 /// The median, the mean of the middle two of an even count; none of nothing.
-fn median(mut values: Vec<i64>) -> Option<i64> {
+pub(crate) fn median(mut values: Vec<i64>) -> Option<i64> {
     values.sort_unstable();
     let mid = values.len() / 2;
     match (values.len() % 2, values.get(mid), mid.checked_sub(1).and_then(|m| values.get(m))) {
@@ -342,11 +342,11 @@ fn median(mut values: Vec<i64>) -> Option<i64> {
 
 /// A set of seconds: sorted, disjoint, non-empty half-open spans `[a, b)`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-struct Intervals(Vec<(i64, i64)>);
+pub(crate) struct Intervals(pub(crate) Vec<(i64, i64)>);
 
 impl Intervals {
     /// The union of `spans`; empty and backward ones are nothing.
-    fn of(spans: impl IntoIterator<Item = (i64, i64)>) -> Self {
+    pub(crate) fn of(spans: impl IntoIterator<Item = (i64, i64)>) -> Self {
         let mut spans: Vec<(i64, i64)> = spans.into_iter().filter(|(a, b)| a < b).collect();
         spans.sort_unstable();
         let mut merged: Vec<(i64, i64)> = Vec::with_capacity(spans.len());
@@ -359,21 +359,21 @@ impl Intervals {
         Self(merged)
     }
 
-    fn span(a: i64, b: i64) -> Self {
+    pub(crate) fn span(a: i64, b: i64) -> Self {
         Self::of([(a, b)])
     }
 
-    fn measure(&self) -> i64 {
+    pub(crate) fn measure(&self) -> i64 {
         self.0.iter().map(|(a, b)| b.saturating_sub(*a)).fold(0, i64::saturating_add)
     }
 
     /// The measure of the part within `[a, b)`.
-    fn measure_in(&self, a: i64, b: i64) -> i64 {
+    pub(crate) fn measure_in(&self, a: i64, b: i64) -> i64 {
         let from = self.0.partition_point(|&(_, end)| end <= a);
         self.0.get(from..).unwrap_or_default().iter().take_while(|&&(s, _)| s < b).map(|&(s, e)| e.min(b).saturating_sub(s.max(a))).fold(0, i64::saturating_add)
     }
 
-    fn intersect(&self, other: &Self) -> Self {
+    pub(crate) fn intersect(&self, other: &Self) -> Self {
         let (mut i, mut j, mut out) = (0, 0, Vec::new());
         while let (Some(&(a, b)), Some(&(c, d))) = (self.0.get(i), other.0.get(j)) {
             let (lo, hi) = (a.max(c), b.min(d));
@@ -389,7 +389,7 @@ impl Intervals {
         Self(out)
     }
 
-    fn subtract(&self, other: &Self) -> Self {
+    pub(crate) fn subtract(&self, other: &Self) -> Self {
         let mut out = Vec::new();
         let mut j = 0;
         for &(a, b) in &self.0 {

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -96,7 +96,15 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`OnTimeline`: its bars as `rows::BarRef`s and the times they span): a ticket's bars; a gate
   run's merges onto main and its tickets' bars; a session's, the stretches its events began in
   its time, the tickets it merged and their merges onto main; a merge onto main's bar and its
-  ticket's.
+  ticket's. `gates` (#61) is how the gate behaved over a window (`GatesList`): every run, the
+  coordinator's gates (`factory::gate_runs`, inferred ones too) and the workers' `ready` checks
+  in two `Lane`s, each with its start, end, duration, kind, `GateResult` (passed, failed with its
+  cause, no result, running; as `stats.get` judges them), the PRs and tickets it carried, its
+  merges (with their commits onto main) and send backs, the run it reran (`gate-43b` of
+  `gate-43`, `-rerun`, the same id again), its colour, its tooltip lines and its details'
+  `Subject`; each lane's `Figures` over the runs that started in the window (pass rate, median
+  and longest run, busy time and share, reruns, failures by cause), per-hour figures, and the
+  longest queue at the dock (the most tickets waiting for merge at once).
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -121,6 +129,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
   from a time: its time, its moments and its name),
   `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR),
+  `gates.list` (#61: `{start?, end?}` as `stats.get`; `gates::GatesList`),
   `details.get` (#47: exactly one of `ticket`, `gate`, `session`, `merge`, or a bar's `track` and
   `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs and,
   in `timeline`, its bars on the rows shown now (#55); a subject the swarm never had is
@@ -205,12 +214,25 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `timeline`) are the widget's highlight, never the selection, and a new subject's bars are
   brought into view when none is (`TimelinePane::reveal`: the window moves, by `view.show`,
   centred on them at its width when they fit, else just holding them; the rows scroll to the
-  first of theirs). The highlight has one owner, `TimelinePane::light`: a factory hover's
-  ticket while it lasts, else the details' bars, so a hover's leave gives them back
-  (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). The factory's floor keeps within its pane, its header wrapping, so a narrower
+  first of theirs). The highlight has one owner, `TimelinePane::light` (`light_hover`): a factory
+  hover's ticket while it lasts, else a gates pane hover's run's tickets (`Hover`), else the
+  details' bars, so a hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s
+  `timeline.lit`).
+  The gates pane (#61, View ▸ Gates, on by default) is a band between the timeline and the
+  factory drawing what `gates.list` returns for the timeline's window (asked again only when
+  the window or the data moves): the headline figures as pills along its top (the gate's pass
+  rate, median run, busy share, reruns, the longest queue, the `ready` checks' pass rate and
+  median), then the runs along time under the timeline's rows (`TimelinePane::axis`: the window's
+  ends across the screen, right of the label column), a lane of the coordinator's gate runs and
+  one of the `ready` checks, each run a bar as long as it took in its result's colour (overlaps
+  side by side), the gate's runs per hour stacked by result under them, and in the left column
+  the lanes' names and the failures by cause, gate and ready. Hovering a run gives its tooltip
+  and lights its tickets' bars; clicking it makes it the details' subject (a `ready` check's:
+  its ticket). Without the timeline it shows the whole run on its own axis; before the timeline
+  has data it waits, so its height is the one asked for (`PaneSizes::gates`). The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
-  moments it steps by, what the details are of; version 4) is serde data. `saved` (#53) keeps the
+  moments it steps by, what the details are of; version 5: the gates pane, #61) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -384,6 +406,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | A gates pane (#61): the domain's `gates`, `gates.list`, the Gates pane under the timeline (View ▸ Gates, `--panes …,gates`, `--hover-gate`), `TimelinePane::light_hover` and `axis`, `UiState` version 5, `ui.inspect` version 3 with `gates` |
 | 2026-11-02 | minor | Automation reaches the window (#60): `mcp --control` (tools through a running window, over `client::Remote`), `send` and its scripts (`script`), `ui.screenshot` and `--screenshot` as PNG (`swarmception_ui::shot`), `ui.commands` listing the widget's commands, `ui.loaded`; an MCP tool's error is its `ProtocolError`; `scripts/screenshots.{jsonl,sh}` |
 | 2026-11-02 | minor | The state survives a restart (#53): `saved` (`AppState` version 1, `StateStore`, `Keeper`), `UiState` version 4 with the panes' sizes, the timeline pane's `TimelineView`, `ui.inspect` version 2 with `saved`; `--state-dir`, `--fresh` |
 | 2026-11-02 | minor | Watching a live swarm (#54): `live.get` / `live.set` / `live.check`, the source's one-trip `fetch` and `heads`, a reload that keeps or follows the view and carries the selection (`timeline.carryBars`), Live in the toolbar, View menu and status bar; `ui.inspect`'s `timeline.loadMs` |
