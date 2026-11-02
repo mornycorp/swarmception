@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # Owner directions
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-02 · **Change:** minor (the Collapse decision notes G6's `window` choice) · **Target:** M1
 
 The owner's standing directions and decisions for Swarmception, dated, newest first in each
 section. Every agent reads this with `AGENTS.md`. The owner writes it, or an agent records a
@@ -48,7 +48,7 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 |---|---|---|---|
 | 2026-10-31 | The swarm runs on swarm-core's protocol and commands | one process shared with the other swarms | the first commit |
 | 2026-10-31 | The timeline is swarm-timeline's widget, pinned by revision as a git dependency | one timeline for every swarm tool | the first commit |
-| 2026-10-31 | Collapse leaves out rows with no events at all, not rows empty in the window | the rows stay put while panning; a window-relative collapse is G6 | the first commit |
+| 2026-10-31 | Collapse leaves out rows with no events at all, not rows empty in the window | the rows stay put while panning; a window-relative collapse is G6, built as a third choice, `window` (#74), the default unchanged | the first commit |
 
 ## Superseded
 
@@ -58,5 +58,6 @@ None yet.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The Collapse decision notes that a window-relative choice now exists (#74); the default stays |
 | 2026-10-31 | minor | CI once a day on `main` (owner) |
 | 2026-10-31 | major | First version, from swarm-core's template |

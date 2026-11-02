@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 7: workers compared, the panes share the window, opening a repository) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 8: collapse to the window, the loose ends of M2 and M3) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,8 +19,8 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 2 | [G19 Loose ends from M2 and M3](#g19-loose-ends-from-m2-and-m3) | open | | 2–4 h |
+| — | [G6 Collapse to the window](#g6-collapse-to-the-window) | done | #74 | |
+| — | [G19 Loose ends from M2 and M3](#g19-loose-ends-from-m2-and-m3) | done | #75–#77, swarm-core#12 | |
 | — | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | done | #18, #20, #22, #31–#33, #42, #61, #67 | |
 | — | [G18 The panes share the window](#g18-the-panes-share-the-window) | done | #68 | |
 | — | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | done | #68 | |
@@ -151,12 +151,31 @@ marked **Human:** with what is needed.
 
 ## G19 Loose ends from M2 and M3
 
-- **Missing:** small things the batches left: the workers' `ready` checks fail with no cause
-  (their notes say only `rc=1`: a swarm-core change to log the failing step); the Gates band
-  draws the ready lane's hours only in a tooltip; `gates.list` counts inferred gate runs that
-  `stats.get` doesn't; `ui.set` can't set the Workers pane's sort or window; MCP returns a
-  screenshot's path, not image content; off macOS, File ▸ Open… asks for a typed path.
-- **Estimate:** 2–4 agent-hours, part in swarm-core.
+- **Done:**
+  - **The Gates band's hours** (#75, PR #78): both lanes drawn per hour under the timeline, gate
+    runs up from a baseline and ready checks down, each on its own scale; `ui.inspect`'s
+    `gates.hours`.
+  - **One definition of a gate run** (#75, PR #78): `gates::runs`/`gates::figures` behind both
+    `gates.list` and `stats.get`; inferred runs (a merge or send-back naming a gate that logged
+    neither start nor stop) counted and said (`inferred`); `stats.get`'s `noResult` no longer
+    holds runs still going (`running`). Both commands gave the same figures before and after on
+    mc-engine, swarm-timeline and this repo (2026-11-02): they now can't disagree.
+  - **A failed `ready` check says why** (#77, PR #81; swarm-core#12, pinned at 86ca3f0): its
+    `sub.stop` is `rc=<n>; cause=<cause>; step=<the failing ci step>` (`rc=101; cause=build;
+    step=clippy`); the Gates band's causes, `stats.get`, the tooltip and Details read it as
+    `build/clippy`; older `rc=1` stops still read `unstated`.
+  - **`ui.set` reaches the Workers window** (#76, PR #80): open, sort, whole run or window, and
+    its place (saved; a drag kept on release); `ui.inspect`'s `workers.rect`.
+  - **MCP returns the image** (#76, PR #80): `ui_screenshot` through `mcp --control` answers
+    with the PNG as image content, up to 3 MiB (a typed `ImageTooLarge` past it).
+  - **Open… off macOS** (#76, PR #80): zenity or kdialog, or PowerShell's folder browser, as a
+    child process with a deadline, falling back to a typed path; not run on those platforms.
+- **Left:** the gate's own failure notes carry no `step=` (only `ready`'s do); the Workers
+  window's size can't be set; the off-macOS pickers are unverified; the ready lane's
+  per-column counts show only from a 64 px chart (the band's default is smaller).
+- **Evidence:** `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`,
+  `crates/ui/tests/workers_pane.rs`, `apps/app/src/picker.rs`, `apps/cli/tests/automation.rs`;
+  screenshots checked 2026-11-02.
 
 ## G1 The ruler reads clock time
 
@@ -232,9 +251,19 @@ marked **Human:** with what is needed.
 
 ## G6 Collapse to the window
 
-- **Missing:** Collapse leaves out rows with no events at all (owner-directions.md); a mode
-  that leaves out rows with nothing in the visible window would follow a pan.
-- **Estimate:** 2–4 agent-hours.
+- **Done** (#74, PR #79): Collapse is a typed choice, `off` / `empty` / `window` (the old
+  `true`/`false` read as `empty`/`off`; saved rows spec version 2). `window` leaves out the rows
+  with no bar in the visible window, and a worker's group with none folds away whole;
+  `rows.window {start, end, keep}` says which. Set by `rows.set`, `ui.set {collapse}`, View ▸
+  Collapse to Window, a toolbar toggle and `--collapse`. The pane hides rows through the widget's
+  own per-row flag, so nothing reloads: the selection's rows are kept, selecting a hidden ticket
+  shows it, a row the person hid stays hidden, and the window's hiding isn't saved. It follows a
+  pan once the window has been still 250 ms with no button held (no rows moving mid-drag).
+- **Measured:** 5–137 µs a collapse on mc-engine by worker (`ui.inspect`'s
+  `timeline.collapseUs`, 2026-11-02).
+- **Left:** the minimap shows only the shown rows' lanes (the widget's way with hidden rows).
+- **Evidence:** `crates/domain/src/rows.rs`, `crates/engine` (`rows.window`),
+  `crates/ui/tests/collapse_window.rs`; screenshots checked 2026-11-02.
 
 ## G7 Tickets carry their titles
 
@@ -290,7 +319,7 @@ marked **Human:** with what is needed.
     tickets, a click tells their session. mc-engine: high 2.7 landed / active h (n=50, claim →
     merge 26 min), medium 3.6 (n=29, 16 min), low 3.8 (n=17, 11 min) (measured 2026-11-02; the
     efforts ran on different tickets, so a hint).
-- **Left:** [G19](#g19-loose-ends-from-m2-and-m3).
+- **Left:** nothing open (G19 done).
 - **Evidence:** `crates/domain/src/factory.rs`, `moments.rs`, `stats.rs`, `colours.rs`;
   `crates/ui/src/factory*.rs`.
 - **Estimate:** 3–6 agent-hours, in issues of their own.
@@ -299,6 +328,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 8: G6, G19 done (#74–#77, swarm-core#12); no gaps open |
 | 2026-11-02 | minor | Batch 7: G8, G9, G17, G18 done (#67–#69); G19 new; M3 built |
 | 2026-11-02 | minor | Batch 6: G13, G15 done (#60, #62); G9 grew (#61, a gates pane); G18 new; focus G9, G18, G17 |
 | 2026-11-02 | minor | Batch 5: G4, G5, G16 done (#53–#55); G17 new; M2 built; focus G15, G9, G13 |

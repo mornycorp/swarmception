@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 7: workers compared, the panes share the window, opening a repository) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 8: collapse to the window, the loose ends of M2 and M3) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -39,7 +39,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | TL-2 | Every ticket's life (claimed, working, waiting, merged) on one timeline, under the merges onto main | done | `crates/domain/src/tickets.rs`, `rows.rs` tests; screenshot checked 2026-10-31 (#1) |
 | TL-3 | Merges onto main, from git | done | `crates/source` and `crates/model/src/merges.rs` tests (#1) |
 | TL-4 | Tickets flat or by worker (machine / worker / ticket) | done | `rows.set {grouping}`; `rows.rs` tests |
-| TL-5 | Collapse: no empty rows | done | `rows.set {collapse}`; `rows.rs` tests |
+| TL-5 | Collapse: no empty rows | done | `rows.set {collapse}`; `rows.rs` tests; or none outside the window, following a pan: `rows.window`, `crates/ui/tests/collapse_window.rs`, screenshots checked 2026-11-02 (#74) |
 | TL-6 | Pan and zoom in time; View menu of panes; Font Awesome toolbar | done | `crates/ui`; screenshots checked 2026-10-31; Ctrl + drag pans on macOS (#11); the widget's toolbar cut to Fit, Zoom to Selection, Undo Zoom, zoom buttons and Δ, the scale, origin, minimap and click fixed by command (#35); its zoom buttons as plain as Fit (#48) |
 | TL-7 | A colour per ticket; merges as green 10 s spans; coloured tooltips; durations in h/min/s | done | `crates/domain/src/colours.rs`, `tooltip.rs` tests; scheme B; `timeline_pane.rs` durations test; screenshots checked 2026-11-02 (#15, #40, #35, #48) |
 | TL-8 | Titles on bars and tooltips; open the issue or PR from a bar | done | `crates/source/src/github.rs`, `crates/ui/tests/ticket_links.rs` (#17) |
@@ -50,7 +50,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 |---|---|---|---|
 | RD-1 | A details pane: the story of a ticket, gate run, session or merge, following the selection | done | `details.get`; `crates/engine/tests/details.rs`, `crates/ui/tests/details_pane.rs`; screenshots checked 2026-11-02 (#47); its subject's bars highlighted on the timeline (#55) |
 | RD-2 | The control channel: drive the window as a person does | done | `--control`; `crates/automation/tests/tcp.rs`, `apps/app` control tests; the app driven on mc-engine 2026-11-02 (#46) |
-| RD-3 | MCP and a headless server | done | `swarmception-cli serve`, `mcp`, `mcp --control` through the window, `send`; `apps/cli/tests/automation.rs`, the app's control tests; PNGs checked 2026-11-02 (#46, #60) |
+| RD-3 | MCP and a headless server | done | `swarmception-cli serve`, `mcp`, `mcp --control` through the window, `send`; `apps/cli/tests/automation.rs`, the app's control tests; PNGs checked 2026-11-02 (#46, #60); screenshots as MCP image content, the Workers window set by `ui.set` (#76) |
 | RD-4 | The state kept across runs | done | `crates/ui/src/saved.rs`; `crates/ui/tests/saved_state.rs` (a headless restart; corrupt and newer files); screenshots checked 2026-11-02 (#53) |
 
 ## Understand (M3)
@@ -60,7 +60,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18); a hovered chip highlights its bars, leaving the selection alone (#48) |
 | UN-5 | The Factory steps back and forth by key moment | done | `factory.moments`, `factory.step`; `crates/domain/src/moments.rs` tests; UI test by clicks and keys (#33) |
 | UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
-| UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61) |
+| UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61); both lanes per hour, one gate-run definition with `stats.get` (#75); a failed ready check's cause and step (#77, swarm-core#12) |
 | UN-6 | Model and effort compared per worker | done | `workers.compare`; View ▸ Workers; `crates/domain/src/workers.rs`, `crates/ui/tests/workers_pane.rs`; screenshots checked 2026-11-02 (#67) |
 | UN-4 | Live watching | done | `live.set`, `live.get`; `crates/engine/tests/live.rs` (a remote that gains events), `crates/ui/tests/live_reload.rs`; mc-engine watched 2026-11-02 (#54) |
 
@@ -68,6 +68,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 8: TL-5, RD-3, UN-3 evidence (#74–#77); measured numbers |
 | 2026-11-02 | minor | Batch 7: UN-6 done; measured numbers |
 | 2026-11-02 | minor | Batch 6: RD-3, UN-3 done; UN-6 added; measured numbers |
 | 2026-11-02 | minor | Batch 5: RD-1 widened, RD-4 and UN-4 done; measured numbers |
