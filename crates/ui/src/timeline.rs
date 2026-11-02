@@ -37,7 +37,8 @@ use timeline_engine::tracks_cmds::{Layout, LayoutParams};
 use timeline_engine::highlight_cmds::HighlightParams;
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, RangeParams, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
-use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Set, SetParams, TimelineState};
+use timeline_engine::saved::SavedState;
+use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Restore, RestoreParams, Save, Set, SetParams, TimelineState};
 use timeline_engine::view_cmds::{Fit, Show, ShowParams, Zoom, ZoomParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire, RulerWire, SpanWire};
 
@@ -139,6 +140,27 @@ fn follow(window: SpanWire, before: SpanWire, after: SpanWire) -> Option<SpanWir
     (window.end > window.start).then_some(window)
 }
 
+/// The timeline's view as the app keeps it across a restart (#53): the widget's own saved state
+/// (`state.save`: its rulers, label column, rows' states and toggles; its playhead left out, an
+/// item's index moving as events come) and the window as clock times, so it comes back where it
+/// was however the axis's items moved; or at the end, as wide, when it showed the last event;
+/// or the whole swarm, when it showed all of it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TimelineView {
+    pub widget: Option<SavedState>,
+    /// The window's start and end.
+    pub window: Option<crate::control::Span>,
+    /// The window showed the whole swarm: it shows the whole of it again.
+    #[serde(default)]
+    pub fitted: bool,
+    /// The window ended at the last event: it ends at the last event again, as wide.
+    #[serde(default)]
+    pub at_end: bool,
+    /// The playhead's item's time.
+    pub playhead: Option<Timestamp>,
+}
+
 pub struct TimelinePane {
     widget: timeline_egui::Timeline,
     loaded: Option<u64>,
@@ -148,6 +170,8 @@ pub struct TimelinePane {
     lit: Option<Lighting>,
     /// Rows to bring into view vertically on the next frame, when none of them is (#55).
     scroll_to: Option<Vec<String>>,
+    /// A view to restore once the timeline has data (#53).
+    pending: Option<TimelineView>,
     /// Pages chosen from a bar's context menu (the widget's host items), for the shell to open.
     links: Vec<Link>,
     /// Where the widget was drawn last frame.
@@ -165,6 +189,7 @@ impl Default for TimelinePane {
             widget: timeline_egui::Timeline::new(session),
             loaded: None,
             has_data: false,
+            pending: None,
             lit: None,
             scroll_to: None,
             links: Vec::new(),
@@ -257,7 +282,7 @@ impl TimelinePane {
         let previous = self.loaded.replace(generation);
         let before = if self.has_data { self.view() } else { None };
         let Some(timeline) = engine.widget_timeline().map_err(|e| e.to_string())? else {
-            *self = Self { loaded: self.loaded, ..Self::default() };
+            *self = Self { loaded: self.loaded, pending: self.pending.take(), ..Self::default() };
             return Ok(());
         };
         let session = self.widget.session();
@@ -320,6 +345,68 @@ impl TimelinePane {
         if let Some(t) = playhead {
             self.put_playhead(engine, t);
         }
+    }
+
+    /// Restores `view` once the timeline has data ([`Self::restore_pending`]), in place of the
+    /// first load's whole swarm.
+    pub fn restore_view(&mut self, view: TimelineView) {
+        self.pending = Some(view);
+    }
+
+    /// Restores the view [`Self::restore_view`] was given, once the timeline has data: the widget's
+    /// saved state (`state.restore`), what the owner fixed (#35) again, then the window (the whole
+    /// swarm, the end as wide, or its clock times, as much of them as the extent holds) and the
+    /// playhead. Whether it restored one.
+    pub fn restore_pending(&mut self, engine: &mut Session) -> bool {
+        if !self.has_data {
+            return false;
+        }
+        let Some(view) = self.pending.take() else { return false };
+        let session = self.widget.session();
+        if let Some(mut saved) = view.widget {
+            saved.playhead = None;
+            let _ = session.call::<Restore>(RestoreParams { saved: Some(saved), state: None });
+        }
+        Self::fix_view(session);
+        match view.window {
+            _ if view.fitted => {
+                let _ = session.call::<Fit>(NoParams {});
+            }
+            Some(span) if view.at_end => {
+                let wide = span.end.0.saturating_sub(span.start.0).saturating_mul(1_000_000_000);
+                if let Some(extent) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.extent) {
+                    let start = extent.end.saturating_sub(wide).max(extent.start);
+                    let _ = session.call::<Set>(SetParams { window: Some(SpanWire { start, end: extent.end }), ..SetParams::default() });
+                }
+            }
+            Some(span) => self.show_span(engine, span.start, span.end),
+            None => {}
+        }
+        if let Some(t) = view.playhead {
+            self.put_playhead(engine, t);
+        }
+        true
+    }
+
+    /// The view as the app keeps it ([`TimelineView`]); before the timeline has data, the view
+    /// still waiting to be restored, if any.
+    pub fn view_state(&mut self, engine: &mut Session) -> Option<TimelineView> {
+        if !self.has_data || self.pending.is_some() {
+            return self.pending.clone();
+        }
+        let session = self.widget.session();
+        let mut widget = session.call::<Save>(NoParams {}).ok()?;
+        widget.playhead = None;
+        let state = session.call::<Get>(NoParams {}).ok()?.timeline?;
+        let mut at = |position: i64| engine.call::<TimeAt>(TimeAtParams { position }).ok().map(|t| t.time);
+        let window = if state.scale == TIME { at(state.window.start).zip(at(state.window.end)) } else { None };
+        Some(TimelineView {
+            widget: Some(widget),
+            window: window.map(|(start, end)| crate::control::Span { start, end }),
+            fitted: state.window == state.extent,
+            at_end: state.window.end >= state.extent.end,
+            playhead: state.playhead_span.and_then(|s| at(s.start)),
+        })
     }
 
     /// What the owner fixed (#35), by command: the `Time` scale, the absolute origin, the minimap

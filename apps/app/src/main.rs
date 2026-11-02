@@ -18,6 +18,14 @@
 //! loopback (any free port when none is given; [`control`]): it prints where and its token as one
 //! JSON line, and `--control-file <path>` writes that line to a file too. On macOS the menus are in the system menu bar
 //! ([`mac_menu`]); elsewhere the window draws its own.
+//!
+//! The state survives a restart (#53, `swarmception_ui::saved`): the panes and their sizes, the
+//! rows, the factory's settings, what the details are of, the timeline's view and the window's
+//! size and place, per repository, in `--state-dir <dir>`, else `$SWARMCEPTION_STATE_DIR`, else
+//! the platform's app-data directory (`~/Library/Application Support/swarmception` on macOS);
+//! read at the start, written when it changes and on quit. The command line goes over it;
+//! `--fresh` starts without it. A run with `--screenshot` or `--control` keeps it only in a
+//! directory named, so an agent's run never touches the owner's.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -27,7 +35,7 @@ mod control;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,6 +46,7 @@ use swarmception_domain::details::Subject;
 use swarmception_domain::moments::Direction;
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
 use swarmception_model::Timestamp;
+use swarmception_ui::saved::{self, Loaded, StateStore};
 
 /// `--panes`' list: `timeline`, `factory`, `details`.
 fn panes(list: &str) -> Result<swarmception_ui::Panes, String> {
@@ -85,7 +94,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -108,6 +117,10 @@ struct Options {
     /// `--control`: the port to serve the control channel on, 0 for any free one.
     control: Option<u16>,
     control_file: Option<PathBuf>,
+    /// `--state-dir`: where the state is kept, over `SWARMCEPTION_STATE_DIR` and the platform's.
+    state_dir: Option<PathBuf>,
+    /// `--fresh`: start without the saved state, saving afresh.
+    fresh: bool,
 }
 
 impl Options {
@@ -168,6 +181,8 @@ impl Options {
                     options.control = Some(port.unwrap_or(0));
                 }
                 "--control-file" => options.control_file = Some(value()?.into()),
+                "--state-dir" => options.state_dir = Some(value()?.into()),
+                "--fresh" => options.fresh = true,
                 "-h" | "--help" => return Err(String::new()),
                 other => return Err(format!("unknown argument `{other}`")),
             }
@@ -193,8 +208,23 @@ fn main() -> ExitCode {
     #[cfg(target_os = "macos")]
     mac_menu::no_window_tabs();
     let repo = options.repo.clone().or_else(|| std::env::current_dir().ok());
-    let (width, height) = options.size.unwrap_or((1_400.0, 860.0));
-    let viewport = egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([480.0, 320.0]);
+    let keep = keeping(&options, repo.as_deref());
+    if let Keep::Kept(_, _, loaded) = &keep
+        && let Some(note) = &loaded.note
+    {
+        eprintln!("swarmception: {note} ({})", loaded.file.display());
+    }
+    // The window as it was left, unless `--size` says otherwise.
+    let place = match &keep {
+        Keep::Kept(_, _, loaded) if options.size.is_none() => loaded.state.as_ref().and_then(|s| s.window).and_then(|w| w.sane(MIN_SIZE)),
+        _ => None,
+    };
+    let (width, height) = options.size.or(place.map(|p| (p.width, p.height))).unwrap_or((1_400.0, 860.0));
+    let mut viewport =
+        egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([MIN_SIZE.0, MIN_SIZE.1]);
+    if let Some(place) = place {
+        viewport = viewport.with_position([place.x, place.y]);
+    }
     let native = eframe::NativeOptions { viewport, ..Default::default() };
     let start = move |cc: &eframe::CreationContext<'_>| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
         swarmception_ui::fonts::install(&cc.egui_ctx);
@@ -204,6 +234,12 @@ fn main() -> ExitCode {
             cc.egui_ctx.set_theme(theme);
         }
         let mut shell = swarmception_ui::Shell::new(&cc.egui_ctx, repo.as_deref());
+        // The saved state first, so the command line's choices go over it.
+        match keep {
+            Keep::Off => {}
+            Keep::Fresh(store, key) => shell.keep_state(store, &key, None),
+            Keep::Kept(store, key, loaded) => shell.keep_state(store, &key, Some(&loaded)),
+        }
         set_up(&mut shell, &options)?;
         let control = match options.control {
             Some(port) => Some(control::start(port, options.control_file.as_deref(), &cc.egui_ctx)?.0),
@@ -239,6 +275,38 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// The window's smallest inner size.
+const MIN_SIZE: (f32, f32) = (480.0, 320.0);
+
+/// How a run keeps its state across a restart (#53).
+#[derive(Debug, PartialEq)]
+enum Keep {
+    /// Neither read nor written.
+    Off,
+    /// Started without it, written as it goes: `--fresh`.
+    Fresh(StateStore, PathBuf),
+    /// Read at the start (what was found), written as it goes.
+    Kept(StateStore, PathBuf, Loaded),
+}
+
+/// How this run keeps the state of `repo`: in `--state-dir`, else `SWARMCEPTION_STATE_DIR`'s
+/// directory, else the platform's app-data directory. An agent's run (`--screenshot`,
+/// `--control`) keeps it only in a directory named, so it never reads or writes the owner's.
+fn keeping(options: &Options, repo: Option<&Path>) -> Keep {
+    let named = options.state_dir.clone().or_else(saved::dir_from_env);
+    let automated = options.screenshot.is_some() || options.control.is_some();
+    if automated && named.is_none() {
+        return Keep::Off;
+    }
+    let (Some(dir), Some(repo)) = (named.or_else(saved::platform_dir), repo) else { return Keep::Off };
+    let (store, key) = (StateStore::new(dir), saved::repo_key(repo));
+    if options.fresh {
+        return Keep::Fresh(store, key);
+    }
+    let loaded = store.load(&key);
+    Keep::Kept(store, key, loaded)
 }
 
 /// The shell as the command line asks: the rows, the panes, the factory's time and its traced
@@ -314,6 +382,13 @@ impl eframe::App for App {
         if let Some(shot) = &mut self.screenshot {
             let ready = !self.shell.loading() && !self.shell.fetching_issues() && self.shell.has_timeline();
             shot.step(ui.ctx(), ready);
+        }
+    }
+
+    /// On quit (File ▸ Quit, the window closed, ⌘Q), the state once more (#53).
+    fn on_exit(&mut self) {
+        if let Err(e) = self.shell.save_state() {
+            eprintln!("swarmception: {e}");
         }
     }
 }
@@ -421,5 +496,31 @@ mod tests {
         assert_eq!(parse(&["--panes", "details"]).unwrap().panes, Some(swarmception_ui::Panes { timeline: false, factory: false, details: true }));
 
         assert_eq!(parse(&["--help"]), Err(String::new()));
+        let options = parse(&["--state-dir", "/tmp/s", "--fresh"]).unwrap();
+        assert_eq!((options.state_dir, options.fresh), (Some(PathBuf::from("/tmp/s")), true));
+        assert!(parse(&["--state-dir"]).is_err());
+    }
+
+    #[test]
+    fn an_agents_run_keeps_the_state_only_in_a_directory_it_names() {
+        let dir = std::env::temp_dir().join(format!("worker21-keeping-{}", std::process::id()));
+        let repo = std::env::temp_dir();
+        let key = saved::repo_key(&repo);
+        let store = StateStore::new(dir.clone());
+        let named = |args: &[&str]| {
+            let mut options = parse(args).unwrap();
+            options.state_dir = Some(dir.clone());
+            keeping(&options, Some(&repo))
+        };
+        assert_eq!(named(&[]), Keep::Kept(store.clone(), key.clone(), store.load(&key)));
+        assert_eq!(named(&["--fresh"]), Keep::Fresh(store.clone(), key.clone()));
+        assert_eq!(named(&["--screenshot", "a.ppm"]), Keep::Kept(store.clone(), key.clone(), store.load(&key)), "named: kept");
+        assert_eq!(named(&["--control"]), Keep::Kept(store.clone(), key.clone(), store.load(&key)));
+        assert_eq!(keeping(&parse(&[]).unwrap(), None), Keep::Off, "no repository, no state");
+        // Not named (and no SWARMCEPTION_STATE_DIR): an agent's run leaves the owner's alone.
+        if saved::dir_from_env().is_none() {
+            assert_eq!(keeping(&parse(&["--screenshot", "a.ppm"]).unwrap(), Some(&repo)), Keep::Off);
+            assert_eq!(keeping(&parse(&["--control", "--fresh"]).unwrap(), Some(&repo)), Keep::Off);
+        }
     }
 }

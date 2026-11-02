@@ -28,8 +28,8 @@ use crate::factory::{Jump, Source, Speed, Steps};
 use crate::timeline::Lit;
 use crate::{Panes, Shell, UiState};
 
-/// [`Inspect`]'s shape.
-pub const INSPECT_VERSION: u32 = 1;
+/// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53).
+pub const INSPECT_VERSION: u32 = 2;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -133,6 +133,9 @@ pub struct Inspect {
     pub timeline: TimelineInspect,
     #[serde(default)]
     pub details: DetailsInspect,
+    /// Where the state is kept across a restart, and where it was read from (#53).
+    #[serde(default)]
+    pub saved: crate::saved::SavedInspect,
 }
 
 /// The details pane, as `ui.inspect` reads it (#55).
@@ -361,6 +364,7 @@ impl Shell {
             factory,
             timeline,
             details,
+            saved: self.saved(),
         }
     }
 
