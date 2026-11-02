@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (automation: the control channel, the headless server and MCP, #46) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the details of what is selected: `details.get` and the details pane, #47; automation, #46) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -82,6 +82,15 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's tooltips start with (title; state, labels, author; its PR); `rows_with` builds the rows
   with them, and each bar carries its PR. `timeline`'s host data gives a ticket's bar (and a
   merge onto main's) the context-menu items Open Issue and Open PR, as `Link`s by host item id.
+  `details` (#47) tells the story of one `Subject` in time order: a ticket (its stretches with
+  their times and durations, abandonment, its worker's `ready` checks, the gate runs that named
+  it, releases, its merge and the commit onto main), a gate run (its start and note, its merges
+  and send backs, the commits onto main, how it ended), a session (its claims, work, submits,
+  pauses, helpers and gate runs) or a merge onto main; each `Entry` a line in its colour (the
+  ticket's own for working and merges, the phases' fixed colours, green passed, red failed or
+  sent back), with a header (chip, mark, title, GitHub's state, PR and labels), `Fact`s, the
+  `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket
+  or its merge onto main.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -98,7 +107,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
   a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
   from a time: its time, its moments and its name),
-  `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR). Every load
+  `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR),
+  `details.get` (#47: exactly one of `ticket`, `gate`, `session`, `merge`, or a bar's `track` and
+  `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs; a
+  subject the swarm never had is `Refusal::NotFound`). Every load
   (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
   where and why not is `repo.status`'s `issues`, and new issues build the rows again. Where they
@@ -151,8 +163,17 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   shell runs `ticket.urls` and hands the page to egui's `open_url`. Bars always carry titles (#34);
   the status bar says how many issues came and from where,
   or warns why none did.
-  `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by)
-  is serde data. `control` (#46) is the window's side of the control channel: `Shell::answer`
+  The details pane (#47, View ▸ Details, on by default), right of the others, draws what
+  `details.get` returns for `UiState::details`' subject: the header, the figures as pills, the
+  subjects it carries as chips, then the story a line an entry (time, a dot in its colour, what
+  happened in that colour, the rest, who, how long; notes under it). It follows the selection:
+  the person's own bar on the timeline (`TimelinePane::chosen_bar`, not a factory hover's), a chip
+  clicked in the factory (its traced ticket), a gate run clicked in the gate's list; and within
+  the pane, a line, a name (their session) or a chip, ← going back. Its pages open as a bar's
+  right-click does. The factory's floor keeps within its pane, its header wrapping, so a narrower
+  pane never cuts off main.
+  `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by,
+  what the details are of; version 3) is serde data. `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).
 - **L4 `swarmception-automation`** (#46): the control protocol as types (`protocol`: `Request`,
@@ -161,7 +182,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`, `--control`,
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`, `--control`,
   `--control-file`) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
   `mcp`).
 
@@ -284,6 +305,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The details of what is selected (#47): the domain's `details`, `details.get`, the details pane following the timeline's and the factory's selection; `--details` |
 | 2026-11-02 | minor | Automation (#46): `swarmception-automation`, the app's `--control`, `ui.inspect` / `ui.set` / `ui.screenshot`, the widget's commands as `timeline.<id>`, `swarmception-cli serve` and `mcp` |
 | 2026-11-01 | minor | A gate that never logged its stop ends at its coordinator's session's end or the next gate's start, with no result (#42); the factory's working border a warm white and in-the-gate a magenta, apart from scheme B |
 | 2026-11-01 | minor | The factory steps by key moment, back and forth (#33): the domain's `moments`, `factory.moments` and `factory.step`; ⏮ / ⏭ and ← / →, the moment named beside the clock |

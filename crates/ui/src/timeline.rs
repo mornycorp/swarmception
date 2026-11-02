@@ -295,6 +295,22 @@ impl TimelinePane {
         }
     }
 
+    /// The bar the person chose on the timeline (#47): the focused one when it is a bar, else the
+    /// first selected; their own selection, not the bars a hover in the factory selected for a
+    /// while. None when no bar is selected.
+    pub fn chosen_bar(&mut self) -> Option<(String, usize)> {
+        if !self.has_data {
+            return None;
+        }
+        let selection = match &self.saved {
+            Some(saved) => saved.clone(),
+            None => self.selection()?,
+        };
+        let focused = selection.focus.as_ref().and_then(|f| f.range.map(|r| (f.track.clone(), r)));
+        let selected = |(track, range): &(String, usize)| selection.ranges.get(track).is_some_and(|r| r.contains(range));
+        focused.filter(selected).or_else(|| selection.ranges.iter().find_map(|(track, ranges)| ranges.first().map(|r| (track.clone(), *r))))
+    }
+
     /// Shows `issue`'s bars selected while it is hovered in the factory, and puts the person's
     /// own selection back, exactly, once nothing is: the first hover puts it aside, a hover
     /// moving from ticket to ticket keeps it aside (never saving what a hover selected), and

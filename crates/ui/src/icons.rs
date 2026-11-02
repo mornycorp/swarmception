@@ -27,3 +27,6 @@ pub const START: &str = "\u{f048}";
 pub const END: &str = "\u{f051}";
 pub const TAG: &str = "\u{f02b}";
 pub const ISSUES: &str = "\u{f06a}";
+pub const INFO: &str = "\u{f05a}";
+pub const BACK: &str = "\u{f060}";
+pub const EXTERNAL: &str = "\u{f35d}";

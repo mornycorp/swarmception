@@ -307,7 +307,7 @@ impl Shell {
         };
         Inspect {
             version: INSPECT_VERSION,
-            state: self.ui,
+            state: self.ui.clone(),
             repo: self.status.repo.clone(),
             loading: self.loading(),
             error: self.error.clone().or_else(|| self.status.error.clone()),
@@ -451,7 +451,7 @@ mod tests {
         let set = r#"{"panes": {"timeline": false, "factory": true}, "at": "2026-10-31T03:42:00Z", "ticket": 7, "speed": "hour", "steps": "merges"}"#;
         let inspect: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
         assert_eq!(inspect.version, INSPECT_VERSION);
-        assert_eq!(inspect.state.panes, Panes { timeline: false, factory: true });
+        assert_eq!(inspect.state.panes, Panes { timeline: false, factory: true, details: true }, "details left out: its default");
         assert_eq!(inspect.state.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"));
         assert!(!inspect.state.factory.follow);
         assert_eq!((inspect.state.factory.ticket, inspect.state.factory.speed, inspect.state.factory.steps), (Some(7), Speed::Hour, Steps::Merges));

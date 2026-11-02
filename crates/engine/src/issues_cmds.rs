@@ -64,3 +64,15 @@ impl Command for Urls {
         Ok(TicketUrlsResult { issue, title, issue_url, pr: pr.map(|p| p.number), pr_url, pull_url })
     }
 }
+
+/// The page of `number` on GitHub, an issue's or (`pull`) a pull request's: the one the issues
+/// fetched give, else the `origin` remote's; none when the repository isn't on GitHub.
+pub(crate) fn page_url(session: &Session, pull: bool, number: u64) -> Option<String> {
+    let slug = session.issues.slug.as_ref()?;
+    let found = session.issues.issues.get(number).filter(|i| i.url.starts_with("https://github.com/"));
+    Some(match found {
+        Some(issue) if !pull || issue.kind == IssueKind::PullRequest => issue.url.clone(),
+        _ if pull => slug.pull_url(number),
+        _ => slug.issue_url(number),
+    })
+}
