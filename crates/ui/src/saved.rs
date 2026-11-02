@@ -104,6 +104,62 @@ impl WindowPlace {
         let place = |v: f32| v.is_finite() && (-32_768.0..=32_768.0).contains(&v);
         (size(self.width, min.0) && size(self.height, min.1) && place(self.x) && place(self.y)).then_some(self)
     }
+
+    /// The window on screen (#68, G17): as it is when the monitors cover it; else, partly or
+    /// wholly off them (a monitor since unplugged), moved onto the monitor it overlaps most, or
+    /// the nearest when it overlaps none, shrunk to fit it and held inside it, its title bar
+    /// ([`TITLE_BAR`]) counted. With no monitor known, as it is.
+    #[must_use]
+    pub fn onto(self, monitors: &[Monitor]) -> Self {
+        let window = Monitor { x: self.x, y: self.y, width: self.width, height: self.height + TITLE_BAR };
+        let covered: f32 = monitors.iter().map(|m| m.overlap(&window)).sum();
+        if monitors.is_empty() || covered >= window.area() - 1.0 {
+            return self;
+        }
+        let best = monitors.iter().copied().max_by(|a, b| {
+            let (oa, ob) = (a.overlap(&window), b.overlap(&window));
+            oa.total_cmp(&ob).then_with(|| b.gap(&window).total_cmp(&a.gap(&window)))
+        });
+        let Some(m) = best else { return self };
+        let width = self.width.min(m.width);
+        let height = self.height.min((m.height - TITLE_BAR).max(1.0));
+        let x = self.x.clamp(m.x, (m.x + m.width - width).max(m.x));
+        let y = self.y.clamp(m.y, (m.y + m.height - height - TITLE_BAR).max(m.y));
+        Self { x, y, width, height }
+    }
+}
+
+/// The height a window's title bar adds over its inner size, as [`WindowPlace::onto`] counts it.
+pub const TITLE_BAR: f32 = 28.0;
+
+/// A monitor's area, in points, in the coordinates the window's place is in (as winit tells
+/// them: its position and size over its scale factor).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Monitor {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl Monitor {
+    fn area(&self) -> f32 {
+        self.width.max(0.0) * self.height.max(0.0)
+    }
+
+    /// The area it shares with `other`.
+    fn overlap(&self, other: &Self) -> f32 {
+        let w = (self.x + self.width).min(other.x + other.width) - self.x.max(other.x);
+        let h = (self.y + self.height).min(other.y + other.height) - self.y.max(other.y);
+        w.max(0.0) * h.max(0.0)
+    }
+
+    /// How far it is from `other`: 0 when they touch or overlap.
+    fn gap(&self, other: &Self) -> f32 {
+        let dx = (self.x - (other.x + other.width)).max(other.x - (self.x + self.width)).max(0.0);
+        let dy = (self.y - (other.y + other.height)).max(other.y - (self.y + self.height)).max(0.0);
+        dx.hypot(dy)
+    }
 }
 
 /// The repository `path` is in, as the state is keyed: its canonical path, up to the directory
@@ -244,6 +300,8 @@ struct UiSections {
     details: Option<serde_json::Value>,
     #[serde(default)]
     sizes: Option<serde_json::Value>,
+    #[serde(default)]
+    folded: Option<serde_json::Value>,
 }
 
 /// `value` as a `T`, its default when it is missing or doesn't read (`name` added to `skipped`).
@@ -274,6 +332,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         factory: section::<FactoryView>(ui.factory, "factory", &mut skipped),
         details: section::<DetailsView>(ui.details, "details", &mut skipped),
         sizes: section::<PaneSizes>(ui.sizes, "sizes", &mut skipped),
+        folded: section::<crate::layout::Folded>(ui.folded, "folded", &mut skipped),
     });
     let state = AppState {
         version: APP_STATE_VERSION,
@@ -548,6 +607,33 @@ mod tests {
         assert!(keeper.observe(state.clone(), 3.0).is_none() && keeper.note().is_none(), "the same state isn't tried again");
         assert!(keeper.write_now(state).is_err());
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_window_off_every_monitor_comes_onto_the_nearest() {
+        // A laptop's screen, and an external one to its right (since unplugged, or not).
+        let laptop = Monitor { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 };
+        let external = Monitor { x: 1440.0, y: -200.0, width: 2560.0, height: 1440.0 };
+        let on_external = WindowPlace { x: 2000.0, y: 100.0, width: 1400.0, height: 860.0 };
+        // Both there: it stays, on one monitor or across the two.
+        assert_eq!(on_external.onto(&[laptop, external]), on_external);
+        let across = WindowPlace { x: 1000.0, y: 50.0, width: 1000.0, height: 700.0 };
+        assert_eq!(across.onto(&[laptop, external]), across, "covered by the two");
+        // The external one unplugged: onto the laptop's, shrunk to fit, inside it.
+        let moved = on_external.onto(&[laptop]);
+        assert_eq!(moved, WindowPlace { x: 40.0, y: 12.0, width: 1400.0, height: 860.0 });
+        let big = WindowPlace { x: 1500.0, y: 0.0, width: 2400.0, height: 1300.0 };
+        assert_eq!(big.onto(&[laptop]), WindowPlace { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 - TITLE_BAR });
+        // Partly off: pulled in wholly, on the monitor it overlaps most.
+        let partly = WindowPlace { x: 1200.0, y: 600.0, width: 800.0, height: 600.0 };
+        assert_eq!(partly.onto(&[laptop]), WindowPlace { x: 640.0, y: 272.0, width: 800.0, height: 600.0 });
+        // Off every monitor: onto the nearest.
+        let far_left = WindowPlace { x: -5000.0, y: 300.0, width: 800.0, height: 600.0 };
+        assert_eq!(far_left.onto(&[external, laptop]), WindowPlace { x: 0.0, y: 272.0, ..far_left });
+        let far_right = WindowPlace { x: 9000.0, y: 300.0, ..far_left };
+        assert_eq!(far_right.onto(&[laptop, external]), WindowPlace { x: 4000.0 - 800.0, y: 300.0, ..far_left });
+        // No monitor known: as it is.
+        assert_eq!(far_left.onto(&[]), far_left);
     }
 
     #[test]

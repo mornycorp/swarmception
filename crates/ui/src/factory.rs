@@ -36,6 +36,7 @@ use crate::factory_chip::Motion;
 use crate::factory_paint::{Drawn, Marks, WallView, paint};
 use crate::factory_stats::StatsStrip;
 use crate::icons;
+use crate::layout::{Chevron, fold_title};
 use crate::timeline::Looking;
 
 /// How fast play runs: seconds of the swarm a second.
@@ -233,6 +234,8 @@ pub struct FactoryPane {
     jump: Option<Jump>,
     /// The step that landed last.
     landed: Option<Landed>,
+    /// Its title was clicked last frame: fold it (#68).
+    fold: bool,
 }
 
 /// What a scene was asked for: *t*, `recent`, the traced ticket, and the engine's revision.
@@ -245,6 +248,12 @@ struct Play {
 }
 
 impl FactoryPane {
+    /// Whether its title was clicked last frame, to fold it (#68).
+    #[must_use]
+    pub const fn fold_asked(&self) -> bool {
+        self.fold
+    }
+
     /// The scene it shows: what `factory.at` returned for its *t*.
     #[must_use]
     pub const fn scene(&self) -> Option<&FactoryScene> {
@@ -468,7 +477,7 @@ impl FactoryPane {
     }
 
     fn header(&mut self, ui: &mut egui::Ui, view: &mut FactoryView) {
-        ui.label(egui::RichText::new(format!("{}  Factory", icons::FACTORY)).strong());
+        self.fold = fold_title(ui, icons::FACTORY, "Factory", Chevron::Open).clicked();
         ui.separator();
         let clock = self.scene.as_ref().map_or_else(String::new, |s| s.text.replacen('T', " ", 1).replace('Z', " UTC"));
         ui.label(egui::RichText::new(format!("{}  {clock}", icons::CLOCK)).monospace().strong());

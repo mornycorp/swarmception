@@ -13,7 +13,9 @@
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
 //! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
-//! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34); `--screenshot`
+//! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
+//! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,
+//! for a screenshot of a larger window than the screen holds); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
 //! agents can check the drawing by eye: PNG when the path ends in `.png`, else a binary PPM. `--control [<port>]` serves the control channel on
 //! loopback (any free port when none is given; [`control`]): it prints where and its token as one
@@ -107,7 +109,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -127,6 +129,8 @@ struct Options {
     steps: Option<swarmception_ui::Steps>,
     theme: Option<egui::Theme>,
     size: Option<(f32, f32)>,
+    /// `--zoom`: the UI's scale (egui's zoom factor), 0.25 to 4.
+    zoom: Option<f32>,
     screenshot: Option<PathBuf>,
     /// `--control`: the port to serve the control channel on, 0 for any free one.
     control: Option<u16>,
@@ -186,6 +190,11 @@ impl Options {
                     let h = number(value()?)?;
                     options.size = Some((w, h));
                 }
+                "--zoom" => {
+                    let text = value()?;
+                    let zoom = text.parse::<f32>().ok().filter(|z| (0.25..=4.0).contains(z));
+                    options.zoom = Some(zoom.ok_or_else(|| format!("--zoom takes a scale from 0.25 to 4, not {text}"))?);
+                }
                 "--screenshot" => options.screenshot = Some(value()?.into()),
                 "--control" => {
                     // The port is optional: the next argument when it is a number.
@@ -222,15 +231,13 @@ fn main() -> ExitCode {
     mac_menu::no_window_tabs();
     let repo = options.repo.clone().or_else(|| std::env::current_dir().ok());
     let keep = keeping(&options, repo.as_deref());
-    let viewport = viewport(&options, &keep);
+    let (viewport, place) = viewport(&options, &keep);
     let native = eframe::NativeOptions { viewport, ..Default::default() };
     let start = move |cc: &eframe::CreationContext<'_>| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
-        swarmception_ui::fonts::install(&cc.egui_ctx);
-        // Ctrl + +, Ctrl + − and Ctrl + 0 are the timeline's zoom keys, not egui's.
-        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        if let Some(theme) = options.theme {
-            cc.egui_ctx.set_theme(theme);
+        if let Some(place) = place {
+            onto_monitors(cc, place);
         }
+        style(&cc.egui_ctx, &options);
         let mut shell = swarmception_ui::Shell::new(&cc.egui_ctx, repo.as_deref());
         // The saved state first, so the command line's choices go over it.
         keep.give(&mut shell);
@@ -268,9 +275,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// The window: its size and place as it was left (unless `--size` says otherwise); the saved
-/// state's note said on stderr.
-fn viewport(options: &Options, keep: &Keep) -> egui::ViewportBuilder {
+/// The window: its size and place as it was left (unless `--size` says otherwise), and that
+/// place; the saved state's note said on stderr.
+fn viewport(options: &Options, keep: &Keep) -> (egui::ViewportBuilder, Option<saved::WindowPlace>) {
     if let Keep::Kept(_, _, loaded) = keep
         && let Some(note) = &loaded.note
     {
@@ -287,7 +294,47 @@ fn viewport(options: &Options, keep: &Keep) -> egui::ViewportBuilder {
     if let Some(place) = place {
         viewport = viewport.with_position([place.x, place.y]);
     }
-    viewport
+    (viewport, place)
+}
+
+/// The fonts, the theme and the UI's scale as the command line asks.
+fn style(ctx: &egui::Context, options: &Options) {
+    swarmception_ui::fonts::install(ctx);
+    // Ctrl + +, Ctrl + − and Ctrl + 0 are the timeline's zoom keys, not egui's.
+    ctx.options_mut(|o| o.zoom_with_keyboard = false);
+    if let Some(theme) = options.theme {
+        ctx.set_theme(theme);
+    }
+    if let Some(zoom) = options.zoom {
+        ctx.set_zoom_factor(zoom);
+    }
+}
+
+/// A window restored at `place` (#68, G17), moved onto the monitors winit tells of when it is
+/// partly or wholly off them (a monitor since unplugged): onto the one it overlaps most, else the
+/// nearest, shrunk to fit (`saved::WindowPlace::onto`); the primary one when winit lists none.
+fn onto_monitors(cc: &eframe::CreationContext<'_>, place: saved::WindowPlace) {
+    let Some(window) = cc.winit_window() else { return };
+    // winit's monitors in points: their pixels over their scale factors.
+    let mut monitors: Vec<saved::Monitor> = window
+        .available_monitors()
+        .map(|m| {
+            let (position, size) = (m.position().to_logical::<f32>(m.scale_factor()), m.size().to_logical::<f32>(m.scale_factor()));
+            saved::Monitor { x: position.x, y: position.y, width: size.width, height: size.height }
+        })
+        .collect();
+    if monitors.is_empty() {
+        monitors.extend(window.primary_monitor().map(|m| {
+            let (position, size) = (m.position().to_logical::<f32>(m.scale_factor()), m.size().to_logical::<f32>(m.scale_factor()));
+            saved::Monitor { x: position.x, y: position.y, width: size.width, height: size.height }
+        }));
+    }
+    let moved = place.onto(&monitors);
+    if moved != place {
+        eprintln!("swarmception: the window was left off the screen: moved onto a monitor");
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(moved.width, moved.height)));
+        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(moved.x, moved.y)));
+    }
 }
 
 /// The window's smallest inner size.
@@ -474,6 +521,8 @@ mod tests {
         assert!(parse(&["--repo"]).is_err());
         assert!(parse(&["--grouping", "tree"]).is_err());
         assert!(parse(&["--size", "10", "10"]).is_err());
+        assert_eq!(parse(&["--zoom", "0.5"]).unwrap().zoom, Some(0.5));
+        assert!(parse(&["--zoom", "0"]).is_err() && parse(&["--zoom", "big"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
         let options = parse(&["--panes", "factory", "--at", "2026-10-31T13:20:00Z"]).unwrap();
         assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false, gates: false }));

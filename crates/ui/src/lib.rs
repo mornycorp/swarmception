@@ -21,6 +21,7 @@ mod factory_tip;
 pub mod fonts;
 mod gates;
 pub mod icons;
+pub mod layout;
 pub mod menu;
 pub mod saved;
 pub mod shot;
@@ -56,8 +57,8 @@ pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, 
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
 /// details pane and what it is about; 4: the panes' sizes (#53); 5: the gates pane and its
-/// height (#61).
-pub const UI_STATE_VERSION: u32 = 5;
+/// height (#61); 6: the folded panes (#68).
+pub const UI_STATE_VERSION: u32 = 6;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -78,9 +79,10 @@ impl Default for Panes {
     }
 }
 
-/// The sizes the panes were last drawn at, in whole points, their margins included (#53): the
-/// details pane's width, the factory's height under the timeline and the gates' (#61). None: the
-/// pane's default.
+/// The panes' sizes, in whole points, their margins included (#53): the details pane's width as
+/// last drawn; the factory's and the gates' (#61) heights under the timeline as the person
+/// dragged them (#68: they give way when the timeline needs the room, and come back when it
+/// doesn't). None: the default for the window's size ([`layout::defaults`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct PaneSizes {
@@ -100,6 +102,8 @@ pub struct UiState {
     pub details: DetailsView,
     /// The panes' sizes (#53).
     pub sizes: PaneSizes,
+    /// Which panes are folded (#68): the person's choice, else the window's size decides.
+    pub folded: layout::Folded,
 }
 
 impl Default for UiState {
@@ -110,6 +114,7 @@ impl Default for UiState {
             factory: FactoryView::default(),
             details: DetailsView::default(),
             sizes: PaneSizes::default(),
+            folded: layout::Folded::default(),
         }
     }
 }
@@ -144,6 +149,8 @@ pub struct Shell {
     keeper: Option<saved::Keeper>,
     /// The window's size and place on screen, as last drawn (or as restored).
     window_place: Option<saved::WindowPlace>,
+    /// How the panes shared the window last frame (#68).
+    layout: layout::LayoutDrawn,
 }
 
 impl Shell {
@@ -180,6 +187,7 @@ impl Shell {
             opened: Vec::new(),
             keeper: None,
             window_place: None,
+            layout: layout::LayoutDrawn::default(),
         };
         if let Some(repo) = repo {
             let result = shell.engine.call::<Open>(OpenParams { path: repo.display().to_string() });
@@ -523,17 +531,13 @@ impl Shell {
             self.step_factory(ui.ctx());
         }
         self.details.sync(&mut self.engine, &self.ui.details);
+        let defaults = layout::defaults(ui.ctx().content_rect().size());
+        self.layout = layout::LayoutDrawn::default();
         if self.ui.panes.details {
-            let width = ui.available_width();
-            let shown = egui::Panel::right("details")
-                .resizable(true)
-                .default_size(self.ui.sizes.details.map_or((width * 0.3).clamp(300.0, 460.0), points_f32))
-                .size_range(220.0..=(width * 0.6).max(220.0))
-                .show(ui, |ui| self.details.ui(ui, &self.ui.details));
-            self.ui.sizes.details = Some(whole_points(shown.response.rect.width()));
+            self.details_ui(ui, &defaults);
         }
         self.sync_gates();
-        egui::CentralPanel::default().show(ui, |ui| self.central(ui));
+        egui::CentralPanel::default().show(ui, |ui| self.central(ui, &defaults));
         if !self.ui.panes.gates {
             self.gates.leave();
         }
@@ -636,41 +640,152 @@ impl Shell {
         self.gates.sync(&mut self.engine, window);
     }
 
-    /// The central area: the timeline, under it the gates (#61) and the factory, each as shown.
-    fn central(&mut self, ui: &mut egui::Ui) {
+    /// The Details pane on the right (#47): resizable, or folded to a strip (#68).
+    fn details_ui(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
+        let folded = self.ui.folded.details.or(defaults.folded.details).unwrap_or(false);
+        let wanted = self.ui.sizes.details.map_or(defaults.details, points_f32);
+        let shown = if folded {
+            let shown = egui::Panel::right("details-strip").resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
+                ui.vertical_centered(|ui| {
+                    let chevron = ui.add(egui::Button::new(icons::CHEVRON_LEFT).frame(false)).on_hover_text("Open the Details");
+                    let icon =
+                        ui.add(egui::Label::new(egui::RichText::new(icons::INFO).strong()).sense(egui::Sense::click())).on_hover_text("Open the Details");
+                    chevron.clicked() || icon.clicked()
+                })
+                .inner
+            });
+            if shown.inner {
+                self.ui.folded.details = Some(false);
+            }
+            shown.response.rect.width()
+        } else {
+            let width = ui.available_width();
+            let shown = egui::Panel::right("details")
+                .resizable(true)
+                .default_size(wanted)
+                .size_range(220.0..=(width - layout::CENTRAL_LEAST_WIDTH).max(220.0))
+                .show(ui, |ui| self.details.ui(ui, &self.ui.details));
+            self.ui.sizes.details = Some(whole_points(shown.response.rect.width()));
+            if self.details.drawn().fold {
+                self.ui.folded.details = Some(true);
+            }
+            shown.response.rect.width()
+        };
+        self.layout.details = Some(layout::BandDrawn {
+            name: "details".into(),
+            size: whole_points(shown),
+            wanted: whole_points(wanted),
+            folded,
+            default_fold: self.ui.folded.details.is_none(),
+        });
+    }
+
+    /// The central area (#68's rule, [`layout`]): the timeline, under it the bands (the gates,
+    /// #61, and the factory), each as shown, folded or not, sharing the height by
+    /// [`layout::share`]: the timeline keeps its least while the bands can give way. Without the
+    /// timeline the last open band fills the rest.
+    fn central(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
         let panes = self.ui.panes;
         if !panes.timeline && !panes.factory && !panes.gates {
             ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline, Factory or Gates shows one."));
             return;
         }
-        let height = ui.available_height();
-        if panes.factory && (panes.timeline || panes.gates) {
-            let shown = egui::Panel::bottom("factory")
-                .resizable(true)
-                .default_size(self.ui.sizes.factory.map_or(height * 0.5, points_f32))
-                .size_range(140.0..=(height - 100.0).max(140.0))
-                .show(ui, |ui| self.factory.ui(ui, &mut self.ui.factory, &self.status));
-            self.ui.sizes.factory = Some(whole_points(shown.response.rect.height()));
-        } else if panes.factory {
-            self.factory.ui(ui, &mut self.ui.factory, &self.status);
-            return;
+        let folded = self.ui.folded.or(defaults.folded);
+        let mut bands: Vec<BandKind> = BandKind::ALL.into_iter().filter(|kind| kind.shown(panes)).collect();
+        // What fills the rest: the timeline, else the last open band.
+        let filler = if panes.timeline { None } else { bands.iter().rposition(|kind| !kind.folded(folded)).map(|at| bands.remove(at)) };
+        let least = if panes.timeline { self.timeline.least() } else { filler.map_or(0.0, BandKind::least) };
+        let specs: Vec<layout::Band> = bands
+            .iter()
+            .map(|kind| layout::Band {
+                wanted: kind.size(self.ui.sizes).map_or(kind.default(defaults), points_f32),
+                least: kind.least(),
+                folded: kind.folded(folded),
+            })
+            .collect();
+        let heights = layout::share(ui.available_height(), least, &specs);
+        let mut drawn = Vec::new();
+        // From the bottom up: each band a panel at its share, under the one before.
+        for ((kind, spec), height) in bands.iter().zip(&specs).zip(&heights).rev() {
+            let shown = self.band(ui, *kind, *height, spec);
+            drawn.push(layout::BandDrawn {
+                name: kind.name().into(),
+                size: whole_points(shown),
+                wanted: whole_points(spec.wanted),
+                folded: spec.folded,
+                default_fold: kind.chosen(self.ui.folded).is_none(),
+            });
         }
-        // Under the timeline once it has data: egui keeps a panel's first size, and a window's
-        // first frames can be tiny.
-        if panes.gates && panes.timeline && self.timeline.has_data() {
-            let height = ui.available_height();
-            let shown = egui::Panel::bottom("gates")
-                .resizable(true)
-                .default_size(self.ui.sizes.gates.map_or(170.0, points_f32))
-                .size_range(90.0..=(height - 80.0).max(90.0))
-                .show(ui, |ui| self.gates_ui(ui));
-            self.ui.sizes.gates = Some(whole_points(shown.response.rect.height()));
+        drawn.reverse();
+        self.layout.timeline_least = whole_points(least);
+        if panes.timeline {
+            self.layout.timeline = Some(whole_points(ui.available_height()));
             self.timeline.ui(ui, &self.status);
-        } else if panes.gates && !panes.timeline {
-            self.gates_ui(ui);
-        } else {
-            self.timeline.ui(ui, &self.status);
+        } else if let Some(kind) = filler {
+            let rest = whole_points(ui.available_height());
+            drawn.push(layout::BandDrawn {
+                name: kind.name().into(),
+                size: rest,
+                wanted: rest,
+                folded: false,
+                default_fold: kind.chosen(self.ui.folded).is_none(),
+            });
+            self.band_contents(ui, kind);
         }
+        self.layout.bands = drawn;
+    }
+
+    /// Band `kind` as a panel `height` high at the bottom of what is left: its contents, or its
+    /// header alone when folded; open, its top edge drags its height. Its height drawn.
+    fn band(&mut self, ui: &mut egui::Ui, kind: BandKind, height: f32, spec: &layout::Band) -> f32 {
+        let shown = egui::Panel::bottom(kind.name()).resizable(false).exact_size(height).show(ui, |ui| {
+            if spec.folded {
+                ui.horizontal_centered(|ui| {
+                    if layout::fold_title(ui, kind.icon(), kind.title(), layout::Chevron::Folded).clicked() {
+                        kind.set_folded(&mut self.ui.folded, false);
+                    }
+                });
+            } else {
+                self.band_contents(ui, kind);
+            }
+        });
+        let rect = shown.response.rect;
+        if !spec.folded {
+            let edge = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() - 3.0), egui::pos2(rect.right(), rect.top() + 3.0));
+            let response = ui.interact(edge, ui.scope_id().with(("band-edge", kind.name())), egui::Sense::drag());
+            if response.hovered() || response.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                ui.painter().hline(rect.x_range(), rect.top(), ui.visuals().widgets.hovered.fg_stroke);
+            }
+            if response.dragged() && response.drag_delta().y != 0.0 {
+                let wanted = (rect.height() - response.drag_delta().y).max(spec.least);
+                kind.set_size(&mut self.ui.sizes, Some(whole_points(wanted)));
+            }
+        }
+        rect.height()
+    }
+
+    /// What band `kind` draws open; a click on its title folds it.
+    fn band_contents(&mut self, ui: &mut egui::Ui, kind: BandKind) {
+        let fold = match kind {
+            BandKind::Gates => {
+                self.gates_ui(ui);
+                self.gates.drawn().fold
+            }
+            BandKind::Factory => {
+                self.factory.ui(ui, &mut self.ui.factory, &self.status);
+                self.factory.fold_asked()
+            }
+        };
+        if fold {
+            kind.set_folded(&mut self.ui.folded, true);
+        }
+    }
+
+    /// How the panes shared the window last frame (#68, `ui.inspect`'s `layout`).
+    #[must_use]
+    pub const fn layout(&self) -> &layout::LayoutDrawn {
+        &self.layout
     }
 
     /// The gates pane, its runs under the timeline's window when the timeline shows.
@@ -945,6 +1060,97 @@ impl Shell {
 }
 
 /// A size in whole points, as [`PaneSizes`] keeps it.
+/// A band under the timeline (#68), top to bottom in [`BandKind::ALL`]: a pane that slots in
+/// under the timeline adds itself here, with its least height, default, fold and size, and
+/// [`layout::share`] gives it its room.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BandKind {
+    Gates,
+    Factory,
+}
+
+impl BandKind {
+    const ALL: [Self; 2] = [Self::Gates, Self::Factory];
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Gates => "gates",
+            Self::Factory => "factory",
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::Gates => "Gates",
+            Self::Factory => "Factory",
+        }
+    }
+
+    const fn icon(self) -> &'static str {
+        match self {
+            Self::Gates => icons::GATES,
+            Self::Factory => icons::FACTORY,
+        }
+    }
+
+    const fn shown(self, panes: Panes) -> bool {
+        match self {
+            Self::Gates => panes.gates,
+            Self::Factory => panes.factory,
+        }
+    }
+
+    /// The least it shrinks to while open: the gates' header and lanes; the factory's header
+    /// and a floor.
+    const fn least(self) -> f32 {
+        match self {
+            Self::Gates => 90.0,
+            Self::Factory => 140.0,
+        }
+    }
+
+    const fn default(self, defaults: &layout::Defaults) -> f32 {
+        match self {
+            Self::Gates => defaults.gates,
+            Self::Factory => defaults.factory,
+        }
+    }
+
+    const fn size(self, sizes: PaneSizes) -> Option<u32> {
+        match self {
+            Self::Gates => sizes.gates,
+            Self::Factory => sizes.factory,
+        }
+    }
+
+    const fn set_size(self, sizes: &mut PaneSizes, size: Option<u32>) {
+        match self {
+            Self::Gates => sizes.gates = size,
+            Self::Factory => sizes.factory = size,
+        }
+    }
+
+    /// The person's choice of fold, if they made one.
+    const fn chosen(self, folded: layout::Folded) -> Option<bool> {
+        match self {
+            Self::Gates => folded.gates,
+            Self::Factory => folded.factory,
+        }
+    }
+
+    /// Whether it is folded, the choices and defaults merged in `folded`.
+    fn folded(self, folded: layout::Folded) -> bool {
+        self.chosen(folded).unwrap_or(false)
+    }
+
+    const fn set_folded(self, folded: &mut layout::Folded, fold: bool) {
+        match self {
+            Self::Gates => folded.gates = Some(fold),
+            Self::Factory => folded.factory = Some(fold),
+        }
+    }
+}
+
 fn whole_points(size: f32) -> u32 {
     if size.is_finite() { size.round().clamp(0.0, 16_384.0) as u32 } else { 0 }
 }
