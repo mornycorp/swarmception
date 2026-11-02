@@ -328,7 +328,7 @@ fn described(subject: &Subject) -> String {
 
 /// `line` as one text: each run in its colour (made legible on the theme), strong or not; runs
 /// with none in `plain`, else the theme's text colour.
-fn line_job(line: &TipLine, visuals: &egui::Visuals, font: &FontId, plain: Option<Color32>) -> LayoutJob {
+pub(crate) fn line_job(line: &TipLine, visuals: &egui::Visuals, font: &FontId, plain: Option<Color32>) -> LayoutJob {
     let mut job = LayoutJob::default();
     for span in &line.spans {
         let color = match (span.colour, span.strong) {
@@ -355,7 +355,7 @@ fn chip(ui: &mut egui::Ui, mark: &str, colour: Rgb, size: f32) -> egui::Response
 }
 
 /// A figure: its label quiet, its value strong (in its colour when it has one).
-fn fact_pill(ui: &mut egui::Ui, label: &str, value: &str, colour: Option<Color32>) {
+pub(crate) fn fact_pill(ui: &mut egui::Ui, label: &str, value: &str, colour: Option<Color32>) {
     let visuals = ui.visuals().clone();
     let value_colour = colour.map_or_else(|| visuals.strong_text_color(), |c| legible(c, &visuals));
     let mut job = LayoutJob::default();

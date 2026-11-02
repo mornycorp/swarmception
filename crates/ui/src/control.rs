@@ -1,7 +1,8 @@
 //! The window's own commands for a control channel (docs/architecture.md › Automation):
 //! `ui.commands` lists them with their schemas, and the widget's forwarded ones as
 //! `timeline.<id>`; `ui.inspect` reads what the shell shows as data ([`Inspect`]: the panes, the
-//! factory's time and what it drew, the timeline's view and selection), `ui.set` sets it
+//! factory's time and what it drew, the timeline's view and selection, the gates pane's runs),
+//! `ui.set` sets it
 //! ([`UiSet`]), `ui.loaded` answers once the window has loaded ([`Loaded`]) and `ui.screenshot`
 //! saves the window as PNG or PPM ([`Screenshot`]); the app answers those two: it owns the
 //! frame. [`Shell::answer`] runs them, forwards `timeline.<id>`
@@ -30,8 +31,8 @@ use crate::factory::{Jump, Source, Speed, Steps};
 use crate::timeline::Lit;
 use crate::{Panes, Shell, UiState};
 
-/// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53).
-pub const INSPECT_VERSION: u32 = 2;
+/// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61).
+pub const INSPECT_VERSION: u32 = 3;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -138,6 +139,28 @@ pub struct Inspect {
     /// Where the state is kept across a restart, and where it was read from (#53).
     #[serde(default)]
     pub saved: crate::saved::SavedInspect,
+    /// The gates pane (#61).
+    #[serde(default)]
+    pub gates: GatesInspect,
+}
+
+/// The gates pane, as `ui.inspect` reads it (#61): what it drew last frame from `gates.list`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct GatesInspect {
+    /// The window it drew, as `gates.list` returned it.
+    pub window: Option<Span>,
+    /// Each run drawn, `<sub>@<start>`: the coordinator's lane, then the workers', each in
+    /// `gates.list`'s order.
+    pub runs: Vec<String>,
+    /// The headline figures, `label value`.
+    pub figures: Vec<String>,
+    /// The causes table's rows, `cause gate ready`.
+    pub causes: Vec<String>,
+    /// The run under the pointer, `<sub>@<start>`.
+    pub hovered: Option<String>,
+    /// Why there is nothing to draw: `gates.list`'s refusal.
+    pub error: Option<String>,
 }
 
 /// The details pane, as `ui.inspect` reads it (#55).
@@ -406,6 +429,7 @@ impl Shell {
             error: self.details.error().map(str::to_owned),
             bars: self.details.on_timeline(&self.ui.details).map(|on| on.bars.clone()).unwrap_or_default(),
         };
+        let gates = self.gates_inspect();
         Inspect {
             version: INSPECT_VERSION,
             state: self.ui.clone(),
@@ -416,6 +440,20 @@ impl Shell {
             timeline,
             details,
             saved: self.saved(),
+            gates,
+        }
+    }
+
+    /// What the gates pane drew last frame (#61).
+    fn gates_inspect(&self) -> GatesInspect {
+        let drawn = self.gates.drawn();
+        GatesInspect {
+            window: drawn.window.map(|(start, end)| Span { start, end }),
+            runs: drawn.runs.iter().map(|r| format!("{}@{}", r.sub, r.start)).collect(),
+            figures: drawn.figures.clone(),
+            causes: drawn.causes.clone(),
+            hovered: drawn.hovered.as_ref().map(|(sub, start)| format!("{sub}@{start}")),
+            error: self.gates.error().map(str::to_owned),
         }
     }
 
@@ -589,7 +627,7 @@ mod tests {
         let set = r#"{"panes": {"timeline": false, "factory": true}, "at": "2026-10-31T03:42:00Z", "ticket": 7, "speed": "hour", "steps": "merges"}"#;
         let inspect: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
         assert_eq!(inspect.version, INSPECT_VERSION);
-        assert_eq!(inspect.state.panes, Panes { timeline: false, factory: true, details: true }, "details left out: its default");
+        assert_eq!(inspect.state.panes, Panes { timeline: false, factory: true, details: true, gates: true }, "details and gates left out: their defaults");
         assert_eq!(inspect.state.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"));
         assert!(!inspect.state.factory.follow);
         assert_eq!((inspect.state.factory.ticket, inspect.state.factory.speed, inspect.state.factory.steps), (Some(7), Speed::Hour, Steps::Merges));

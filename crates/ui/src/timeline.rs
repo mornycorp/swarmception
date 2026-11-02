@@ -99,15 +99,43 @@ pub enum Lit {
     Nothing,
     /// The bars of the ticket hovered in the factory (#48).
     Hovered { ticket: u64 },
+    /// The bars of the tickets a gate run hovered in the Gates pane carried (#61).
+    HoveredRun,
     /// The bars of what the details pane shows (`details.get`'s `timeline`).
     Details,
 }
 
-/// What the widget was told to highlight: the hovered ticket, else the details' bars, on a
-/// generation of rows.
+/// What a hover elsewhere asks the timeline to highlight, over the details pane's bars: a ticket
+/// hovered in the factory (#48), or the tickets of a gate run hovered in the Gates pane (#61).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Hover {
+    #[default]
+    Nothing,
+    Ticket(u64),
+    /// A gate run, by its sub-agent's id and start, and the tickets it carried.
+    Run {
+        sub: String,
+        start: Timestamp,
+        tickets: Vec<u64>,
+    },
+}
+
+impl Hover {
+    /// The tickets whose bars it lights.
+    fn tickets(&self) -> &[u64] {
+        match self {
+            Self::Nothing => &[],
+            Self::Ticket(issue) => std::slice::from_ref(issue),
+            Self::Run { tickets, .. } => tickets,
+        }
+    }
+}
+
+/// What the widget was told to highlight: the hover's, else the details' bars, on a generation
+/// of rows.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct Lighting {
-    hovered: Option<u64>,
+    hovered: Hover,
     details: Vec<BarRef>,
     generation: Option<u64>,
 }
@@ -176,6 +204,9 @@ pub struct TimelinePane {
     links: Vec<Link>,
     /// Where the widget was drawn last frame.
     rect: Option<egui::Rect>,
+    /// Where its window's start and end were across the screen last frame: its rows' area, right
+    /// of the label column (#61: the Gates pane's runs line up under it).
+    axis: Option<(f32, f32)>,
     /// How long the last load took, its view put back.
     load_time: Option<std::time::Duration>,
 }
@@ -194,6 +225,7 @@ impl Default for TimelinePane {
             scroll_to: None,
             links: Vec::new(),
             rect: None,
+            axis: None,
             load_time: None,
         }
     }
@@ -223,6 +255,13 @@ impl TimelinePane {
             let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
             Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
         })
+    }
+
+    /// Where the window's start and end were across the screen last frame (its rows' area, right of
+    /// the label column); none before the pane has drawn data.
+    #[must_use]
+    pub fn axis(&self) -> Option<(f32, f32)> {
+        self.axis.filter(|_| self.has_data)
     }
 
     /// The pages chosen from bars' context menus since the last call (#17): a bar's Open Issue
@@ -540,14 +579,24 @@ impl TimelinePane {
     /// generation moves (a load clears its highlight, so a reload highlights again); whether it
     /// was told, so a host can draw again.
     pub fn light(&mut self, engine: &mut Session, hovered: Option<u64>, details: &[BarRef]) -> bool {
-        let details = if hovered.is_some() { Vec::new() } else { details.to_vec() };
+        self.light_hover(engine, hovered.map_or(Hover::Nothing, Hover::Ticket), details)
+    }
+
+    /// [`Self::light`] for any [`Hover`]: a gate run's lights the bars of every ticket it carried
+    /// (`timeline.ticketBars` of each), over the details' bars while it lasts (#61).
+    pub fn light_hover(&mut self, engine: &mut Session, hovered: Hover, details: &[BarRef]) -> bool {
+        let details = if hovered == Hover::Nothing { details.to_vec() } else { Vec::new() };
         let wanted = Lighting { hovered, details, generation: self.loaded.filter(|_| self.has_data) };
         if self.lit.as_ref() == Some(&wanted) {
             return false;
         }
-        let bars = match hovered {
-            Some(issue) => engine.call::<TicketBars>(TicketParams { issue }).map(|found| found.bars).unwrap_or_default(),
-            None => wanted.details.clone(),
+        let bars = match &wanted.hovered {
+            Hover::Nothing => wanted.details.clone(),
+            hover => hover
+                .tickets()
+                .iter()
+                .flat_map(|&issue| engine.call::<TicketBars>(TicketParams { issue }).map(|found| found.bars).unwrap_or_default())
+                .collect(),
         };
         self.lit = Some(wanted);
         if !self.has_data {
@@ -564,7 +613,8 @@ impl TimelinePane {
     #[must_use]
     pub fn lit(&self) -> Lit {
         match &self.lit {
-            Some(Lighting { hovered: Some(ticket), .. }) => Lit::Hovered { ticket: *ticket },
+            Some(Lighting { hovered: Hover::Ticket(ticket), .. }) => Lit::Hovered { ticket: *ticket },
+            Some(Lighting { hovered: Hover::Run { .. }, .. }) => Lit::HoveredRun,
             Some(Lighting { details, .. }) if !details.is_empty() => Lit::Details,
             _ => Lit::Nothing,
         }
@@ -666,6 +716,8 @@ impl TimelinePane {
             rect
         });
         self.rect = Some(shown.inner);
+        let label_width = self.widget.session().call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.label_width);
+        self.axis = label_width.filter(|w| w.is_finite()).map(|w| (shown.inner.left() + w.clamp(0.0, shown.inner.width()), shown.inner.right()));
         self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));
     }
 }

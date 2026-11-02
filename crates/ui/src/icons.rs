@@ -32,3 +32,5 @@ pub const BACK: &str = "\u{f060}";
 pub const EXTERNAL: &str = "\u{f35d}";
 /// broadcast-tower: the live watch (#54).
 pub const LIVE: &str = "\u{f519}";
+/// clipboard-check: the Gates pane (#61).
+pub const GATES: &str = "\u{f46c}";

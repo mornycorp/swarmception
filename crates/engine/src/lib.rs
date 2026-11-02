@@ -13,6 +13,7 @@ pub mod details_cmds;
 pub mod engine_cmds;
 pub mod error;
 pub mod factory_cmds;
+pub mod gates_cmds;
 pub mod issues;
 pub mod issues_cmds;
 pub mod live;
