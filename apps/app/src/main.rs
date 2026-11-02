@@ -199,14 +199,8 @@ impl Options {
                         other => return Err(format!("--grouping takes flat or workers, not {other}")),
                     });
                 }
-                "--collapse" => {
-                    // `--collapse` alone leaves out the empty rows; a mode may follow (#74).
-                    let mode = args.peek().and_then(|next| collapse(next));
-                    if mode.is_some() {
-                        args.next();
-                    }
-                    options.rows.collapse = Some(mode.unwrap_or(Collapse::Empty));
-                }
+                // Alone, the empty rows left out; a mode may follow (#74).
+                "--collapse" => options.rows.collapse = args.next_if(|next| collapse(next).is_some()).and_then(|m| collapse(m)).or(Some(Collapse::Empty)),
                 "--panes" => options.panes = Some(panes(&value()?)?),
                 "--details" => options.details = Some(subject(&value()?)?),
                 "--at" => {
