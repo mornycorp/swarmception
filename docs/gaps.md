@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 3: the Factory revised, colour scheme B, the reduced toolbar, abandoned tickets) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 4: the control channel and MCP, the Details pane, the widget's highlight and durations) · **Target:** M2
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,16 +19,18 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | open | | 4–8 h |
-| 2 | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | open | | 3–6 h |
-| 3 | [G12 A highlight that leaves the selection alone](#g12-a-highlight-that-leaves-the-selection-alone) | open | | 1–3 h |
-| 4 | [G14 The widget's toolbar and labels read clearly](#g14-the-widgets-toolbar-and-labels-read-clearly) | open | swarm-timeline#183 | 1–2 h |
-| 5 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
-| 6 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
-| 7 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42 | 3–6 h |
-| 8 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
-| 9 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 10 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| 1 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
+| 2 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
+| 3 | [G16 The details pane and the timeline select together](#g16-the-details-pane-and-the-timeline-select-together) | open | | 2–4 h |
+| 4 | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | open | | 2–4 h |
+| 5 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42 | 3–6 h |
+| 6 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
+| 7 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 8 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| — | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | done | #46 | |
+| — | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | done | #47 | |
+| — | [G12 A highlight that leaves the selection alone](#g12-a-highlight-that-leaves-the-selection-alone) | done | #48, swarm-timeline#188 | |
+| — | [G14 The widget's toolbar and labels read clearly](#g14-the-widgets-toolbar-and-labels-read-clearly) | done | #48, swarm-timeline#183, #188 | |
 | — | [G10 The macOS View menu holds the system's tab items](#g10-the-macos-view-menu-holds-the-systems-tab-items) | done | #9 | |
 | — | [G11 An abandoned ticket runs on to the last event](#g11-an-abandoned-ticket-runs-on-to-the-last-event) | done | #28 | |
 | — | [G7 Tickets carry their titles](#g7-tickets-carry-their-titles) | done | #17 | |
@@ -55,14 +57,16 @@ marked **Human:** with what is needed.
 
 ## G12 A highlight that leaves the selection alone
 
-- **Missing:** hovering a Factory chip selects its ticket's bars on the timeline, and the
-  widget has no highlight apart from the selection, so the Factory sets the person's selection
-  aside and puts it back on leave (#18, PR #19). A highlight command in swarm-timeline (an
-  emphasis on ranges that isn't the selection) would make it plain.
-- **Left:** a swarm-timeline issue and the command there; the Factory's hover moves to it.
-- **Evidence:** `crates/ui/src/factory.rs`; `crates/ui/tests/factory_pane.rs`
-  (`a_persons_selection_survives_hovering_a_chip_and_leaving_it`).
-- **Estimate:** 1–3 agent-hours, most in swarm-timeline.
+- **Done** (swarm-timeline#188, PR #189; #48, PR #51): the widget has a highlight apart from the
+  selection (`highlight.set`/`highlight.clear`, an amber ring, in its state), and hovering a
+  Factory chip highlights the ticket's bars instead of borrowing the selection: the selection,
+  focus, playhead and the Details pane stay on the person's choice, and `ui.inspect` reports
+  `highlighted` beside the selection.
+- **Left elsewhere:** zoomed out, a packed bar shows the ring only when its first range is the
+  highlighted one (the widget's).
+- **Evidence:** `crates/ui/src/factory.rs`, `timeline.rs`; `crates/ui/tests/factory_pane.rs`
+  (`hovering_a_chip_highlights_its_bars_and_never_touches_the_selection`); screenshot checked
+  2026-11-02.
 
 ## G13 Issues fetched incrementally
 
@@ -76,12 +80,40 @@ marked **Human:** with what is needed.
 
 ## G14 The widget's toolbar and labels read clearly
 
-- **Missing:** with Swarmception's reduced toolbar (#35, PR #39; swarm-timeline#186) the widget
-  draws its ➕ ➖ zoom buttons fainter than its fit button though all three work; a bar's label
-  and its tooltip still give durations in seconds (`duration 3,663 s`, swarm-timeline#183); bold
-  in the tooltip's monospace font is barely heavier than regular.
-- **Left:** fixes in swarm-timeline, then a pin bump here.
-- **Estimate:** 1–2 agent-hours, most in swarm-timeline.
+- **Done** (swarm-timeline#183, #188, PR #189; #48, PR #51; the pin at 9bf2651): the zoom
+  buttons' icons are drawn as lines in the button's colour, as plain as Fit; durations from a
+  minute read in their two largest units (`3 min 20 s`, `1 h 59 min`, `25 h 03 min`) in bar
+  labels, tooltips, the ruler's Δ and measurements; a strong span is struck three times, plainly
+  bold.
+- **Left elsewhere:** a selected range's outline in a row scrolled under the ruler can draw over
+  the ruler and minimap (the widget's; the highlight had the same fault and was fixed).
+- **Evidence:** `crates/ui/tests/timeline_pane.rs`
+  (`bar_labels_and_tooltips_read_durations_in_hours_and_minutes`); screenshots checked
+  2026-11-02.
+
+## G15 Automation reaches the window
+
+- **Missing:** after G2 (#46, PR #49) an agent drives the window over `--control` by hand: MCP
+  serves the headless engine only, so its tools don't reach a running window; `ui.screenshot`
+  writes PPM only (no PNG encoder in the lock); there's no `swarmception-cli` subcommand that
+  sends a series of requests to a running app; the widget's forwarded commands aren't in
+  `ui.commands` (`timeline.engine.commands` lists them).
+- **Left:** `swarmception-cli mcp --control <file>` (tools for `ui.*` and `timeline.*` through a
+  running window); PNG screenshots; a CLI client (`swarmception-cli send` / a script of steps);
+  the widget's commands listed with schemas.
+- **Evidence:** `crates/automation`, `apps/cli`.
+- **Estimate:** 2–4 agent-hours.
+
+## G16 The details pane and the timeline select together
+
+- **Missing:** after G3 (#47, PR #50) the Details pane follows the timeline, but not the other
+  way: selecting a subject in the pane (a line, a name, a chip, ←) doesn't select or highlight
+  its bars on the timeline; a session can't be chosen from the timeline (the widget has no
+  group-row selection); `ui.set` has no `details` field.
+- **Left:** the pane's subject highlights (or selects) its bars; a session from its worker's row
+  (a widget change); `ui.set {details}`.
+- **Evidence:** `crates/ui/src/details.rs`, `crates/ui/tests/details_pane.rs`.
+- **Estimate:** 2–4 agent-hours, part in swarm-timeline.
 
 ## G1 The ruler reads clock time
 
@@ -96,21 +128,33 @@ marked **Human:** with what is needed.
 
 ## G2 Automation: the control channel and MCP
 
-- **Missing:** the architecture's control channel (`--control`, JSON lines on loopback with a
-  token, `ui.inspect`/`ui.set`) and MCP, so an agent can drive the app as a person does.
-- **Done:** the engine's commands and the CLI (`commands`, `run`).
-- **Left:** a `swarmception-automation` crate (L4) on the pattern of `timeline-automation`;
-  `swarmception --control`; `swarmception-cli serve` and `mcp`; forwarding the widget's commands.
-- **Evidence:** `apps/cli`, `crates/engine`.
-- **Measured:** none yet.
-- **Estimate:** 4–8 agent-hours.
+- **Done** (#46, PR #49): the `swarmception-automation` crate (L4, on `timeline-automation`'s
+  pattern and types). `swarmception --repo <r> --control [<port>] [--control-file <f>]` listens
+  on loopback with a random token: JSON lines `{v, token, id, command, params}`, typed errors;
+  the engine's commands, `ui.commands`, `ui.inspect` (panes, the Factory's *t* and stations, the
+  timeline's window, selection and highlight), `ui.set`, `ui.screenshot`, and the widget's
+  commands forwarded as `timeline.<id>`. `swarmception-cli serve` speaks it headless and
+  `swarmception-cli mcp` serves the engine's commands as MCP tools.
+- **Measured:** 22 tests, over a real socket and the CLI as a child process (2026-11-02); the
+  app driven on mc-engine over the socket, screenshots checked.
+- **Left:** [G15](#g15-automation-reaches-the-window).
+- **Evidence:** `crates/automation`, `apps/app/src/control.rs`, `apps/cli/tests/automation.rs`.
 
 ## G3 A details pane for what is selected
 
-- **Missing:** a click on a bar or pin shows its tooltip only; the full story (the session's
-  events in order, a gate's notes and merges, a ticket's claims and send-backs) needs a pane.
-- **Left:** a `rows.details` (or `events.list`) command; a Details pane in the View menu.
-- **Estimate:** 3–6 agent-hours.
+- **Done** (#47, PR #50): `details.get` (a ticket, a gate run, a session, a merge onto main, or a
+  timeline bar) returns a header (colour, title, state, labels, PR, links), figures and the
+  story in time order with phase colours and durations; View ▸ Details draws it beside the
+  timeline and follows the person's bar selection, a Factory chip, and a gate run clicked in
+  the Factory (now clickable); a line, a name or a chip in the pane selects that, ← goes back;
+  `--details <subject>` for screenshots.
+- **Measured:** mc-engine #190 in 6 lines (claim → merge 21 min 03 s); swarm-timeline #170 in 8
+  with its send-back for a conflict; every ticket of this clone's own swarm read in order
+  (2026-11-02).
+- **Left:** [G16](#g16-the-details-pane-and-the-timeline-select-together).
+- **Evidence:** `crates/domain/src/details.rs`, `crates/engine/src/details_cmds.rs`,
+  `crates/engine/tests/details.rs`, `crates/ui/tests/details_pane.rs`; screenshots checked
+  2026-11-02.
 
 ## G4 Watching a live swarm
 
@@ -159,13 +203,13 @@ marked **Human:** with what is needed.
     for each send back; stepping back and forth by key moment (`factory.moments`, `factory.step`).
   - **Statistics** (#20, PR #21; #22, PR #23): `stats.get` and a strip in the Factory's header
     for the visible window; a click on an hour's bar zooms the timeline to it. Tickets landed per
-    active hour (active = a worker on shift, less gaps over 15 min with no events): mc-engine 7.3
-    (82 in 11.25 h), swarm-timeline 10.5 (84 in 8.04 h) (measured 2026-11-01).
+    active hour (active = a worker on shift, less gaps over 15 min with no events): mc-engine 7.2
+    (98 in 13.69 h), swarm-timeline 10.6 (86 in 8.12 h) (measured 2026-11-02).
   - **Colours** (#15, PR #25; #34, PR #36; #40, PR #41): one colour per ticket from a fixed
     11-colour palette (scheme B, the owner's choice), shared by the timeline and the Factory, kept
     clear of the phase colours.
 - **Left:** a gates pane (runs, causes, durations over time); model and effort compared per
-  worker; a click on a chip selecting it on the timeline (a hover does, see G12).
+  worker.
 - **Evidence:** `crates/domain/src/factory.rs`, `moments.rs`, `stats.rs`, `colours.rs`;
   `crates/ui/src/factory*.rs`.
 - **Estimate:** 3–6 agent-hours, in issues of their own.
@@ -174,6 +218,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 4: G2, G3, G12, G14 done (#46–#48, swarm-timeline#183, #188); G15, G16 new; focus G5, G4, G16 |
 | 2026-11-01 | minor | Batch 3: G10, G11 done (#9, #28); G9 grew (#31–#33, #40, #42); G14 new; focus G2, G3, G12 |
 | 2026-11-01 | minor | Batch 2: G7 done (#17); G9 partial (#18, #20, #22, #15); G12, G13 new; G11 up |
 | 2026-10-31 | minor | Batch 1: G1 done (#2); G10 (#9) and G11 new; ranking moved |

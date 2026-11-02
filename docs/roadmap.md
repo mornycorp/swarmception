@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (batch 3: the Factory revised, colour scheme B, the reduced toolbar, abandoned tickets) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 4: the control channel and MCP, the Details pane, the widget's highlight and durations) · **Target:** M2
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,14 +29,15 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **Automation: the control channel and MCP** ([G2](gaps.md#g2-automation-the-control-channel-and-mcp))
-2. **A details pane** ([G3](gaps.md#g3-a-details-pane-for-what-is-selected))
-3. **A highlight that leaves the selection alone** ([G12](gaps.md#g12-a-highlight-that-leaves-the-selection-alone))
+1. **The state survives a restart** ([G5](gaps.md#g5-the-state-survives-a-restart)): the last of M2
+2. **Watching a live swarm** ([G4](gaps.md#g4-watching-a-live-swarm))
+3. **The details pane and the timeline select together** ([G16](gaps.md#g16-the-details-pane-and-the-timeline-select-together))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 4: M2 mostly built (G2, G3 done); focus moved to G5, G4, G16 |
 | 2026-11-01 | minor | Batch 3: focus moved to G2, G3, G12 (G10, G11 done) |
 | 2026-11-01 | minor | Batch 2: focus moved (G11 up); the Factory and statistics are M3 work done early |
 | 2026-10-31 | minor | Batch 1: M1 is the tickets' timeline in clock time; the clock left M2; focus moved |
