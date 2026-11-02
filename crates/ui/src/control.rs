@@ -33,8 +33,8 @@ use crate::{Panes, Shell, UiState};
 
 /// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
 /// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
-/// workers pane (#67).
-pub const INSPECT_VERSION: u32 = 5;
+/// workers pane (#67); 6: opening a repository (`open`, #69).
+pub const INSPECT_VERSION: u32 = 6;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -154,6 +154,9 @@ pub struct Inspect {
     /// The workers pane (#67).
     #[serde(default)]
     pub workers: WorkersInspect,
+    /// Opening a repository (#69): a folder refused, the path being typed, Open Recent's items.
+    #[serde(default)]
+    pub open: crate::OpenInspect,
 }
 
 /// The workers pane, as `ui.inspect` reads it (#67): what it drew last frame from
@@ -411,6 +414,12 @@ impl Shell {
             other if other.starts_with("ui.") => Err(EngineError::UnknownCommand { command: other.to_owned() }.into()),
             other => match other.strip_prefix(WIDGET_PREFIX).filter(|rest| rest.contains('.')) {
                 Some(widget) => self.timeline.widget().answer(widget, params).map_err(ShellError::Widget),
+                // Through the shell, as File ▸ Open… is (#69): the open repository's state saved
+                // first, a refusal said in the window.
+                None if other == "repo.open" => {
+                    let open = parse::<swarmception_engine::repo_cmds::OpenParams>(params)?;
+                    reply(&self.open_repo(&open.path)?)
+                }
                 None => self.engine.execute(other, params).map_err(ShellError::Engine),
             },
         }
@@ -456,13 +465,7 @@ impl Shell {
             load_ms: self.timeline.load_time().map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             in_view: self.timeline.rows_in_view(),
         };
-        let shown = self.details.details().filter(|_| self.details.on_timeline(&self.ui.details).is_some());
-        let details = DetailsInspect {
-            subject: self.ui.details.subject.clone(),
-            title: shown.map(|d| d.title.clone()),
-            error: self.details.error().map(str::to_owned),
-            bars: self.details.on_timeline(&self.ui.details).map(|on| on.bars.clone()).unwrap_or_default(),
-        };
+        let details = self.details_inspect();
         let gates = self.gates_inspect();
         Inspect {
             version: INSPECT_VERSION,
@@ -477,6 +480,7 @@ impl Shell {
             gates,
             layout: self.layout().clone(),
             workers: self.workers_inspect(),
+            open: self.open_inspect(),
         }
     }
 
@@ -488,6 +492,17 @@ impl Shell {
             rows: drawn.rows.iter().map(|r| std::iter::once(r.key.clone()).chain(r.cells.iter().cloned()).collect::<Vec<_>>().join(" | ")).collect(),
             hovered: drawn.hovered.clone(),
             error: self.workers.error().map(str::to_owned),
+        }
+    }
+
+    /// What the details pane shows (#55).
+    fn details_inspect(&self) -> DetailsInspect {
+        let shown = self.details.details().filter(|_| self.details.on_timeline(&self.ui.details).is_some());
+        DetailsInspect {
+            subject: self.ui.details.subject.clone(),
+            title: shown.map(|d| d.title.clone()),
+            error: self.details.error().map(str::to_owned),
+            bars: self.details.on_timeline(&self.ui.details).map(|on| on.bars.clone()).unwrap_or_default(),
         }
     }
 

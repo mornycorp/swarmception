@@ -14,6 +14,10 @@ pub const CLOCK: &str = "\u{f017}";
 pub const WARNING: &str = "\u{f071}";
 pub const SPINNER: &str = "\u{f110}";
 pub const FOLDER: &str = "\u{f07c}";
+/// history: File ▸ Open Recent (#69).
+pub const RECENT: &str = "\u{f1da}";
+/// times-circle: Clear Menu (#69).
+pub const CLEAR: &str = "\u{f057}";
 pub const QUIT: &str = "\u{f2f5}";
 pub const FACTORY: &str = "\u{f275}";
 pub const PLAY: &str = "\u{f04b}";

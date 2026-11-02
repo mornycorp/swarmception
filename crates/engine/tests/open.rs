@@ -117,7 +117,8 @@ fn another_repository_replaces_the_one_open_and_goes_first_in_the_recent_list() 
     let opened = open(&mut session, &b).unwrap();
     assert_eq!(session.opens(), opens + 1);
     assert_eq!((opened.repo.as_deref(), opened.tickets), (Some(b.display().to_string().as_str()), 1));
-    let bars: swarmception_engine::factory_cmds::TicketBarsResult = serde_json::from_str(&session.execute("timeline.ticketBars", r#"{"issue": 9}"#).unwrap()).unwrap();
+    let bars: swarmception_engine::factory_cmds::TicketBarsResult =
+        serde_json::from_str(&session.execute("timeline.ticketBars", r#"{"issue": 9}"#).unwrap()).unwrap();
     assert!(!bars.bars.is_empty(), "b's ticket");
     let list = recent(&mut session);
     assert_eq!(list.repos.iter().map(|r| r.path.clone()).collect::<Vec<_>>(), [b.display().to_string(), a.display().to_string()]);
@@ -164,7 +165,8 @@ fn an_open_while_a_read_goes_on_lands_the_new_repository() {
     }
     let status: StatusResult = serde_json::from_str(&session.execute("repo.status", "").unwrap()).unwrap();
     assert_eq!(status.repo.as_deref(), Some(b.display().to_string().as_str()));
-    let bars: swarmception_engine::factory_cmds::TicketBarsResult = serde_json::from_str(&session.execute("timeline.ticketBars", r#"{"issue": 9}"#).unwrap()).unwrap();
+    let bars: swarmception_engine::factory_cmds::TicketBarsResult =
+        serde_json::from_str(&session.execute("timeline.ticketBars", r#"{"issue": 9}"#).unwrap()).unwrap();
     assert!(!bars.bars.is_empty(), "b's rows, not a's");
     for dir in [a, b] {
         std::fs::remove_dir_all(dir).ok();

@@ -30,6 +30,10 @@ pub struct NativeMenu {
     /// Kept alive: the items below are its.
     _menu: Menu,
     items: Vec<(MenuAction, Item)>,
+    /// File ▸ Open Recent (#69): its items, rebuilt when the shell's recent list changes.
+    recent: Submenu,
+    /// What Open Recent lists now: its repositories' labels.
+    recent_shown: Option<Vec<String>>,
     clicks: Receiver<MenuAction>,
     /// What the items show now; `None` after a click, which may have toggled a check mark itself.
     shown: Option<MenuState>,
@@ -62,6 +66,7 @@ impl Item {
 /// The Mac shortcut of `action`.
 const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
     match action {
+        MenuAction::Open => Some((Modifiers::META, Code::KeyO)),
         MenuAction::Reload => Some((Modifiers::META, Code::KeyR)),
         MenuAction::Fetch => Some((Modifiers::META.union(Modifiers::SHIFT), Code::KeyR)),
         MenuAction::Quit => Some((Modifiers::META, Code::KeyQ)),
@@ -73,7 +78,10 @@ const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
         | MenuAction::Workers
         | MenuAction::Grouping(_)
         | MenuAction::Collapse
-        | MenuAction::Fit => None,
+        | MenuAction::Fit
+        | MenuAction::Recent
+        | MenuAction::OpenRecent(_)
+        | MenuAction::ClearRecent => None,
     }
 }
 
@@ -95,11 +103,13 @@ fn mac_items(actions: &[Option<MenuAction>]) -> Vec<Option<MenuAction>> {
     actions
 }
 
-/// Appends `actions`' items to `submenu`, a separator for each `None`.
-fn append(submenu: &Submenu, actions: &[Option<MenuAction>], items: &[(MenuAction, Item)]) -> Result<(), muda::Error> {
+/// Appends `actions`' items to `submenu`, a separator for each `None`, Open Recent's submenu for
+/// [`MenuAction::Recent`].
+fn append(submenu: &Submenu, actions: &[Option<MenuAction>], items: &[(MenuAction, Item)], recent: &Submenu) -> Result<(), muda::Error> {
     for action in actions {
         match action {
             None => submenu.append(&PredefinedMenuItem::separator())?,
+            Some(MenuAction::Recent) => submenu.append(recent)?,
             Some(action) => {
                 if let Some((_, item)) = items.iter().find(|(a, _)| a == action) {
                     submenu.append(item.as_menu_item())?;
@@ -118,7 +128,7 @@ impl NativeMenu {
     /// What muda ran into building them; the window keeps its own menu bar then.
     pub fn install(ctx: &egui::Context, state: &MenuState) -> Result<Self, muda::Error> {
         let mut items = Vec::new();
-        for action in MenuAction::ALL {
+        for action in MenuAction::ALL.into_iter().filter(|a| *a != MenuAction::Recent) {
             let accelerator = shortcut(action).map(|(mods, code)| Accelerator::new(mods, code));
             let item = match state.checked(action) {
                 Some(checked) => Item::Check(CheckMenuItem::with_id(action.id(), label(action), state.enabled(action), checked, accelerator)),
@@ -145,11 +155,12 @@ impl NativeMenu {
         ] {
             app.append(&predefined)?;
         }
-        append(&app, &[Some(MenuAction::Quit)], &items)?;
+        let recent = Submenu::with_id(MenuAction::Recent.id(), label(MenuAction::Recent), true);
+        append(&app, &[Some(MenuAction::Quit)], &items, &recent)?;
         let file = Submenu::new("File", true);
-        append(&file, &mac_items(&MenuAction::FILE), &items)?;
+        append(&file, &mac_items(&MenuAction::FILE), &items, &recent)?;
         let view = Submenu::new("View", true);
-        append(&view, &mac_items(&MenuAction::VIEW), &items)?;
+        append(&view, &mac_items(&MenuAction::VIEW), &items, &recent)?;
 
         let menu = Menu::new();
         menu.append_items(&[&app, &file, &view])?;
@@ -164,7 +175,29 @@ impl NativeMenu {
                 waker.request_repaint();
             }
         }));
-        Ok(Self { _menu: menu, items, clicks, shown: Some(*state) })
+        Ok(Self { _menu: menu, items, recent, recent_shown: None, clicks, shown: Some(*state) })
+    }
+
+    /// Open Recent's items as `labels` has them (#69): each repository, then Clear Menu, which is
+    /// greyed out when there is none.
+    fn show_recent(&mut self, labels: Vec<String>) {
+        if self.recent_shown.as_ref() == Some(&labels) {
+            return;
+        }
+        while self.recent.remove_at(0).is_some() {}
+        let built = labels
+            .iter()
+            .zip(0u8..)
+            .map(|(text, n)| self.recent.append(&MenuItem::with_id(MenuAction::OpenRecent(n).id(), text, true, None)))
+            .chain([
+                self.recent.append(&PredefinedMenuItem::separator()),
+                self.recent.append(&MenuItem::with_id(MenuAction::ClearRecent.id(), label(MenuAction::ClearRecent), !labels.is_empty(), None)),
+            ])
+            .collect::<Result<Vec<()>, _>>();
+        if let Err(e) = built {
+            eprintln!("swarmception: Open Recent's items: {e}");
+        }
+        self.recent_shown = Some(labels);
     }
 
     /// Runs the items clicked since the last frame.
@@ -178,6 +211,8 @@ impl NativeMenu {
     /// Brings the items' enabled and checked marks in step with the shell.
     pub fn show(&mut self, shell: &mut Shell) {
         let state = shell.menu_state();
+        let labels: Vec<String> = (0..state.recent).filter_map(|n| shell.recent_label(n)).collect();
+        self.show_recent(labels);
         if self.shown == Some(state) {
             return;
         }
@@ -215,7 +250,14 @@ mod tests {
 
     #[test]
     fn quit_moves_to_the_app_menu() {
-        assert_eq!(mac_items(&MenuAction::FILE), [Some(MenuAction::Reload), Some(MenuAction::Fetch)]);
+        assert_eq!(mac_items(&MenuAction::FILE), [Some(MenuAction::Open), Some(MenuAction::Recent), None, Some(MenuAction::Reload), Some(MenuAction::Fetch)]);
         assert_eq!(mac_items(&MenuAction::VIEW), MenuAction::VIEW);
+    }
+
+    #[test]
+    fn open_is_command_o() {
+        assert_eq!(shortcut(MenuAction::Open), Some((Modifiers::META, Code::KeyO)));
+        assert_eq!(label(MenuAction::Open), "Open…");
+        assert_eq!(shortcut(MenuAction::OpenRecent(0)), None);
     }
 }

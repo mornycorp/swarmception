@@ -23,6 +23,7 @@ mod gates;
 pub mod icons;
 pub mod layout;
 pub mod menu;
+mod open;
 pub mod saved;
 pub mod shot;
 mod timeline;
@@ -54,6 +55,7 @@ pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use gates::{GatesDrawn, GatesPane, RunDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
+pub use open::{FolderPicker, MenuDrawn, OpenInspect, Refused};
 pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
 pub use workers::{
     Column as WorkersColumn, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView, cells as worker_cells,
@@ -161,6 +163,8 @@ pub struct Shell {
     window_place: Option<saved::WindowPlace>,
     /// How the panes shared the window last frame (#68).
     layout: layout::LayoutDrawn,
+    /// Opening repositories (#69): the folder picker, the recent list, a refusal shown.
+    opening: open::Opening,
 }
 
 impl Shell {
@@ -199,11 +203,14 @@ impl Shell {
             keeper: None,
             window_place: None,
             layout: layout::LayoutDrawn::default(),
+            opening: open::Opening::default(),
         };
         if let Some(repo) = repo {
             let result = shell.engine.call::<Open>(OpenParams { path: repo.display().to_string() });
             shell.note(result);
         }
+        // The repository opened at the start is the shell's from the first frame.
+        shell.opening.opens = shell.engine.opens();
         shell
     }
 
@@ -224,6 +231,8 @@ impl Shell {
         if let Some(state) = loaded.and_then(|l| l.state.as_ref()) {
             self.restore(state);
         }
+        // The recent list is app-wide, kept beside the repositories' states (#69).
+        self.keep_recent(&store);
         self.keeper = Some(saved::Keeper::new(store, repo, loaded));
     }
 
@@ -436,6 +445,7 @@ impl Shell {
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
             live: self.live.on,
+            recent: u8::try_from(self.recent().len()).unwrap_or(u8::MAX),
         }
     }
 
@@ -465,6 +475,11 @@ impl Shell {
     pub fn run_menu(&mut self, ctx: &egui::Context, action: MenuAction) {
         self.sync();
         match action {
+            MenuAction::Open => self.ask_open(),
+            // A submenu: its items run.
+            MenuAction::Recent => {}
+            MenuAction::OpenRecent(n) => self.open_recent(n),
+            MenuAction::ClearRecent => self.clear_recent(),
             MenuAction::Reload => self.reload(),
             MenuAction::Fetch => self.fetch(),
             MenuAction::Quit => {
@@ -502,6 +517,9 @@ impl Shell {
         self.engine.poll();
         let revision = self.engine.revision();
         if self.status_at != Some(revision) {
+            // Another repository opened (#69): switched to first.
+            self.sync_opening();
+            let revision = self.engine.revision();
             self.status_at = Some(revision);
             if let Ok(status) = self.engine.call::<Status>(NoParams {}) {
                 self.status = status;
@@ -543,7 +561,12 @@ impl Shell {
         }
         if !self.native_menu {
             egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+            // ⌘O / Ctrl+O, as the system menu bar's File ▸ Open… has it.
+            if ui.ctx().input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O))) {
+                self.ask_open();
+            }
         }
+        self.opening_ui(ui.ctx());
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
         if self.ui.panes.factory {
@@ -876,7 +899,8 @@ impl Shell {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.menu_state();
         egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::FILE));
+            let file = ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::FILE));
+            self.note_menu(Some(file.response.rect), None);
             ui.menu_button("View", |ui| self.menu_items(ui, state, &MenuAction::VIEW));
         });
     }
@@ -889,6 +913,11 @@ impl Shell {
             };
             if action == MenuAction::Grouping(Grouping::Flat) {
                 ui.label("Tickets");
+            }
+            if action == MenuAction::Recent {
+                let shown = ui.menu_button(format!("{}  {}", action.icon(), action.label()), |ui| self.recent_menu(ui, state));
+                self.note_menu(None, Some(shown.response.rect));
+                continue;
             }
             let label = format!("{}  {}", action.icon(), action.label());
             let enabled = state.enabled(action);
@@ -940,7 +969,7 @@ impl Shell {
             let s = &self.status;
             match &s.repo {
                 Some(repo) => ui.label(format!("{}  {repo}", icons::FOLDER)),
-                None => ui.weak("No repository: start with --repo <path>"),
+                None => ui.weak("No repository: File ▸ Open… (⌘O) opens a swarm's clone"),
             };
             if let (Some(reference), Some(commit)) = (&s.reference, &s.commit) {
                 ui.separator();
@@ -1259,7 +1288,8 @@ mod tests {
                 workers: false,
                 grouping: Grouping::Flat,
                 collapse: false,
-                live: false
+                live: false,
+                recent: 0
             }
         );
         // Live is `live.set`, and the menu's mark is what `live.get` says.
