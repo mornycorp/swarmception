@@ -74,7 +74,8 @@ pub struct Gates {
     pub inferred: usize,
     /// Passed ÷ (passed + failed); none when neither.
     pub pass_rate: Option<f64>,
-    /// The failures by their note's `cause=…` (`unstated` without one), most first.
+    /// The failures by their note's `cause=…` (`unstated` without one) and, for a `ready`
+    /// check, its `step=…` ([`failure_label`]: `build/clippy`), most first.
     pub causes: Vec<Cause>,
 }
 
@@ -289,6 +290,26 @@ pub fn cause_of(note: &str) -> Option<String> {
     let rest = note.get(at + "cause=".len()..)?;
     let cause: String = rest.chars().take_while(|c| *c != ';' && !c.is_whitespace()).take(64).collect();
     (!cause.is_empty()).then_some(cause)
+}
+
+/// The `ci` step a failed `ready` check's stop note names: `step=<word>` (swarm-core's `ready`
+/// writes `rc=<n>; cause=<cause>; step=<step>`, #77), a field of its own; none in an older note.
+#[must_use]
+pub fn step_of(note: &str) -> Option<String> {
+    let step = note.split(|c: char| c == ';' || c.is_whitespace()).find_map(|field| field.strip_prefix("step="))?;
+    let step: String = step.chars().take(64).collect();
+    (!step.is_empty()).then_some(step)
+}
+
+/// What a failure reads as in the causes: its cause (`unstated` without one), and the `ci` step it
+/// failed at when that says more: `build/clippy`, `other/fmt`, `test` (not `test/test`).
+#[must_use]
+pub fn failure_label(cause: Option<&str>, step: Option<&str>) -> String {
+    let cause = cause.unwrap_or("unstated");
+    match step {
+        Some(step) if step != cause => format!("{cause}/{step}"),
+        _ => cause.to_owned(),
+    }
 }
 
 fn worker_stats(workers: &[&Agent], tickets: &[Ticket], active: &Intervals, landed: &[&Ticket]) -> Vec<WorkerStats> {
@@ -597,6 +618,22 @@ mod tests {
         assert_eq!(cause_of("rc=1; cause=test").as_deref(), Some("test"));
         assert_eq!(cause_of("rc=1; cause="), None);
         assert_eq!(cause_of("rc=1"), None);
+    }
+
+    /// #77: a `ready` stop's `step=`, a field of its own; an older note names none.
+    #[test]
+    fn steps_read_from_notes_and_labelled_with_their_cause() {
+        assert_eq!(step_of("rc=101; cause=build; step=clippy").as_deref(), Some("clippy"));
+        assert_eq!(step_of("rc=1;step=fmt").as_deref(), Some("fmt"));
+        assert_eq!(step_of("rc=1; substep=fmt"), None, "a field, not a suffix");
+        assert_eq!(step_of("rc=1; step="), None);
+        assert_eq!(step_of("rc=1"), None);
+        assert_eq!(step_of(&format!("rc=1; step={}", "s".repeat(200))).map(|s| s.len()), Some(64), "a hostile one is cut");
+        assert_eq!(failure_label(Some("build"), Some("clippy")), "build/clippy");
+        assert_eq!(failure_label(Some("test"), Some("test")), "test");
+        assert_eq!(failure_label(Some("test"), None), "test");
+        assert_eq!(failure_label(None, None), "unstated");
+        assert_eq!(failure_label(None, Some("fmt")), "unstated/fmt");
     }
 
     #[test]

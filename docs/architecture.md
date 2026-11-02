@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -101,7 +101,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's. `gates` (#61) is how the gate behaved over a window (`GatesList`): every run, the
   coordinator's gates (`factory::gate_runs`, inferred ones too) and the workers' `ready` checks
   in two `Lane`s, each with its start, end, duration, kind, `GateResult` (passed, failed with its
-  cause, no result, running). **One definition of a gate run** (#75): `gates::runs` reads them
+  cause, no result, running); a failed `ready` check's stop also names the `ci` step it failed at
+  (`rc=<n>; cause=<cause>; step=<step>`, swarm-core's `ready`, #77: `Run::step`), and its
+  failures count by `stats::failure_label` (`build/clippy`; an older stop's cause unknown,
+  `unstated`). **One definition of a gate run** (#75): `gates::runs` reads them
   and `gates::figures` counts them, for `gates.list` and `stats.get` (`Stats::gates` and `ready`,
   `From<&Figures>`) alike, so one window gives one count from both; a gate that logged no
   `sub.start`, read from the merges and send backs naming it, counts, and each lane's

@@ -672,6 +672,7 @@ mod tests {
             kind: None,
             result: GateResult::Passed,
             cause: None,
+            step: None,
             prs: Vec::new(),
             tickets: Vec::new(),
             merges: Vec::new(),

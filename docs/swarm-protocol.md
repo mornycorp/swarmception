@@ -3,7 +3,7 @@
      `sync-assets --check` fails on a copy that differs. -->
 # The swarm protocol
 
-> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-10-31 · **Change:** minor (no refactoring pass at the end of a worker's task) · **Target:** M1
+> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-02 · **Change:** minor (a failed `ready` check says why) · **Target:** M1
 
 How a swarm of agents builds Swarmception: the roles, the claim, the tracking timeline, the
 gates, the coordinator's loop and the periodic full gate. Every swarm that shares Swarm Core
@@ -223,8 +223,10 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
    push on a conflict), pushes, marks the PR ready for review (which starts its checks:
    the workflows run on `ready_for_review`) and logs `submit`. Its gate:
    - **Its own sub-agent**: it logs each gate it runs as `ready-<the head's short
-     sha>` (`sub.start --name ready`, then `sub.stop` with `rc=0` or `rc=1`), apart from the
-     coordinator's `gate-*` gates. Its output goes to the terminal and, with its `.rc` record and
+     sha>` (`sub.start --name ready`, then `sub.stop` with `rc=0`, or a failure's
+     `rc=<n>; cause=<cause>; step=<step>`: the exit code, the cause read from the log as the gate
+     reads its own, and the `ci` step it failed at, each left out when unknown, such as
+     `rc=101; cause=build; step=clippy`), apart from the coordinator's `gate-*` gates. Its output goes to the terminal and, with its `.rc` record and
      nextest's junit file, to `<target>/gate-logs/ready-<sha>.log`, `.rc` and `.junit.xml`, as
      the coordinator's gate keeps them (sc#14).
    - **A test that failed under load** (sc#14): when the only failure is the test step's and it
@@ -590,8 +592,10 @@ On each finished pull request:
        2026-10-22 a PR's gate failed only a panic_hunt test, which passed alone.
      - **anything else** (`build`, `other`): send the PR back, or fix forward.
    - **Stop on red**. While `main`'s CI is red, nothing merges and
-     no work starts from `main`. The coordinator files a `main-red` issue at once (what broke, the
-     workflow run, the batch), so every agent holds; fixes forward or reverts the batch that broke it,
+     no work starts from `main`. GitHub CI runs once a day on `main`, not on pushes or PRs (owner,
+     2026-10-31; [swarm.md › What CI runs](swarm.md#what-ci-runs)), so the coordinator checks the
+     latest daily run each batch. On a red one it files a `main-red` issue at once (what broke, the
+     workflow run, the merges since the last green run), so every agent holds; fixes forward or reverts the batch that broke it,
      through the same local gate; and closes the issue when `main` is green again. The periodic
      full gate files one the same way when `main` fails it ([The periodic full
      gate](#the-periodic-full-gate)). While one is open, `cargo xtask claim` refuses to start new work (it names the issue), but for the
@@ -641,14 +645,14 @@ On each finished pull request:
      wait for the full gate). The kind goes in the gate's notes (`capacity=<n> free=<GB>; kind=<kind>
      (<why>)` in `sub.start`, `kind=<kind>` in a failure's and a pass's `sub.stop`) and its `.rc`.
      `--merge <branch>` (repeatable) gates branches merged onto `origin/main`
-     instead of the stack. `main`'s own CI and the periodic full
+     instead of the stack. `main`'s daily CI and the periodic full
      gate stay the backstops.
    - **Docs-only merges skip main's workflows** (owner 2026-10-16): a PR whose every file
      is Markdown (the progress folds, docs fixes) is merged with `[skip ci]` in its merge commit.
      Its gate must pass, and a doc a test reads tests its reader (in one project a
-     change to `gaps.md` or the scorecard runs xtask's tests). Each new run on `main` cancels the
-     one still running (the workflow's `concurrency`), so a docs merge would otherwise restart the
-     wait for the code before it. Its `ci --changed` run is a gate too: `sub.start --sub gate-<n> --name gate
+     change to `gaps.md` or the scorecard runs xtask's tests). It matters only to a repo whose CI
+     still runs on pushes to `main` (the template's runs once a day): there each new run cancels
+     the one still running, so a docs merge would otherwise restart the wait for the code before it. Its `ci --changed` run is a gate too: `sub.start --sub gate-<n> --name gate
      --note "docs gate: #<m>"`, the run, the merge logged with `--sub gate-<n>` (when it closes an
      issue), then `sub.stop`, so `swarm.lint` finds no merge outside a gate.
    - **Then the label goes**: GitHub closes the issue on the merge but leaves its labels,
@@ -1021,6 +1025,8 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | A failed `ready` check's `sub.stop` says why, as the gate's does: `rc=<n>; cause=<cause>; step=<the failing ci step>` (was `rc=1`) |
+| 2026-10-31 | minor | GitHub CI runs once a day on `main`, not on pushes or PRs (owner, 2026-10-31): the coordinator checks the latest daily run each batch, and a red one is `main` red |
 | 2026-10-31 | minor | No refactoring pass at the end of a worker's task, and no **Refactoring** line for the coordinator to check (owner, 2026-10-31); the `refactoring` skill is dropped too, `complexity-analyzer` kept |
 | 2026-10-31 | minor | Claims on one branch: a PR there is yours only when no other claim names it; the first standing claim comment holds the issue; `ready` refuses another agent's (mornycorp/swarm-core#7) |
 | 2026-10-31 | minor | The architecture review's checklist: spec requirements with no work under a gap marked done (lessons.md §6) |
