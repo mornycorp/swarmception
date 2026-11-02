@@ -53,7 +53,7 @@ pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
-pub use gates::{GatesDrawn, GatesPane, HourDrawn, RunDrawn, lane_text};
+pub use gates::{GatesDrawn, GatesPane, HourDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
 pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
@@ -426,6 +426,16 @@ impl Shell {
         self.timeline.bar_point(&mut self.engine, issue)
     }
 
+    /// Where on screen gate run `sub`'s bar on the timeline was drawn last frame (#84).
+    pub fn run_point(&mut self, sub: &str) -> Option<egui::Pos2> {
+        self.timeline.run_point(&mut self.engine, sub)
+    }
+
+    /// The gate run hovered on the timeline (#84), with the tickets it carried.
+    pub fn hovered_run(&mut self) -> Hover {
+        self.timeline.hovered(&mut self.engine)
+    }
+
     /// Whether the window leaves its menu bar out because the app shows the menus in the system
     /// menu bar.
     pub const fn set_native_menu(&mut self, native: bool) {
@@ -634,9 +644,6 @@ impl Shell {
         if let Some((sub, at)) = self.factory.drawn().run_clicked.clone().filter(|_| self.ui.panes.factory) {
             self.select(Subject::Gate { sub, at: Some(at) });
         }
-        if let Some(subject) = self.gates.drawn().chosen.clone().filter(|_| self.ui.panes.gates) {
-            self.select(subject);
-        }
         if let Some(subject) = self.workers.drawn().chosen.clone().filter(|_| self.ui.panes.workers) {
             self.select(subject);
         }
@@ -681,14 +688,15 @@ impl Shell {
     }
 
     /// The timeline's highlight, apart from the person's selection: the ticket hovered in the
-    /// factory while it is (#48), else the tickets of the gate run hovered in the gates pane (#61),
-    /// else what the details pane shows (#55, `details.get`'s `timeline`); the pane tells the
-    /// widget only when it changes.
+    /// factory while it is (#48), else the tickets of the gate run hovered on the timeline's own
+    /// Gate runs or Ready checks row (#84), else a worker's hovered in the Workers pane (#67), else
+    /// what the details pane shows (#55, `details.get`'s `timeline`); the pane tells the widget
+    /// only when it changes.
     fn light_timeline(&mut self, ctx: &egui::Context) {
         let factory = if self.ui.panes.factory { self.factory.hovered() } else { None };
-        let gates = if self.ui.panes.gates { self.gates.hovered().clone() } else { Hover::Nothing };
-        let gates = if gates == Hover::Nothing && self.ui.panes.workers { self.workers.hovered().clone() } else { gates };
-        let hovered = factory.map_or(gates, Hover::Ticket);
+        let run = if self.ui.panes.timeline { self.timeline.hovered(&mut self.engine) } else { Hover::Nothing };
+        let run = if run == Hover::Nothing && self.ui.panes.workers { self.workers.hovered().clone() } else { run };
+        let hovered = factory.map_or(run, Hover::Ticket);
         let details = self.details.on_timeline(&self.ui.details).filter(|_| self.ui.panes.details).map(|on| on.bars.as_slice()).unwrap_or_default();
         if self.timeline.light_hover(&mut self.engine, hovered, details) {
             ctx.request_repaint();
@@ -873,11 +881,11 @@ impl Shell {
         &self.layout
     }
 
-    /// The gates pane, its runs under the timeline's window when the timeline shows.
+    /// The gates pane, its hours under the timeline's window when the timeline shows.
     fn gates_ui(&mut self, ui: &mut egui::Ui) {
         let axis = if self.ui.panes.timeline { self.timeline.axis() } else { None };
         let t = self.factory.scene().map(|s| s.t).filter(|_| self.ui.panes.factory);
-        self.gates.ui(ui, axis, self.ui.details.subject.as_ref(), t);
+        self.gates.ui(ui, axis, t);
     }
 
     /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or

@@ -4,19 +4,18 @@
 //!
 //! A band under the timeline. Along its top, the headline figures: the coordinator's gate's pass
 //! rate, median run, how busy it was and its reruns, the longest queue at the dock, and the
-//! workers' `ready` checks' pass rate and median. Under them, the runs along time, lined up under
-//! the timeline's rows (its window, across the same columns): a lane of the coordinator's gate
-//! runs and one of the workers' `ready` checks, each run a bar as long as it took, in its result's
-//! colour (passed green, failed red, no result grey, running blue); under the lanes, both lanes'
-//! runs per clock hour (#75), stacked by result and mirrored about one baseline, the gate's up and
-//! the `ready` checks' down, each on its own scale. In the left column, beside them, the lanes' names and
-//! a short table of the failures by cause. Hovering a run shows its story in brief and lights
-//! its tickets' bars on the timeline (the shell hands [`GatesPane::hovered`] to
-//! `TimelinePane::light_hover`); clicking it makes it the Details pane's subject.
+//! workers' `ready` checks' pass rate and median. Under them, lined up under the timeline's rows
+//! (its window, across the same columns), both lanes' runs per clock hour (#75), stacked by
+//! result and mirrored about one baseline, the gate's up and the `ready` checks' down, each on its
+//! own scale; in the left column, beside them, the runs each lane started in the window and a
+//! short table of the failures by cause. Hovering an hour gives its figures.
+//!
+//! The runs themselves are rows of the timeline (#84: Gate runs and Ready checks, a bar a run,
+//! where they pan, zoom, select and light their tickets as any bar does): the band keeps what
+//! isn't a lane.
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
-use swarmception_domain::details::Subject;
-use swarmception_domain::gates::{Figures, GateHour, GatesList, Lane, Run};
+use swarmception_domain::gates::{Figures, GateHour, GatesList, Lane};
 use swarmception_domain::rows::duration;
 use swarmception_domain::tooltip::TipLine;
 use swarmception_engine::Session;
@@ -30,16 +29,6 @@ use crate::factory_stats::percent;
 use crate::factory_tip::legible;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
-use crate::timeline::Hover;
-
-/// A run as the pane drew it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RunDrawn {
-    pub sub: String,
-    pub start: Timestamp,
-    pub lane: Lane,
-    pub rect: Rect,
-}
 
 /// One lane's column of an hour as the pane drew it: the counts it stacked, and where.
 #[derive(Debug, Clone, PartialEq)]
@@ -64,8 +53,6 @@ pub struct GatesDrawn {
     pub figures: Vec<String>,
     /// The causes table's rows: `cause gate ready`.
     pub causes: Vec<String>,
-    /// Each run drawn: the coordinator's lane, then the workers', each in `gates.list`'s order.
-    pub runs: Vec<RunDrawn>,
     /// The hours' columns drawn.
     pub hours: usize,
     /// Each hour's two columns as drawn (#75): the gate's runs, then the `ready` checks', an hour
@@ -73,9 +60,8 @@ pub struct GatesDrawn {
     pub hour_columns: Vec<HourDrawn>,
     /// Where the window's start and end were across.
     pub axis: Option<(f32, f32)>,
-    /// The run under the pointer, and the subject a click on one chose.
-    pub hovered: Option<(String, Timestamp)>,
-    pub chosen: Option<Subject>,
+    /// The hour under the pointer.
+    pub hovered: Option<Timestamp>,
     /// Its title was clicked this frame: fold it (#68).
     pub fold: bool,
 }
@@ -91,16 +77,13 @@ pub struct GatesPane {
     asked: Option<Asked>,
     /// How many times `gates.list` ran: the test that it isn't asked every frame reads it.
     asks: u64,
-    /// The run under the pointer: what the timeline lights.
-    hovered: Hover,
     drawn: GatesDrawn,
 }
 
-const GATE_LANE: f32 = 20.0;
-const READY_LANE: f32 = 14.0;
-const LANE_GAP: f32 = 5.0;
+/// The least the body takes to be drawn: a chart this tall.
+const LEAST_BODY: f32 = 24.0;
 /// The tallest the hours' chart grows: both lanes', mirrored.
-const CHART: f32 = 84.0;
+const CHART: f32 = 110.0;
 /// The chart from which each column's count is written at its end.
 const COUNTED_CHART: f32 = 64.0;
 /// The left column's width when there is no timeline to line up with.
@@ -143,12 +126,6 @@ impl GatesPane {
         &self.drawn
     }
 
-    /// The run under the pointer last frame, with the tickets it carried.
-    #[must_use]
-    pub const fn hovered(&self) -> &Hover {
-        &self.hovered
-    }
-
     /// Asks `gates.list` for `window` (the whole run when none) when it or the engine moved on.
     pub fn sync(&mut self, engine: &mut Session, window: Option<(Timestamp, Timestamp)>) {
         let asked = Some((window, engine.revision()));
@@ -171,18 +148,15 @@ impl GatesPane {
         }
     }
 
-    /// Forgets the hover: the pane wasn't drawn.
+    /// Forgets what it drew: the pane wasn't drawn.
     pub fn leave(&mut self) {
-        self.hovered = Hover::Nothing;
         self.drawn = GatesDrawn::default();
     }
 
     /// Draws the pane; `axis`, where the timeline's window starts and ends across the screen, to
-    /// line the runs up under it (none: the pane's own); `selected`, the Details pane's subject,
-    /// outlined; `t`, the factory's time, marked.
-    pub fn ui(&mut self, ui: &mut egui::Ui, axis: Option<(f32, f32)>, selected: Option<&Subject>, t: Option<Timestamp>) {
+    /// line the hours up under it (none: the pane's own); `t`, the factory's time, marked.
+    pub fn ui(&mut self, ui: &mut egui::Ui, axis: Option<(f32, f32)>, t: Option<Timestamp>) {
         self.drawn = GatesDrawn::default();
-        self.hovered = Hover::Nothing;
         let Some(list) = self.list.clone() else {
             ui.horizontal(|ui| {
                 self.drawn.fold = fold_title(ui, icons::GATES, "Gates", Chevron::Open).clicked();
@@ -196,10 +170,10 @@ impl GatesPane {
         self.drawn.window = Some((list.start, list.end));
         self.header(ui, &list);
         let body = ui.available_rect_before_wrap();
-        if body.height() < GATE_LANE + 4.0 || body.width() < NARROWEST_COLUMN + 40.0 {
+        if body.height() < LEAST_BODY + 4.0 || body.width() < NARROWEST_COLUMN + 40.0 {
             return;
         }
-        let response = ui.allocate_rect(body, Sense::click());
+        let response = ui.allocate_rect(body, Sense::hover());
         let (x0, x1) = match axis {
             Some((x0, x1)) if x0 - body.left() >= NARROWEST_COLUMN && x1 - x0 > 40.0 => (x0, x1.min(body.right() + 16.0)),
             _ => (body.left() + OWN_COLUMN, body.right() - 8.0),
@@ -209,23 +183,22 @@ impl GatesPane {
         // Out to the timeline's right edge, which the panel's margin can pass.
         let painter = ui.painter_at(body.with_max_x(body.right().max(x1)));
         let visuals = ui.visuals().clone();
-        let gate_top = body.top() + 4.0;
-        let ready_top = gate_top + GATE_LANE + LANE_GAP;
-        let hours_top = ready_top + READY_LANE + LANE_GAP + 2.0;
-        let lanes = Rect::from_min_max(pos2(x0, gate_top - 2.0), pos2(x1, ready_top + READY_LANE + 2.0));
-        painter.rect_filled(lanes, 3.0, visuals.faint_bg_color);
-        self.column((&painter, &visuals), &list, body, x0, (gate_top, ready_top, hours_top));
+        let top = body.top() + 4.0;
+        let chart = Rect::from_min_max(pos2(x0, top), pos2(x1, (body.bottom() - 2.0).min(top + CHART)));
+        painter.rect_filled(chart.expand2(vec2(0.0, 2.0)), 3.0, visuals.faint_bg_color);
+        self.column((&painter, &visuals), &list, body, x0, top);
         if let Some(x) = t.and_then(|t| scale.x(t)) {
             painter.vline(x, body.top()..=body.bottom(), Stroke::new(1.0, visuals.weak_text_color().gamma_multiply(0.6)));
         }
-        self.lane((&painter, &visuals), &list, &scale, (Lane::Gate, gate_top, GATE_LANE, 2), selected);
-        self.lane((&painter, &visuals), &list, &scale, (Lane::Ready, ready_top, READY_LANE, 3), selected);
-        let chart = Rect::from_min_max(pos2(x0, hours_top), pos2(x1, (body.bottom() - 2.0).min(hours_top + CHART)));
         let hour = if chart.height() >= 20.0 { self.hours((&painter, &visuals), &list, &scale, chart, response.hover_pos()) } else { None };
         if list.runs.is_empty() {
-            painter.text(lanes.center(), Align2::CENTER_CENTER, "No gate runs in this window", FontId::proportional(11.0), visuals.weak_text_color());
+            painter.text(chart.center(), Align2::CENTER_CENTER, "No gate runs in this window", FontId::proportional(11.0), visuals.weak_text_color());
         }
-        self.interact(ui, response, &list, hour);
+        if let Some(hour) = hour {
+            self.drawn.hovered = Some(hour.start);
+            let lines = hour_lines(&hour);
+            response.on_hover_ui_at_pointer(|ui| tip(ui, &lines));
+        }
     }
 
     /// The headline figures along the top, each with how it is computed on hover.
@@ -313,16 +286,13 @@ fn headline(list: &GatesList) -> [Figure; 6] {
 }
 
 impl GatesPane {
-    /// The left column: the lanes' names and counts, then the failures by cause.
-    fn column(&mut self, (painter, visuals): (&egui::Painter, &egui::Visuals), list: &GatesList, body: Rect, x0: f32, tops: (f32, f32, f32)) {
-        let (gate_top, ready_top, hours_top) = tops;
+    /// The left column: the runs each lane started in the window, then the failures by cause.
+    fn column(&mut self, (painter, visuals): (&egui::Painter, &egui::Visuals), list: &GatesList, body: Rect, x0: f32, top: f32) {
         let right = x0 - 8.0;
         let left = (right - OWN_COLUMN + 16.0).max(body.left() + 6.0);
-        let name = |y: f32, text: String| {
-            painter.text(pos2(right, y), Align2::RIGHT_CENTER, text, FontId::proportional(11.5), visuals.text_color());
-        };
-        name(gate_top + GATE_LANE / 2.0, format!("gate runs  {}", list.gate.runs));
-        name(ready_top + READY_LANE / 2.0, format!("ready checks  {}", list.ready.runs));
+        let runs = format!("runs  gate {} · ready {}", list.gate.runs, list.ready.runs);
+        painter.text(pos2(right, top + 6.0), Align2::RIGHT_CENTER, runs, FontId::proportional(11.5), visuals.text_color());
+        let causes_top = top + 14.0;
         let mut causes: Vec<(String, usize, usize)> = Vec::new();
         for (lane, figures) in [(0, &list.gate), (1, &list.ready)] {
             for cause in &figures.causes {
@@ -339,7 +309,7 @@ impl GatesPane {
         let font = FontId::proportional(10.5);
         let (gate_x, ready_x) = (right - 34.0, right);
         let row_height = 13.0;
-        let mut y = hours_top + 2.0;
+        let mut y = causes_top + 2.0;
         let weak = visuals.weak_text_color();
         if causes.is_empty() {
             painter.text(pos2(right, y + 5.0), Align2::RIGHT_CENTER, "no failures", font, weak);
@@ -369,41 +339,7 @@ impl GatesPane {
         }
     }
 
-    /// One lane's runs, packed into at most `rows` rows where they overlap.
-    fn lane(
-        &mut self,
-        (painter, visuals): (&egui::Painter, &egui::Visuals),
-        list: &GatesList,
-        scale: &Scale,
-        (lane, top, height, rows): (Lane, f32, f32, usize),
-        selected: Option<&Subject>,
-    ) {
-        let runs: Vec<&Run> = list.runs.iter().filter(|r| r.lane == lane).collect();
-        let used = packed_rows(&runs, list.end, rows);
-        let count = used.iter().copied().max().map_or(1, |m| m + 1);
-        let row_height = height / count as f32;
-        for (run, row) in runs.iter().zip(used) {
-            let Some((a, b)) = scale.across(run.start, run.end.unwrap_or(list.end.max(run.start))) else { continue };
-            let y = top + row_height * row as f32;
-            let rect = Rect::from_min_max(pos2(a, y + 0.5), pos2(b.max(a + 2.0), y + row_height - 0.5));
-            let fill = rgb(run.colour);
-            painter.rect_filled(rect, 2.0, fill);
-            if run.end.is_none() {
-                // Still running: its end fades, it goes on.
-                let tail = Rect::from_min_max(pos2((rect.right() - 6.0).max(rect.left()), rect.top()), rect.max);
-                painter.rect_filled(tail, 0.0, fill.gamma_multiply(0.5));
-            }
-            if run.rerun_of.is_some() && rect.width() >= 5.0 {
-                painter.vline(rect.left() + 1.0, rect.y_range(), Stroke::new(1.5, visuals.strong_text_color().gamma_multiply(0.7)));
-            }
-            if selected == Some(&run.subject) && lane == Lane::Gate {
-                painter.rect_stroke(rect.expand(1.5), 2.0, Stroke::new(1.5, visuals.strong_text_color()), StrokeKind::Outside);
-            }
-            self.drawn.runs.push(RunDrawn { sub: run.sub.clone(), start: run.start, lane, rect });
-        }
-    }
-
-    /// Both lanes' runs per clock hour (#75), mirrored about one baseline as the lanes above are
+    /// Both lanes' runs per clock hour (#75), mirrored about one baseline as the timeline's rows are
     /// ordered: the gate's growing up from it, the `ready` checks' down, each stacked by result
     /// (passed, failed, no result) on its own scale, each hour's column under its hour on the
     /// timeline. The hour under the pointer, if any.
@@ -452,34 +388,6 @@ impl GatesPane {
         scales((painter, visuals), chart, most_gate, most_ready);
         under
     }
-
-    /// The pointer over the band: a run's tooltip and the timeline's highlight, a click making it
-    /// the Details' subject; or an hour's figures.
-    fn interact(&mut self, ui: &egui::Ui, response: egui::Response, list: &GatesList, hour: Option<GateHour>) {
-        let found = response.hover_pos().and_then(|p| {
-            self.drawn
-                .runs
-                .iter()
-                .filter(|r| r.rect.expand2(vec2(2.0, 1.0)).contains(p))
-                .min_by(|a, b| a.rect.width().total_cmp(&b.rect.width()))
-                .and_then(|drawn| list.runs.iter().find(|r| r.sub == drawn.sub && r.start == drawn.start && r.lane == drawn.lane))
-        });
-        if let Some(run) = found {
-            if let Some(drawn) = self.drawn.runs.iter().find(|d| d.sub == run.sub && d.start == run.start) {
-                ui.painter().rect_stroke(drawn.rect.expand(1.0), 2.0, Stroke::new(1.5, ui.visuals().strong_text_color()), StrokeKind::Outside);
-            }
-            self.drawn.hovered = Some((run.sub.clone(), run.start));
-            self.hovered = Hover::Run { sub: run.sub.clone(), start: run.start, tickets: run.tickets.clone() };
-            if response.clicked() {
-                self.drawn.chosen = Some(run.subject.clone());
-            }
-            let lines = run.tooltip.clone();
-            response.on_hover_cursor(egui::CursorIcon::PointingHand).on_hover_ui_at_pointer(|ui| tip(ui, &lines));
-        } else if let Some(hour) = hour {
-            let lines = hour_lines(&hour);
-            response.on_hover_ui_at_pointer(|ui| tip(ui, &lines));
-        }
-    }
 }
 
 /// Where times fall across the screen: the window from `x0` to `x1`.
@@ -510,27 +418,6 @@ impl Scale {
         let b = self.at(end.min(self.end));
         (a.is_finite() && b.is_finite()).then_some((a, b.max(a)))
     }
-}
-
-/// Each run's row in its lane: the first whose last run ended by the time it started (runs that
-/// went on at once side by side; a run still going, to `last`), at most `rows`, the last taking
-/// what is left.
-fn packed_rows(runs: &[&Run], last: Timestamp, rows: usize) -> Vec<usize> {
-    let mut ends: Vec<Timestamp> = Vec::new();
-    runs.iter()
-        .map(|run| {
-            let end = run.end.unwrap_or(last).max(run.start);
-            let row = ends.iter().position(|&e| e <= run.start).unwrap_or_else(|| {
-                ends.push(Timestamp(i64::MIN));
-                ends.len() - 1
-            });
-            let row = row.min(rows.saturating_sub(1));
-            if let Some(e) = ends.get_mut(row) {
-                *e = (*e).max(end);
-            }
-            row
-        })
-        .collect()
 }
 
 /// One lane's column of an hour from the baseline at `edge`, between `left` and `right`: up for
@@ -656,37 +543,6 @@ mod tests {
         assert_eq!(s.across(Timestamp(2_500), Timestamp(3_000)), None);
         let empty = Scale { start: Timestamp(5), end: Timestamp(5), x0: 0.0, x1: 10.0 };
         assert_eq!(empty.across(Timestamp(5), Timestamp(5)), Some((0.0, 0.0)), "no width: no division by nothing");
-    }
-
-    #[test]
-    fn overlapping_runs_take_rows_up_to_a_limit() {
-        use swarmception_domain::gates::GateResult;
-        let run = |start: i64, end: i64| Run {
-            sub: format!("ready-{start}"),
-            lane: Lane::Ready,
-            instance: String::new(),
-            name: String::new(),
-            start: Timestamp(start),
-            end: Some(Timestamp(end)),
-            duration_seconds: end - start,
-            kind: None,
-            result: GateResult::Passed,
-            cause: None,
-            step: None,
-            prs: Vec::new(),
-            tickets: Vec::new(),
-            merges: Vec::new(),
-            sendbacks: Vec::new(),
-            rerun_of: None,
-            inferred: false,
-            colour: [0, 0, 0],
-            subject: Subject::Ticket { issue: 1 },
-            tooltip: Vec::new(),
-        };
-        let runs = [run(1_000, 1_200), run(1_100, 1_300), run(1_150, 1_400), run(1_250, 1_500), run(1_600, 1_700)];
-        let refs: Vec<&Run> = runs.iter().collect();
-        assert_eq!(packed_rows(&refs, Timestamp(2_000), 3), [0, 1, 2, 0, 0]);
-        assert_eq!(packed_rows(&refs, Timestamp(2_000), 2), [0, 1, 1, 0, 0], "the last row takes the rest");
     }
 
     #[test]

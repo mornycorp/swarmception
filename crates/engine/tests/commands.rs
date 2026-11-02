@@ -79,7 +79,7 @@ fn open_a_repo_and_list_its_rows() {
     assert_eq!((status.main, status.main_merges), (None, 0), "no main branch");
     let list: ListResult = call(&mut session, "rows.list", "");
     let names: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::name).collect();
-    assert_eq!(names, ["Merges to main", "Tickets merged", "Tickets 1"]);
+    assert_eq!(names, ["Merges to main", "Tickets merged", "Gate runs", "Ready checks", "Tickets 1"]);
     assert!(session.widget_timeline().unwrap().is_some());
 
     let before = session.revision();
@@ -87,7 +87,7 @@ fn open_a_repo_and_list_its_rows() {
     assert_ne!(session.revision().0, before.0, "new rows, a new generation");
     let list: ListResult = call(&mut session, "rows.list", "");
     let names: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::name).collect();
-    assert_eq!(names, ["Tickets merged", "mini"], "the empty main row collapsed; the ticket under its worker");
+    assert_eq!(names, ["Tickets merged", "Gate runs", "mini"], "the empty main and ready rows collapsed; the ticket under its worker");
 
     let at: swarmception_engine::rows_cmds::TimeAtResult = call(&mut session, "timeline.timeAt", r#"{"position":60000000000}"#);
     assert_eq!(at.text, "2026-10-31T03:01:00Z");
@@ -285,7 +285,7 @@ fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
     // Not collapsed to the window: it leaves out nothing.
     let all = window(&mut session, early);
     assert_eq!((all.collapse, all.left_out.len()), (Collapse::Off, 0));
-    assert_eq!(all.shown, ["main", "merged", "tickets/1"]);
+    assert_eq!(all.shown, ["main", "merged", "gates", "ready", "tickets/1"]);
     let spec: RowsSpec = call(&mut session, "rows.set", r#"{"collapse":true}"#);
     assert_eq!(spec.collapse, Collapse::Empty, "true still reads, as empty");
     assert!(window(&mut session, early).left_out.is_empty());
@@ -294,18 +294,23 @@ fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
     assert_eq!(spec.collapse, Collapse::Window);
     let list: ListResult = call(&mut session, "rows.list", "");
     let keys: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::key).collect();
-    assert_eq!(keys, ["merged", "tickets/1"], "the rows themselves are the empty collapse's: no merges onto main");
-    // #7 claimed at 03:01, merged at 03:45.
+    assert_eq!(keys, ["merged", "gates", "tickets/1"], "the rows themselves are the empty collapse's: no merges onto main, no ready checks");
+    // #7 claimed at 03:01, merged at 03:45 by gate-pr8 (03:40 to 03:46): a row of the gate's
+    // runs as any other (#84).
     let found = window(&mut session, early);
-    assert_eq!((found.shown, found.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned()]));
+    assert_eq!((found.shown, found.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned(), "gates".to_owned()]));
     assert_eq!(found.start.map(|t| t.to_string()).as_deref(), Some("2026-10-31T03:00:00Z"));
     let found = window(&mut session, r#"{"start":"2026-10-31T03:44:00Z","end":"2026-10-31T03:50:00Z"}"#);
     assert!(found.left_out.is_empty(), "waiting for merge until 03:45, merged then: {found:?}");
     // 04:50 to 05:00, in seconds since the epoch.
     let late = r#"{"start":1793422200,"end":1793422800}"#;
-    assert_eq!(window(&mut session, late).left_out, ["merged", "tickets/1"], "after the merge, nothing");
+    assert_eq!(window(&mut session, late).left_out, ["merged", "gates", "tickets/1"], "after the merge, nothing");
     let kept = window(&mut session, r#"{"start":1793422200,"end":1793422800,"keep":["tickets/1"]}"#);
-    assert_eq!((kept.shown, kept.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned()]), "a row kept for the selection stays");
+    assert_eq!(
+        (kept.shown, kept.left_out),
+        (vec!["tickets/1".to_owned()], vec!["merged".to_owned(), "gates".to_owned()]),
+        "a row kept for the selection stays"
+    );
     assert!(window(&mut session, "{}").left_out.is_empty(), "no window: nothing left out");
 
     // Refused: a window ending before it starts, half a window, a time that isn't one.

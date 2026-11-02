@@ -1,16 +1,17 @@
 //! The rows: grouped how (the tickets flat, or by worker), collapsed how; the rows
 //! themselves, and those a window leaves out (#74); and the clock time at a position on the
-//! timeline's axis.
+//! timeline's axis; a bar by its place, and a gate run's bar by its id (#84).
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::rows::left_out;
+use swarmception_domain::rows::{Bar, bars_where, left_out};
 use swarmception_domain::{Collapse, Grouping, Node, RowsSpec};
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
 use crate::engine_cmds::NoParams;
 use crate::error::{EngineError, Refusal, Unavailable};
+use crate::factory_cmds::TicketBarsResult;
 use crate::session::Session;
 use crate::stats_cmds::At;
 
@@ -191,5 +192,71 @@ impl Command for TimeAt {
         let origin = session.built.as_ref().map(|b| b.origin).unwrap_or_default();
         let time = session.built.as_ref().map(|b| b.time_at(params.position)).unwrap_or_default();
         Ok(TimeAtResult { time, text: time.to_string(), origin })
+    }
+}
+
+/// A bar by its row's key and its place among the row's bars (the widget's range).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BarParams {
+    pub track: String,
+    pub range: usize,
+}
+
+/// A bar of the rows, as `rows.list` has it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BarResult {
+    pub bar: Bar,
+}
+
+/// `timeline.bar` (#84): the bar `range` of row `track` in the rows the timeline shows, with its
+/// label, tooltip and, on the Gate runs or Ready checks row, the run it draws (its tickets, what
+/// a hover over it lights): what a front end reads of the bar under the pointer.
+pub struct GetBar;
+
+impl Command for GetBar {
+    const ID: &'static str = "timeline.bar";
+    const LABEL: &'static str = "Bar";
+    const READ_ONLY: bool = true;
+    type Params = BarParams;
+    type Result = BarResult;
+
+    fn run(session: &mut Session, params: BarParams) -> Result<BarResult, EngineError> {
+        let found = session.rows.iter().flat_map(Node::leaves).find_map(|leaf| match leaf {
+            Node::Ranges { key, bars, .. } if *key == params.track => bars.get(params.range),
+            _ => None,
+        });
+        let what = || swarmception_domain::titles::short(&format!("bar {} of row {}", params.range, params.track), 120);
+        found.cloned().map(|bar| BarResult { bar }).ok_or_else(|| Refusal::NotFound { what: what() }.into())
+    }
+}
+
+/// A gate run by its sub-agent's id; `at`, a time in it, picks one of the runs an id named twice.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunParams {
+    /// `gate-43`, `ready-4bb1de4`.
+    pub sub: String,
+    /// In seconds since the epoch or `YYYY-MM-DDTHH:MM:SSZ`: the run going then; every run of the
+    /// id when left out.
+    pub at: Option<At>,
+}
+
+/// `timeline.runBars` (#84): where a gate run's bar is on the Gate runs or Ready checks row, for a
+/// front end to select, highlight or point at it; none when the rows draw no such run.
+pub struct RunBars;
+
+impl Command for RunBars {
+    const ID: &'static str = "timeline.runBars";
+    const LABEL: &'static str = "Run Bars";
+    const READ_ONLY: bool = true;
+    type Params = RunParams;
+    type Result = TicketBarsResult;
+
+    fn run(session: &mut Session, params: RunParams) -> Result<TicketBarsResult, EngineError> {
+        let at = params.at.as_ref().map(At::time).transpose()?;
+        let holds = |bar: &Bar| at.is_none_or(|t| bar.start <= t && t <= bar.end);
+        let bars = bars_where(&session.rows, |_, bar| bar.run.as_ref().is_some_and(|run| run.sub == params.sub) && holds(bar));
+        Ok(TicketBarsResult { bars: bars.into_iter().map(|(found, _)| found).collect() })
     }
 }

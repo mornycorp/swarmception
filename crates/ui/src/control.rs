@@ -35,8 +35,10 @@ use crate::{Panes, Shell, UiState};
 /// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
 /// workers pane (#67); 6: opening a repository (`open`, #69); 7: the gates pane's hours, both
 /// lanes (`gates.hours`, #75); 8: where the workers' window was drawn (`workers.rect`, #76); 9:
-/// the rows collapsed to the window (`timeline.leftOut`, `timeline.collapseUs`, #74).
-pub const INSPECT_VERSION: u32 = 9;
+/// the rows collapsed to the window (`timeline.leftOut`, `timeline.collapseUs`, #74); 10: the gate
+/// runs as rows of the timeline (#84: `timeline.hoveredRun`; the gates pane's `runs` gone, its
+/// `hovered` an hour).
+pub const INSPECT_VERSION: u32 = 10;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -132,6 +134,10 @@ pub struct TimelineInspect {
     /// microseconds (#74).
     #[serde(default)]
     pub collapse_us: Option<u64>,
+    /// The gate run whose bar on the Gate runs or Ready checks row is under the pointer (#84),
+    /// `<sub>@<start>`: its tickets' bars are lit.
+    #[serde(default)]
+    pub hovered_run: Option<String>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -233,11 +239,9 @@ pub struct WorkersSet {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GatesInspect {
-    /// The window it drew, as `gates.list` returned it.
+    /// The window it drew, as `gates.list` returned it. Its runs are the timeline's Gate runs and
+    /// Ready checks rows (#84).
     pub window: Option<Span>,
-    /// Each run drawn, `<sub>@<start>`: the coordinator's lane, then the workers', each in
-    /// `gates.list`'s order.
-    pub runs: Vec<String>,
     /// The headline figures, `label value`.
     pub figures: Vec<String>,
     /// The causes table's rows, `cause gate ready`.
@@ -245,8 +249,8 @@ pub struct GatesInspect {
     /// Each hour's columns drawn (#75), `<start> gate <runs> ready <runs>`.
     #[serde(default)]
     pub hours: Vec<String>,
-    /// The run under the pointer, `<sub>@<start>`.
-    pub hovered: Option<String>,
+    /// The hour under the pointer, its start (#84: the runs are the timeline's).
+    pub hovered: Option<Timestamp>,
     /// Why there is nothing to draw: `gates.list`'s refusal.
     pub error: Option<String>,
 }
@@ -528,6 +532,7 @@ impl Shell {
             in_view: self.timeline.rows_in_view(),
             left_out: self.timeline.left_out().to_vec(),
             collapse_us: self.timeline.collapse_time().map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
+            hovered_run: self.timeline.hovered(&mut self.engine).run(),
         };
         let details = self.details_inspect();
         let gates = self.gates_inspect();
@@ -576,7 +581,6 @@ impl Shell {
         let drawn = self.gates.drawn();
         GatesInspect {
             window: drawn.window.map(|(start, end)| Span { start, end }),
-            runs: drawn.runs.iter().map(|r| format!("{}@{}", r.sub, r.start)).collect(),
             figures: drawn.figures.clone(),
             causes: drawn.causes.clone(),
             hours: drawn
@@ -587,7 +591,7 @@ impl Shell {
                     _ => None,
                 })
                 .collect(),
-            hovered: drawn.hovered.as_ref().map(|(sub, start)| format!("{sub}@{start}")),
+            hovered: drawn.hovered,
             error: self.gates.error().map(str::to_owned),
         }
     }

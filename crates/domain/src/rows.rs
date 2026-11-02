@@ -1,8 +1,12 @@
 //! The rows the timeline shows (the owner's directions): what happened to tickets. At the top,
 //! every merge onto `main` (its merge commits), then every ticket's merge, each a span of
 //! [`MERGE_SECONDS`] from its time (#15), all on one row (the widget stacks the rare two that
-//! overlap); then the tickets' stretches (claimed, working, waiting for merge, sent back,
-//! stopped), packed onto shared rows:
+//! overlap); under them the gate's runs (#84): a row of the coordinator's gate runs and one of
+//! the workers' `ready` checks, a bar a run ([`crate::gates`]' one definition, `gates.list`'s
+//! runs) from its start to its end (a running one's to the last event, open), in its result's
+//! colour, named by the tickets it carried and a failure's cause, its tooltip `gates.list`'s; then
+//! the tickets' stretches (claimed, working, waiting for merge, sent back, stopped), packed onto
+//! shared rows:
 //! taken in the order they began, each ticket goes on the first row it doesn't overlap, so
 //! tickets that didn't run at once share a row. They are packed all together (flat), or within
 //! each worker that held them last (machine / worker / its rows), never across workers;
@@ -20,6 +24,9 @@ use swarmception_model::{Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
 use crate::colours::{self, Rgb, phase_colour, style_colour};
+use crate::details::Subject;
+use crate::gates::{GateResult, Lane, Run, told_runs};
+use crate::stats::failure_label;
 use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine, texts};
@@ -121,6 +128,10 @@ pub enum Style {
     Waiting,
     SentBack,
     Stopped,
+    /// A coordinator's gate run (#84), drawn in its result's colour.
+    GateRun,
+    /// A worker's `ready` check (#84), drawn in its result's colour.
+    ReadyCheck,
 }
 
 impl From<Phase> for Style {
@@ -155,13 +166,33 @@ pub struct Bar {
     pub tooltip: Vec<String>,
     /// Its tooltip's lines with their styling (#35), what the timeline shows.
     pub tooltip_lines: Vec<TipLine>,
+    /// The gate run it is, on the Gate runs or Ready checks row (#84); none for any other bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunBar>,
 }
 
 impl Bar {
     fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, lines: Vec<TipLine>) -> Self {
         let colour = style_colour(style, ticket);
-        Self { start, end, label, ticket, pr: None, style, colour, open: false, tooltip: texts(&lines), tooltip_lines: lines }
+        Self { start, end, label, ticket, pr: None, style, colour, open: false, tooltip: texts(&lines), tooltip_lines: lines, run: None }
     }
+}
+
+/// The run a bar on the Gate runs or Ready checks row draws (#84): `gates.list`'s run, by its
+/// sub-agent's id and its start (the bar's), how it went, what a hover over it lights and what a
+/// click on it tells the story of. It names its tickets here, not as its bar's `ticket`: a run is
+/// none of them, so a ticket's bars (`timeline.ticketBars`) are its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RunBar {
+    pub sub: String,
+    pub lane: Lane,
+    pub result: GateResult,
+    /// The tickets it carried: their bars are what a hover over it lights.
+    pub tickets: Vec<u64>,
+    /// What the details pane tells when it is chosen, as `gates.list`'s run says: the gate run
+    /// itself; for a `ready` check, the ticket it checked, else its worker's session.
+    pub subject: Subject,
 }
 
 /// A row of the tree: a group, or a leaf of bars. Keys are unique and stable across loads of the
@@ -257,6 +288,12 @@ pub fn groups_holding(rows: &[Node], keys: &[&str]) -> Vec<String> {
 /// The keys of the two rows at the top.
 pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";
+/// The keys of the gate's two rows under them (#84): the coordinator's gate runs, the workers'
+/// `ready` checks.
+pub const GATES_KEY: &str = "gates";
+pub const READY_KEY: &str = "ready";
+/// The keys of the rows above the tickets', top to bottom.
+pub const TOP_KEYS: [&str; 4] = [MAIN_KEY, MERGED_KEY, GATES_KEY, READY_KEY];
 /// The flat view's packed rows are keyed `tickets/1`, `tickets/2`, …
 pub const TICKETS_KEY: &str = "tickets";
 /// How long a merge's span on the top rows lasts, from its time.
@@ -274,9 +311,13 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
 pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
     let text = Text { issues };
+    let runs = told_runs(activity, &tickets, merges);
+    let last = activity.extent.map_or(Timestamp(0), |(_, last)| last);
     let mut rows = vec![
         Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
         Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets, issues) },
+        Node::Ranges { key: GATES_KEY.into(), name: "Gate runs".into(), bars: run_bars(&runs, Lane::Gate, last) },
+        Node::Ranges { key: READY_KEY.into(), name: "Ready checks".into(), bars: run_bars(&runs, Lane::Ready, last) },
     ];
     match spec.grouping {
         Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY, text)),
@@ -567,6 +608,42 @@ fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     bars
 }
 
+/// The bars of `lane`'s runs (#84), by start: each from its start to its end, a running one's to
+/// `last` (the last event), open.
+fn run_bars(runs: &[Run], lane: Lane, last: Timestamp) -> Vec<Bar> {
+    runs.iter().filter(|run| run.lane == lane).map(|run| run_bar(run, last)).collect()
+}
+
+/// What a run's bar says: the tickets it carried (its pull requests when it named no ticket, its
+/// id when neither), and a failure's cause (`#83 · build/clippy`, `PR #153 · test`).
+pub(crate) fn run_label(run: &Run) -> String {
+    let numbers = |prefix: &str, list: &[u64]| list.iter().map(|n| format!("{prefix}{n}")).collect::<Vec<_>>().join(" ");
+    let what = match (run.tickets.is_empty(), run.prs.is_empty()) {
+        (false, _) => numbers("#", &run.tickets),
+        (true, false) => numbers("PR #", &run.prs),
+        (true, true) => run.sub.clone(),
+    };
+    match run.result {
+        GateResult::Failed if run.cause.is_some() || run.step.is_some() => format!("{what} · {}", failure_label(run.cause.as_deref(), run.step.as_deref())),
+        GateResult::Failed => format!("{what} · failed"),
+        GateResult::Passed | GateResult::NoResult | GateResult::Running => what,
+    }
+}
+
+fn run_bar(run: &Run, last: Timestamp) -> Bar {
+    let end = run.end.unwrap_or(last).max(run.start);
+    let style = match run.lane {
+        Lane::Gate => Style::GateRun,
+        Lane::Ready => Style::ReadyCheck,
+    };
+    let pr = match run.prs.as_slice() {
+        [pr] => Some(*pr),
+        _ => None,
+    };
+    let info = RunBar { sub: run.sub.clone(), lane: run.lane, result: run.result, tickets: run.tickets.clone(), subject: run.subject.clone() };
+    Bar { pr, open: run.end.is_none(), colour: run.colour, run: Some(info), ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone()) }
+}
+
 fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     let mut bars: Vec<Bar> = merges.iter().map(|m| main_bar(m, tickets, issues)).collect();
     bars.sort_by_key(|b| b.start);
@@ -625,7 +702,11 @@ mod tests {
     fn main_then_merged_then_the_packed_tickets() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
-        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "Tickets 1", "Tickets 2"], "#168 runs on past #170, so they can't share");
+        assert_eq!(
+            shape(&rows),
+            ["Merges to main", "Tickets merged", "Gate runs", "Ready checks", "Tickets 1", "Tickets 2"],
+            "#168 runs on past #170, so they can't share"
+        );
         let Node::Ranges { bars, .. } = &rows[0] else { panic!() };
         assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["PR #173", "PR #174"]);
         assert_eq!(bars[0].tooltip[2], "merged #170");
@@ -657,7 +738,7 @@ mod tests {
     fn a_tickets_bars_are_its_stretches_and_name_it() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let Node::Ranges { bars, key, .. } = &rows[3] else { panic!() };
+        let Node::Ranges { bars, key, .. } = &rows[5] else { panic!() };
         assert_eq!(key, "tickets/2");
         assert_eq!(bars.iter().map(|b| b.style).collect::<Vec<_>>(), [Style::Claimed, Style::Working, Style::Waiting]);
         assert!(bars.iter().all(|b| b.ticket == Some(170)), "each bar says which ticket it is");
@@ -694,7 +775,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
-        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
         let working = &bars[1];
         assert_eq!(
             working.tooltip[..4],
@@ -721,7 +802,7 @@ mod tests {
             let rows = rows_with(&activity, &merges(), spec, &issues);
             let labels: Vec<&str> = rows
                 .iter()
-                .skip(2)
+                .skip(TOP_KEYS.len())
                 .flat_map(Node::leaves)
                 .filter_map(|l| if let Node::Ranges { bars, .. } = l { Some(bars) } else { None })
                 .flatten()
@@ -808,16 +889,19 @@ mod tests {
     fn grouped_by_worker() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { grouping: Grouping::Workers, ..RowsSpec::default() });
-        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1"]);
+        assert_eq!(
+            shape(&rows),
+            ["Merges to main", "Tickets merged", "Gate runs", "Ready checks", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1"]
+        );
         let keys: Vec<&str> = rows.iter().flat_map(Node::leaves).map(Node::key).collect();
-        assert_eq!(keys, ["main", "merged", "w/mini/worker-1/1", "w/mini/worker-2/1"]);
+        assert_eq!(keys, ["main", "merged", "gates", "ready", "w/mini/worker-1/1", "w/mini/worker-2/1"]);
     }
 
     #[test]
     fn collapse_leaves_out_empty_rows() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { collapse: Collapse::Empty, ..RowsSpec::default() });
-        assert_eq!(shape(&rows), ["Tickets merged", "Tickets 1", "Tickets 2"], "no merges onto main read");
+        assert_eq!(shape(&rows), ["Tickets merged", "Gate runs", "Ready checks", "Tickets 1", "Tickets 2"], "no merges onto main read");
         let window = super::rows(&activity, &[], RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
         assert_eq!(window, rows, "to the window, the rows are those with events: the window leaves out more of them");
     }
@@ -876,7 +960,7 @@ mod tests {
             .iter()
             .flat_map(Node::leaves)
             .filter_map(|leaf| match leaf {
-                Node::Ranges { key, bars, .. } if key != MAIN_KEY && key != MERGED_KEY => {
+                Node::Ranges { key, bars, .. } if !TOP_KEYS.contains(&key.as_str()) => {
                     let mut issues: Vec<u64> = bars.iter().filter_map(|b| b.ticket).collect();
                     issues.dedup();
                     Some((key.clone(), issues))
@@ -890,7 +974,7 @@ mod tests {
     fn assert_no_overlap(nodes: &[Node]) {
         for leaf in nodes.iter().flat_map(Node::leaves) {
             let Node::Ranges { key, bars, .. } = leaf else { continue };
-            if key == MAIN_KEY || key == MERGED_KEY {
+            if TOP_KEYS.contains(&key.as_str()) {
                 continue;
             }
             let mut spans: Vec<(String, Timestamp, Timestamp)> = Vec::new();
@@ -913,7 +997,7 @@ mod tests {
         let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30), (4, 20, 25), (5, 12, 15)])];
         let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
         assert_eq!(packing(&rows), [("tickets/1", vec![1, 3]), ("tickets/2", vec![2, 4]), ("tickets/3", vec![5])].map(|(k, v)| (k.to_owned(), v)));
-        assert_eq!(shape(&rows)[2..], ["Tickets 1", "Tickets 2", "Tickets 3"]);
+        assert_eq!(shape(&rows)[4..], ["Tickets 1", "Tickets 2", "Tickets 3"]);
         assert_no_overlap(&rows);
     }
 
@@ -945,7 +1029,7 @@ mod tests {
                 .map(|(k, v)| (k.to_owned(), v))
         );
         assert_eq!(
-            shape(&by)[2..],
+            shape(&by)[4..],
             ["box", "  worker-1", "    Tickets 1", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1", "    Tickets 2"]
         );
         assert_no_overlap(&flat);
@@ -1000,7 +1084,7 @@ mod tests {
         use crate::colours::{CLAIMED, SENT_BACK, WAITING, ticket_colour};
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
-        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
         // The title strong; each stretch's phase in its bar's colour, its duration strong.
         for bar in bars {
             let tip = &bar.tooltip_lines;
@@ -1043,7 +1127,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
-        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
         let tip = &bars[1].tooltip_lines;
         assert!(tip[0].is_strong("#170 The spec, written down"));
         assert!(tip[1].is_plain());

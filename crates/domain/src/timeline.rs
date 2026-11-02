@@ -279,7 +279,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
         let built = build(&rows, true).unwrap();
-        assert_eq!(built.data.tracks().len(), 2 + 2);
+        assert_eq!(built.data.tracks().len(), 4 + 2, "the four top rows (#84: the gate's two), and the tickets' two");
         assert_eq!(built.times.len() as u64, built.data.item_count());
         assert_eq!(built.origin.to_string(), "2026-10-31T03:00:00Z");
         assert_eq!(built.data.clock_epoch(), Some(built.origin.0 * 1_000_000_000), "position 0 is the origin, as a Clock ruler reads it");

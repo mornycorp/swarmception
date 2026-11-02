@@ -92,6 +92,9 @@ pub fn style_colour(style: Style, ticket: Option<u64>) -> Rgb {
         Style::Waiting => WAITING,
         Style::SentBack => SENT_BACK,
         Style::Stopped => STOPPED,
+        // A run's bar is drawn in its result's colour (#84: `GateResult::colour`, which the bar
+        // sets); this is a running one's, waiting's blue.
+        Style::GateRun | Style::ReadyCheck => WAITING,
     }
 }
 
