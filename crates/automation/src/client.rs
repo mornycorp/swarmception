@@ -202,28 +202,30 @@ impl Handler for Remote {
     }
 }
 
+/// `ui.screenshot`'s params as a client sends them: the window checks the rest.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct ScreenshotPath {
+    pub path: String,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
+}
+
 /// `params` with a `ui.screenshot`'s relative `path` made absolute against this process's
-/// working directory, since the window's may be another; any other request's as they are.
+/// working directory, since the window's may be another; any other request's as they are, and
+/// params that don't read as a screenshot's for the window to refuse.
 #[must_use]
 pub fn own_paths(command: &str, params: &str) -> String {
     if command != "ui.screenshot" {
         return params.to_owned();
     }
-    let Ok(serde_json::Value::Object(mut map)) = serde_json::from_str::<serde_json::Value>(params) else {
+    let (Ok(mut shot), Ok(here)) = (serde_json::from_str::<ScreenshotPath>(params), std::env::current_dir()) else {
         return params.to_owned();
     };
-    let Some(serde_json::Value::String(path)) = map.get("path") else {
-        return params.to_owned();
-    };
-    let (path, Ok(here)) = (Path::new(path), std::env::current_dir()) else {
-        return params.to_owned();
-    };
-    if path.is_absolute() {
+    if Path::new(&shot.path).is_absolute() {
         return params.to_owned();
     }
-    let path = here.join(path).display().to_string();
-    map.insert("path".into(), serde_json::Value::String(path));
-    serde_json::Value::Object(map).to_string()
+    shot.path = here.join(&shot.path).display().to_string();
+    serde_json::to_string(&shot).unwrap_or_else(|_| params.to_owned())
 }
 
 #[cfg(test)]
@@ -233,8 +235,9 @@ mod tests {
     #[test]
     fn a_screenshots_relative_path_is_made_this_processs() {
         let here = std::env::current_dir().unwrap();
-        let made: serde_json::Value = serde_json::from_str(&own_paths("ui.screenshot", r#"{"path":"shots/a.png"}"#)).unwrap();
-        assert_eq!(made["path"], here.join("shots/a.png").display().to_string());
+        let made: ScreenshotPath = serde_json::from_str(&own_paths("ui.screenshot", r#"{"path":"shots/a.png","x":1}"#)).unwrap();
+        assert_eq!(made.path, here.join("shots/a.png").display().to_string());
+        assert_eq!(made.rest.len(), 1, "the rest is kept for the window to refuse");
         let absolute = serde_json::json!({ "path": here.join("a.png").display().to_string() }).to_string();
         assert_eq!(own_paths("ui.screenshot", &absolute), absolute);
         for (command, params) in [("ui.set", r#"{"path":"a.png"}"#), ("ui.screenshot", ""), ("ui.screenshot", "{not json"), ("ui.screenshot", r#"{"path":7}"#)]
