@@ -32,14 +32,14 @@ use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, Tick
 use swarmception_engine::live_cmds::{CarryBars, CarryParams};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
+use swarmception_engine::rows_cmds::{WindowParams, WindowRows};
+use swarmception_engine::stats_cmds::At;
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
 use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
-use swarmception_engine::rows_cmds::{WindowParams, WindowRows};
-use swarmception_engine::stats_cmds::At;
 use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams, SetTrack, SetTrackParams};
 
 use timeline_engine::highlight_cmds::HighlightParams;
@@ -859,7 +859,8 @@ impl TimelinePane {
     /// again on the next frame, keeping them while they hold the selection.
     fn show_rows<'a>(&mut self, tracks: impl Iterator<Item = &'a str>) {
         let tracks: Vec<&str> = tracks.collect();
-        let holds = |hidden: &String| tracks.iter().any(|track| track.strip_prefix(hidden.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')));
+        let holds =
+            |hidden: &String| tracks.iter().any(|track| track.strip_prefix(hidden.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')));
         let shown: Vec<String> = self.window_rows.hidden.iter().filter(|key| holds(key)).cloned().collect();
         if shown.is_empty() {
             return;

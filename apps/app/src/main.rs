@@ -55,9 +55,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
-use swarmception_domain::{Collapse, Grouping};
 use swarmception_domain::details::Subject;
 use swarmception_domain::moments::Direction;
+use swarmception_domain::{Collapse, Grouping};
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
 use swarmception_model::Timestamp;
 use swarmception_ui::saved::{self, Loaded, StateStore};
@@ -120,6 +120,16 @@ fn direction(text: &str) -> Result<Direction, String> {
         "first" => Ok(Direction::First),
         "last" => Ok(Direction::Last),
         other => Err(format!("--step takes next, previous, first or last, not {other}")),
+    }
+}
+
+/// A collapse's name (#74): `off`, `empty` or `window`.
+fn collapse(text: &str) -> Option<Collapse> {
+    match text {
+        "off" => Some(Collapse::Off),
+        "empty" => Some(Collapse::Empty),
+        "window" => Some(Collapse::Window),
+        _ => None,
     }
 }
 
@@ -191,12 +201,7 @@ impl Options {
                 }
                 "--collapse" => {
                     // `--collapse` alone leaves out the empty rows; a mode may follow (#74).
-                    let mode = args.peek().and_then(|next| match next.as_str() {
-                        "off" => Some(Collapse::Off),
-                        "empty" => Some(Collapse::Empty),
-                        "window" => Some(Collapse::Window),
-                        _ => None,
-                    });
+                    let mode = args.peek().and_then(|next| collapse(next));
                     if mode.is_some() {
                         args.next();
                     }

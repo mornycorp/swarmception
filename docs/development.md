@@ -19,7 +19,7 @@ Run the app on any swarm's clone (any directory in it; the current directory by 
 
 ```sh
 cargo run -- --repo ../swarm-timeline
-cargo run -- --repo ../swarm-timeline --grouping workers --collapse
+cargo run -- --repo ../swarm-timeline --grouping workers --collapse window
 cargo run -- --repo ../swarm-timeline --screenshot shot.png   # draw, save the window (PNG, or PPM for .ppm), quit
 cargo run -- --repo ../swarm-timeline --panes factory --at 2026-10-30T23:47:30Z   # the factory at a moment
 cargo run -- --repo ../swarm-timeline --at 2026-10-30T23:47:30Z --hover 58 --trace 58 --screenshot shot.png

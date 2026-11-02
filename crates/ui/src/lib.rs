@@ -560,13 +560,7 @@ impl Shell {
     /// Draws the window's frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.sync();
-        // Collapsed to the window (#74): the rows follow it once it settles, before it is drawn.
-        if self.ui.panes.timeline {
-            let held = ui.ctx().input(|i| i.pointer.any_down());
-            if let Some(wait) = self.timeline.collapse_to_window(&mut self.engine, std::time::Instant::now(), held) {
-                ui.ctx().request_repaint_after(wait);
-            }
-        }
+        self.collapse_to_window(ui.ctx());
         // Woken for the live watch's next check (#54), which the next frame's poll starts.
         if let Some(wait) = self.engine.live_wait(std::time::Instant::now()) {
             ui.ctx().request_repaint_after(wait);
@@ -610,6 +604,18 @@ impl Shell {
         self.reveal_details(ui.ctx());
         self.light_timeline(ui.ctx());
         self.keep(ui.ctx());
+    }
+
+    /// Collapsed to the window (#74): the timeline's rows follow it once it settles, before the
+    /// frame draws them; a frame asked for when it should look again.
+    fn collapse_to_window(&mut self, ctx: &egui::Context) {
+        if !self.ui.panes.timeline {
+            return;
+        }
+        let held = ctx.input(|i| i.pointer.any_down());
+        if let Some(wait) = self.timeline.collapse_to_window(&mut self.engine, std::time::Instant::now(), held) {
+            ctx.request_repaint_after(wait);
+        }
     }
 
     /// What the details are of, following the selection (#47): a bar newly chosen on the
