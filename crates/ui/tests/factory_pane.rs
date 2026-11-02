@@ -365,6 +365,10 @@ fn hovering_a_chip_highlights_its_bars_and_never_touches_the_selection() {
     };
     let before = person(&mut shell);
     assert!(shell.timeline().highlighted().is_empty(), "nothing highlighted before a hover");
+    frame(&mut shell, &ctx);
+    // The details follow the person's own bar (#47), which a hover never moves.
+    let details = shell.ui_state().details.subject;
+    assert!(details.is_some(), "the person's bar chosen");
 
     // Every frame of a hover on #7, then on #9, then away: the selection as it was, the
     // highlight on the hovered ticket's bars, then on none.
@@ -395,6 +399,7 @@ fn hovering_a_chip_highlights_its_bars_and_never_touches_the_selection() {
     assert_eq!(shell.factory().hovered(), None);
     assert!(shell.timeline().highlighted().is_empty());
     assert_eq!(person(&mut shell), before);
+    assert_eq!(shell.ui_state().details.subject, details, "the details still on the person's bar");
     std::fs::remove_dir_all(dir).ok();
 }
 
