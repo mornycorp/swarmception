@@ -133,3 +133,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #80 (#76, ui.set Workers window; MCP images; Open… off macOS); capacity=3 free=12.4; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-80","t":"2026-11-02T17:46:13Z"}
 {"event":"merge","issue":76,"mr":80,"sub":"gate-80","t":"2026-11-02T17:46:31Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #80","sub":"gate-80","t":"2026-11-02T17:46:36Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #79 (#74, collapse to the visible window); capacity=3 free=12.3; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-79","t":"2026-11-02T17:51:43Z"}
