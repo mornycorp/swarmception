@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -132,7 +132,15 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   network: a `GithubError`, and the cache as it was.
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
-  `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
+  `repo.open` (#69: the folder checked first, `repo_cmds::check`, a few `rev-parse`s through the
+  source's `probe`: a missing folder, a file, a folder in no git repository and one with no
+  tracking branch are `Refusal::NoSuchFolder`, `NotADirectory`, `NotARepository` and
+  `NoTrackingBranch`, and nothing changes, the repository open staying open; opened, the old
+  read and watch are dropped, Live starts afresh at the new repository's default,
+  `Session::opens` moves and the repository goes first in the recent list), `repo.recent` and
+  `repo.clearRecent` (#69: the repositories opened, newest first, ten at most, each with its
+  name and whether it is still there; a front end hands back what it kept with
+  `Session::remember_all`), `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
   `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
   ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
@@ -151,8 +159,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   them again only when one moved; `LiveStatus` says when it last checked, what that cost
   (`LiveCost`: fetch, read, build, new events) and why the last failed, apart from the session's
   error, each failure in a row doubling the wait up to 10 min; a Reload or Fetch takes a check's
-  place; a reload that names tickets the swarm hadn't before reads the issues again, no other
-  does), `timeline.carryBars` (#54: where bars of an earlier generation of rows are now, by
+  place; every check that read the branch again (new events, or a merge onto main) reads the
+  issues again in the background, so PRs' states keep up (#69: `LiveCost::issues`; with #64's
+  incremental fetch about 0.5 s on mc-engine, off the UI thread)), `timeline.carryBars` (#54: where bars of an earlier generation of rows are now, by
   ticket, start and style; the last eight generations remembered). Every load
   (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
@@ -160,7 +169,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   come from (`gh`, the cache directory) is `Session::set_github`. A session made with a waker
   reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
-- **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
+- **L4 `swarmception-ui`**: the shell: the menu bar (File: Open… (⌘O), Open Recent (#69), Reload, Fetch and Reload, Quit; View:
   the panes, the grouping, Collapse, Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
   in-window bar draws and `Shell::run_menu` runs; on macOS the app puts it in the system menu
   bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
@@ -291,7 +300,21 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   keeps it), and Live as the person left it (`live.set`, only when they chose it); a window
   restored partly or wholly off the monitors winit lists (one since unplugged) is moved onto the
   one it overlaps most, else the nearest, shrunk to fit (`WindowPlace::onto`, #68);
-  `ui.inspect`'s `saved` says where it is kept and was read from. `control` (#46) is the window's side of the control channel: `Shell::answer`
+  `ui.inspect`'s `saved` says where it is kept and was read from.
+  `open` (#69) opens repositories from the window: File ▸ Open… asks the host's `FolderPicker`
+  (on macOS the app's AppKit open panel, `apps/app/src/folder.rs`, through the objc2 crates
+  already locked; without one the window asks for a path) and runs `Shell::open_repo`, the open
+  repository's state written first, then `repo.open`; a refusal is a window saying why, the
+  repository open staying. File ▸ Open Recent lists `repo.recent` (each name and its folder,
+  `menu::recent_label`; `MenuAction::OpenRecent(n)`) with Clear Menu (`repo.clearRecent`); the
+  list is app-wide, `<dir>/recent.json` (`saved::RecentFile`, version 1), written when it
+  changes and read back after the repository opened at the start. Whatever opened a repository
+  (the menus, the control channel's `repo.open`, which the shell takes itself), the shell sees
+  `Session::opens` move and switches: the panes afresh (the panes shown, their sizes and folds
+  kept), then the new repository's own saved state restored and kept, Live as chosen for it.
+  `ui.inspect` (version 6) reports it as `open`: the refusal shown, the path being typed, Open
+  Recent's items and where the list is kept.
+  `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).
 - **L4 `swarmception-automation`** (#46): the control protocol as types (`protocol`: `Request`,
@@ -300,7 +323,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate`, `--hover-worker`, `--step`, `--steps`, `--size`, `--zoom` (the UI's
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate`, `--hover-worker`,
+  `--menu file|file.recent` (#69: the window's own menu bar, File clicked open and the pointer on
+  Open Recent, for a screenshot), `--step`, `--steps`, `--size`, `--zoom` (the UI's
   scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
   `--control-file`, `--state-dir` (else `$SWARMCEPTION_STATE_DIR`, else the platform's), `--fresh`;
   a `--screenshot` or `--control` run keeps the state only in a directory named) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
@@ -452,6 +477,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Opening a repository from the app (#69): the source's `probe`, `repo.open`'s refusals before anything changes, `repo.recent` / `repo.clearRecent`, `Session::opens`; File ▸ Open… (AppKit's open panel, ⌘O) and Open Recent, the shell switching state per repository, `recent.json`, `ui.inspect` version 6 with `open`, `--menu`; every live check that reads again refreshes the issues |
 | 2026-11-02 | minor | Model and effort compared per worker (#67): the domain's `workers`, `workers.compare`, the Workers pane as a window (View ▸ Workers, `--panes …,workers`, `--hover-worker`), `Hover::Worker`, `UiState` version 7, `ui.inspect` version 5 with `workers` |
 | 2026-11-02 | minor | A gates pane (#61): the domain's `gates`, `gates.list`, the Gates pane under the timeline (View ▸ Gates, `--panes …,gates`, `--hover-gate`), `TimelinePane::light_hover` and `axis`, `UiState` version 5, `ui.inspect` version 3 with `gates` |
 | 2026-11-02 | minor | Automation reaches the window (#60): `mcp --control` (tools through a running window, over `client::Remote`), `send` and its scripts (`script`), `ui.screenshot` and `--screenshot` as PNG (`swarmception_ui::shot`), `ui.commands` listing the widget's commands, `ui.loaded`; an MCP tool's error is its `ProtocolError`; `scripts/screenshots.{jsonl,sh}` |

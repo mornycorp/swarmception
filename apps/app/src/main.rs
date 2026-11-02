@@ -13,6 +13,9 @@
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
 //! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61), `--hover-worker <name>`
 //! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
+//! `--menu file|file.recent` draws the window's own menu bar and clicks File open (and puts the
+//! pointer on Open Recent), for a screenshot of it (#69); File ▸ Open… (⌘O) is AppKit's open
+//! panel on macOS ([`folder`]);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
 //! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,

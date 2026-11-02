@@ -276,7 +276,9 @@ impl Shell {
                     ui.set_max_width(460.0);
                     ui.label(egui::RichText::new(&refused.path).strong());
                     ui.add_space(4.0);
-                    ui.label(&refused.why);
+                    // The path once: "That folder is not in a git repository…".
+                    let why = refused.why.strip_prefix(refused.path.as_str()).map_or_else(|| refused.why.clone(), |rest| format!("That folder{rest}."));
+                    ui.label(why);
                     ui.add_space(4.0);
                     match &still {
                         Some(repo) => ui.weak(format!("{repo} stays open.")),
