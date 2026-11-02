@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the factory's hover highlights a ticket's bars, swarm-timeline at 9bf2651, #48; the details pane, #47) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -90,7 +90,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's own for working and merges, the phases' fixed colours, green passed, red failed or
   sent back), with a header (chip, mark, title, GitHub's state, PR and labels), `Fact`s, the
   `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket
-  or its merge onto main.
+  or its merge onto main. `details_on` (#55) adds where the subject is drawn on the rows
+  (`OnTimeline`: its bars as `rows::BarRef`s and the times they span): a ticket's bars; a gate
+  run's merges onto main and its tickets' bars; a session's, the stretches its events began in
+  its time, the tickets it merged and their merges onto main; a merge onto main's bar and its
+  ticket's.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -109,8 +113,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   from a time: its time, its moments and its name),
   `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR),
   `details.get` (#47: exactly one of `ticket`, `gate`, `session`, `merge`, or a bar's `track` and
-  `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs; a
-  subject the swarm never had is `Refusal::NotFound`). Every load
+  `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs and,
+  in `timeline`, its bars on the rows shown now (#55); a subject the swarm never had is
+  `Refusal::NotFound`). Every load
   (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
   where and why not is `repo.status`'s `issues`, and new issues build the rows again. Where they
@@ -172,7 +177,13 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   the person's own bar on the timeline (`TimelinePane::chosen_bar`, not a factory hover's), a chip
   clicked in the factory (its traced ticket), a gate run clicked in the gate's list; and within
   the pane, a line, a name (their session) or a chip, ← going back. Its pages open as a bar's
-  right-click does. The factory's floor keeps within its pane, its header wrapping, so a narrower
+  right-click does. The timeline selects with it (#55): the subject's bars (`details.get`'s
+  `timeline`) are the widget's highlight, never the selection, and a new subject's bars are
+  brought into view when none is (`TimelinePane::reveal`: the window moves, by `view.show`,
+  centred on them at its width when they fit, else just holding them; the rows scroll to the
+  first of theirs). The highlight has one owner, `TimelinePane::light`: a factory hover's
+  ticket while it lasts, else the details' bars, so a hover's leave gives them back
+  (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
   `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by,
   what the details are of; version 3) is serde data. `control` (#46) is the window's side of the control channel: `Shell::answer`
@@ -266,7 +277,8 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   each station drew last frame, the timeline's scale, window, playhead, selected ranges and
   highlighted ones),
   `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
-  selected, a step, the window) and `ui.screenshot` (`{"path": "<file>.ppm"}`, taken a few frames
+  selected, a step, the details' subject or none (#55), the window; `ui.inspect`'s `details`
+  report its subject, title, error and bars) and `ui.screenshot` (`{"path": "<file>.ppm"}`, taken a few frames
   later so a `ui.set` has settled, answered with its size once saved); or `timeline.<id>`, the
   timeline widget's own command forwarded (`timeline.view.fit`, `timeline.state.get`,
   `timeline.ui.inspect`; `timeline.engine.commands` lists them: the engine's own `timeline.*` ids
@@ -308,6 +320,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The details pane and the timeline select together (#55): `details.get`'s `timeline` (the subject's bars), highlighted with one owner (a factory hover wins while it lasts) and brought into view; `ui.set`'s `details`, `ui.inspect`'s `details` and `timeline.lit` |
 | 2026-11-02 | minor | The factory's chip hover uses the widget's highlight (`Timeline::set_highlight`), not the selection; `ui.inspect`'s `highlighted`; swarm-timeline pinned at 9bf2651 (#48) |
 | 2026-11-02 | minor | The details of what is selected (#47): the domain's `details`, `details.get`, the details pane following the timeline's and the factory's selection; `--details` |
 | 2026-11-02 | minor | Automation (#46): `swarmception-automation`, the app's `--control`, `ui.inspect` / `ui.set` / `ui.screenshot`, the widget's commands as `timeline.<id>`, `swarmception-cli serve` and `mcp` |

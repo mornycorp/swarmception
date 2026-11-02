@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 
 use schemars::{JsonSchema, schema_for};
 use serde::{Deserialize, Serialize};
+use swarmception_domain::details::Subject;
 use swarmception_domain::moments::Direction;
+use swarmception_domain::rows::BarRef;
 use swarmception_engine::EngineError;
 use swarmception_engine::command::parse;
 use swarmception_engine::engine_cmds::{CommandWire, CommandsResult, NoParams};
@@ -23,6 +25,7 @@ use swarmception_engine::stats_cmds::At;
 use swarmception_model::Timestamp;
 
 use crate::factory::{Jump, Source, Speed, Steps};
+use crate::timeline::Lit;
 use crate::{Panes, Shell, UiState};
 
 /// [`Inspect`]'s shape.
@@ -99,10 +102,13 @@ pub struct TimelineInspect {
     pub hover: Option<Timestamp>,
     /// The selected ranges, by row key.
     pub selected: BTreeMap<String, Vec<usize>>,
-    /// The ranges the widget highlights, by row key: the bars of the ticket hovered in the
-    /// factory (#48), apart from the selection.
+    /// The ranges the widget highlights, by row key, apart from the selection: the bars of the
+    /// ticket hovered in the factory (#48), else those of what the details pane shows (#55).
     #[serde(default)]
     pub highlighted: BTreeMap<String, Vec<usize>>,
+    /// What the highlight is of: the hovered ticket, the details' subject, or nothing (#55).
+    #[serde(default)]
+    pub lit: Lit,
     /// The playhead's item.
     pub playhead_item: Option<u64>,
 }
@@ -122,6 +128,23 @@ pub struct Inspect {
     pub error: Option<String>,
     pub factory: FactoryInspect,
     pub timeline: TimelineInspect,
+    #[serde(default)]
+    pub details: DetailsInspect,
+}
+
+/// The details pane, as `ui.inspect` reads it (#55).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailsInspect {
+    /// What it tells the story of (the state's `details.subject`).
+    pub subject: Option<Subject>,
+    /// Its title, once `details.get` has answered.
+    pub title: Option<String>,
+    /// Why there are no details: `details.get`'s refusal.
+    pub error: Option<String>,
+    /// Its bars on the timeline (`details.get`'s `timeline`), which the timeline highlights
+    /// while no factory hover has the highlight.
+    pub bars: Vec<BarRef>,
 }
 
 /// Where `ui.set`'s step puts the factory's *t*, as ⏮ / ⏭, Home and End do.
@@ -139,7 +162,7 @@ pub enum StepTo {
 }
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the panes,
-/// speed and steps; `at`; follow and play; the ticket; the step; the window.
+/// speed and steps; `at`; follow and play; the ticket; the step; the details; the window.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -162,6 +185,13 @@ pub struct UiSet {
     pub clear_ticket: bool,
     /// A step of *t* to a key moment, on the next frame.
     pub step: Option<StepTo>,
+    /// What the details pane shows (#55), as choosing it in the pane does (← goes back): its
+    /// bars highlighted on the timeline and brought into view on the next frame, the selection
+    /// untouched.
+    pub details: Option<Subject>,
+    /// The details pane shows nothing.
+    #[serde(default)]
+    pub clear_details: bool,
     /// The timeline's window, as clock times, as much of it as its extent holds.
     pub window: Option<SpanAt>,
 }
@@ -308,7 +338,15 @@ impl Shell {
             hover: looking.hover,
             selected: selection.ranges,
             highlighted: self.timeline.highlighted(),
+            lit: self.timeline.lit(),
             playhead_item: selection.playhead,
+        };
+        let shown = self.details.details().filter(|_| self.details.on_timeline(&self.ui.details).is_some());
+        let details = DetailsInspect {
+            subject: self.ui.details.subject.clone(),
+            title: shown.map(|d| d.title.clone()),
+            error: self.details.error().map(str::to_owned),
+            bars: self.details.on_timeline(&self.ui.details).map(|on| on.bars.clone()).unwrap_or_default(),
         };
         Inspect {
             version: INSPECT_VERSION,
@@ -318,6 +356,7 @@ impl Shell {
             error: self.error.clone().or_else(|| self.status.error.clone()),
             factory,
             timeline,
+            details,
         }
     }
 
@@ -328,6 +367,13 @@ impl Shell {
         self.sync();
         self.apply_view(set, at);
         self.apply_selection(set);
+        if set.clear_details {
+            self.ui.details.subject = None;
+        }
+        if let Some(subject) = &set.details {
+            self.select(subject.clone());
+        }
+        self.details.sync(&mut self.engine, &self.ui.details);
         if let Some((start, end)) = window {
             self.timeline.show_span(&mut self.engine, start, end);
         }

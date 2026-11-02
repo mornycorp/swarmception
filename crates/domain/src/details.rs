@@ -28,7 +28,7 @@ use swarmception_model::{IssueKind, IssueState, Issues, Kind, MainMerge, Role, T
 use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
 use crate::colours::{self, Rgb, phase_colour, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
-use crate::rows::{Node, Style, duration};
+use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration};
 use crate::tickets::{Merged, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine};
@@ -232,6 +232,28 @@ pub struct Details {
     /// What happened, oldest first.
     pub entries: Vec<Entry>,
     pub pages: Vec<Page>,
+    /// Where it is drawn on the timeline (#55): [`details_on`] fills it; [`details`], with no
+    /// rows to read, leaves it empty.
+    #[serde(default)]
+    pub timeline: OnTimeline,
+}
+
+/// Where a subject is drawn on the timeline (#55): its bars, which the timeline highlights while
+/// the details pane shows it, and the times they span, to bring them into view.
+///
+/// - a ticket: its bars (its stretches and its merge);
+/// - a gate run: the merges onto main it made, and the bars of the tickets it named;
+/// - a session: the bars of what it began in its time (the stretches its events began), the
+///   tickets it merged and their merges onto main;
+/// - a merge onto main: its bar on main's row, and its ticket's bars.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct OnTimeline {
+    /// Its bars, sorted by row key and place, each once.
+    pub bars: Vec<BarRef>,
+    /// The first bar's start and the last one's end; none with no bars.
+    pub start: Option<Timestamp>,
+    pub end: Option<Timestamp>,
 }
 
 /// What the details read: the activity, the merges onto main, GitHub's issues, and what is
@@ -244,7 +266,11 @@ struct Ctx<'a> {
     runs: Vec<GateRun>,
 }
 
-impl Ctx<'_> {
+impl<'a> Ctx<'a> {
+    fn new(activity: &'a Activity, merges: &'a [MainMerge], issues: &'a Issues) -> Self {
+        Self { activity, merges, issues, tickets: tickets(activity), runs: gate_runs(activity, Timestamp(i64::MAX)) }
+    }
+
     fn who(&self, instance: &str) -> Who {
         let name = self.activity.agent(instance).map_or_else(|| instance.to_owned(), |a| a.name.clone());
         Who { name, instance: instance.to_owned() }
@@ -283,13 +309,77 @@ impl Ctx<'_> {
 /// when the swarm has no such ticket, gate run, session or merge.
 #[must_use]
 pub fn details(activity: &Activity, merges: &[MainMerge], issues: &Issues, subject: &Subject) -> Option<Details> {
-    let ctx = Ctx { activity, merges, issues, tickets: tickets(activity), runs: gate_runs(activity, Timestamp(i64::MAX)) };
+    told(&Ctx::new(activity, merges, issues), subject)
+}
+
+/// The details of `subject`, as [`details`], with where it is drawn on the timeline's `rows`
+/// ([`OnTimeline`], #55).
+#[must_use]
+pub fn details_on(activity: &Activity, merges: &[MainMerge], issues: &Issues, rows: &[Node], subject: &Subject) -> Option<Details> {
+    let ctx = Ctx::new(activity, merges, issues);
+    let mut found = told(&ctx, subject)?;
+    found.timeline = on_timeline(&ctx, rows, &found.subject);
+    Some(found)
+}
+
+fn told(ctx: &Ctx<'_>, subject: &Subject) -> Option<Details> {
     match subject {
-        Subject::Ticket { issue } => ticket_details(&ctx, *issue),
-        Subject::Gate { sub, at } => gate_details(&ctx, sub, *at),
-        Subject::Session { instance, at } => session_details(&ctx, instance, *at),
-        Subject::Merge { commit } => merge_details(&ctx, commit),
+        Subject::Ticket { issue } => ticket_details(ctx, *issue),
+        Subject::Gate { sub, at } => gate_details(ctx, sub, *at),
+        Subject::Session { instance, at } => session_details(ctx, instance, *at),
+        Subject::Merge { commit } => merge_details(ctx, commit),
     }
+}
+
+/// Whether `bar`, on row `key`, draws one of `commits` onto main.
+fn on_main(key: &str, bar: &Bar, commits: &[&MainMerge]) -> bool {
+    key == MAIN_KEY && bar.style == Style::MainMerge && commits.iter().any(|m| m.t == bar.start && m.pr == bar.pr)
+}
+
+/// Where `subject` (as its details name it: a gate run's or a session's `at` its start) is drawn
+/// on `rows`.
+fn on_timeline(ctx: &Ctx<'_>, rows: &[Node], subject: &Subject) -> OnTimeline {
+    let found = match subject {
+        Subject::Ticket { issue } => bars_where(rows, |_, bar| bar.ticket == Some(*issue)),
+        Subject::Gate { sub, at } => {
+            let Some(run) = ctx.run(sub, *at) else { return OnTimeline::default() };
+            let named: Vec<u64> = ctx.tickets.iter().filter(|t| names_ticket(run, t)).map(|t| t.issue).collect();
+            let commits: Vec<&MainMerge> = merged_prs(&run_events(ctx, run)).into_iter().filter_map(|pr| main_commit(ctx, Some(pr), run.start)).collect();
+            bars_where(rows, |key, bar| bar.ticket.is_some_and(|issue| named.contains(&issue)) || on_main(key, bar, &commits))
+        }
+        Subject::Session { instance, at } => session_bars(ctx, rows, instance, *at),
+        Subject::Merge { commit } => {
+            let Some(merge) = ctx.merges.iter().find(|m| m.commit == *commit) else { return OnTimeline::default() };
+            let ticket = merge.pr.and_then(|pr| ctx.tickets.iter().find(|t| t.merged.as_ref().is_some_and(|m| m.pr == Some(pr)))).map(|t| t.issue);
+            bars_where(rows, |key, bar| on_main(key, bar, &[merge]) || (ticket.is_some() && bar.ticket == ticket))
+        }
+    };
+    let start = found.iter().map(|(_, bar)| bar.start).min();
+    let end = found.iter().map(|(_, bar)| bar.end).max();
+    let mut bars: Vec<BarRef> = found.into_iter().map(|(at, _)| at).collect();
+    bars.sort();
+    bars.dedup();
+    OnTimeline { bars, start, end }
+}
+
+/// A session's bars: the stretches its events began in its time, the tickets it merged then and
+/// their merges onto main.
+fn session_bars<'r>(ctx: &Ctx<'_>, rows: &'r [Node], instance: &str, at: Option<Timestamp>) -> Vec<(BarRef, &'r Bar)> {
+    let Some(session) = ctx.activity.agent(instance).and_then(|agent| session_at(agent, at)) else { return Vec::new() };
+    let inside = |t: Timestamp| session.span.start <= t && t <= session.span.end;
+    let mut began = Vec::new();
+    let mut merged = Vec::new();
+    for ticket in &ctx.tickets {
+        let mine = ticket.stretches.iter().filter(|s| s.by == instance && inside(s.start));
+        began.extend(mine.map(|s| (ticket.issue, Style::from(s.phase), s.start, s.end)));
+        merged.extend(ticket.merged.as_ref().filter(|m| m.by == instance && inside(m.t)).map(|m| (ticket.issue, m)));
+    }
+    let commits: Vec<&MainMerge> = merged.iter().filter_map(|(_, m)| main_commit(ctx, m.pr, m.t)).collect();
+    bars_where(rows, |key, bar| match bar.ticket {
+        Some(issue) if bar.style == Style::Merged => merged.iter().any(|(merged, _)| *merged == issue),
+        Some(issue) => began.contains(&(issue, bar.style, bar.start, bar.end)),
+        None => on_main(key, bar, &commits),
+    })
 }
 
 /// What the bar `range` of row `track` is the details of: its ticket, or the merge onto main it
@@ -357,6 +447,7 @@ fn ticket_details(ctx: &Ctx<'_>, issue: u64) -> Option<Details> {
         related: Vec::new(),
         entries: in_order(entries),
         pages,
+        timeline: OnTimeline::default(),
     })
 }
 
@@ -547,17 +638,9 @@ fn gate_details(ctx: &Ctx<'_>, sub: &str, at: Option<Timestamp>) -> Option<Detai
             .by(owner.clone())
             .note(note)
     }];
-    let until = run.end.unwrap_or(Timestamp(i64::MAX));
-    let events: Vec<_> = ctx.activity.issue_events.iter().filter(|e| e.sub.as_deref() == Some(sub) && run.start <= e.t && e.t <= until).collect();
-    let mut merged_prs = Vec::new();
-    for event in &events {
-        if let Kind::Merge { mr: Some(m), .. } = event.kind
-            && !merged_prs.contains(&m)
-        {
-            merged_prs.push(m);
-        }
-        entries.push(gate_event_entry(ctx, event));
-    }
+    let events = run_events(ctx, run);
+    let merged_prs = merged_prs(&events);
+    entries.extend(events.iter().map(|event| gate_event_entry(ctx, event)));
     for pr in &merged_prs {
         if let Some(commit) = main_commit(ctx, Some(*pr), run.start) {
             let detail = TipLine::plain(format!("{} {}", short_commit(&commit.commit), commit.subject));
@@ -576,7 +659,27 @@ fn gate_details(ctx: &Ctx<'_>, sub: &str, at: Option<Timestamp>) -> Option<Detai
         related: gate_related(ctx, run),
         entries: in_order(entries),
         pages: gate_pages(ctx, run),
+        timeline: OnTimeline::default(),
     })
+}
+
+/// The issue events a gate run logged, in its time.
+fn run_events<'a>(ctx: &Ctx<'a>, run: &GateRun) -> Vec<&'a IssueEvent> {
+    let until = run.end.unwrap_or(Timestamp(i64::MAX));
+    ctx.activity.issue_events.iter().filter(|e| e.sub.as_deref() == Some(run.sub.as_str()) && run.start <= e.t && e.t <= until).collect()
+}
+
+/// The pull requests `events` merged, each once, in order.
+fn merged_prs(events: &[&IssueEvent]) -> Vec<u64> {
+    let mut merged = Vec::new();
+    for event in events {
+        if let Kind::Merge { mr: Some(m), .. } = event.kind
+            && !merged.contains(&m)
+        {
+            merged.push(m);
+        }
+    }
+    merged
 }
 
 /// What a gate run did to a ticket: merged it, sent it back (why, in red), or another event.
@@ -735,6 +838,7 @@ fn session_details(ctx: &Ctx<'_>, instance: &str, at: Option<Timestamp>) -> Opti
         related: Vec::new(),
         entries,
         pages: Vec::new(),
+        timeline: OnTimeline::default(),
     })
 }
 
@@ -879,6 +983,7 @@ fn merge_details(ctx: &Ctx<'_>, commit: &str) -> Option<Details> {
         related,
         entries: in_order(entries),
         pages,
+        timeline: OnTimeline::default(),
     })
 }
 
@@ -1007,6 +1112,51 @@ mod tests {
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 1), Some(Subject::Ticket { issue: 170 }));
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 99), None);
         assert_eq!(bar_subject(&rows, &merges(), "nope", 0), None);
+    }
+
+    #[test]
+    fn each_subject_names_its_bars_on_the_timeline() {
+        let (activity, issues) = (Activity::of(&sample()), issues());
+        for grouping in [crate::Grouping::Flat, crate::Grouping::Workers] {
+            let rows = crate::rows::rows(&activity, &merges(), crate::RowsSpec { grouping, collapse: false });
+            let on = |subject: Subject| details_on(&activity, &merges(), &issues, &rows, &subject).unwrap().timeline;
+            let of = |keep: &dyn Fn(&str, &Bar) -> bool| {
+                let mut bars: Vec<BarRef> = bars_where(&rows, keep).into_iter().map(|(at, _)| at).collect();
+                bars.sort();
+                bars
+            };
+            let main = BarRef { track: MAIN_KEY.into(), range: 0 };
+            let merged = BarRef { track: crate::rows::MERGED_KEY.into(), range: 0 };
+
+            // A ticket: its stretches and its merge, from its claim to its merge's end.
+            let ticket = on(Subject::Ticket { issue: 170 });
+            let tickets = of(&|_, bar| bar.ticket == Some(170));
+            assert_eq!(ticket.bars, tickets, "{grouping:?}");
+            assert_eq!(ticket.bars.len(), 4, "claimed, working, waiting and its merge");
+            assert_eq!(ticket.start, Timestamp::parse("2026-10-31T03:53:22Z"));
+            assert_eq!(ticket.end, Timestamp::parse("2026-10-31T04:29:08Z"), "its merge's 10 s");
+
+            // A gate run: the merge onto main it made, and its ticket's bars.
+            let gate = on(Subject::Gate { sub: "gate-pr173".into(), at: None });
+            let mut want = tickets.clone();
+            want.push(main.clone());
+            want.sort();
+            assert_eq!(gate.bars, want, "{grouping:?}");
+            // A merge onto main: its bar on main's row, and its ticket's.
+            assert_eq!(on(Subject::Merge { commit: "be043bc".into() }).bars, want);
+
+            // A session: what it began in its time. The worker's: #170's stretches, not its merge.
+            let worker = on(Subject::Session { instance: "mini-79ba63".into(), at: None });
+            assert_eq!(worker.bars, of(&|key, bar| bar.ticket == Some(170) && key != crate::rows::MERGED_KEY), "{grouping:?}");
+            // The coordinator's: the ticket it merged and its merge onto main.
+            assert_eq!(on(Subject::Session { instance: "mini-8d44f3".into(), at: None }).bars, [main.clone(), merged.clone()]);
+            // The abandoned worker's: #168's stretch.
+            assert_eq!(on(Subject::Session { instance: "mini-dead01".into(), at: None }).bars, of(&|_, bar| bar.ticket == Some(168)));
+        }
+        // With no rows to read, nothing is drawn.
+        assert_eq!(of(Subject::Ticket { issue: 170 }).timeline, OnTimeline::default());
+        let none = details_on(&activity, &merges(), &issues, &[], &Subject::Ticket { issue: 170 }).unwrap().timeline;
+        assert_eq!((none.bars.len(), none.start, none.end), (0, None, None));
     }
 
     #[test]

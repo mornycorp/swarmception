@@ -145,6 +145,26 @@ impl Node {
     }
 }
 
+/// A bar on the timeline: its row's key and its place among the row's bars (the widget's range).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct BarRef {
+    pub track: String,
+    pub range: usize,
+}
+
+/// The bars of `rows` that `keep` keeps (given its row's key and the bar), top to bottom, each
+/// row's left to right.
+#[must_use]
+pub fn bars_where(rows: &[Node], mut keep: impl FnMut(&str, &Bar) -> bool) -> Vec<(BarRef, &Bar)> {
+    let mut found = Vec::new();
+    for leaf in rows.iter().flat_map(Node::leaves) {
+        if let Node::Ranges { key, bars, .. } = leaf {
+            found.extend(bars.iter().enumerate().filter(|(_, bar)| keep(key, bar)).map(|(range, bar)| (BarRef { track: key.clone(), range }, bar)));
+        }
+    }
+    found
+}
+
 /// The keys of the two rows at the top.
 pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";

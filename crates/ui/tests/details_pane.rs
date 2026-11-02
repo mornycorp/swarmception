@@ -2,13 +2,19 @@
 //! returns for what is selected (AGENTS.md rule 6), and follows the selection: a bar chosen on
 //! the timeline, a ticket traced in the factory.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use swarmception_domain::details::Subject;
-use swarmception_engine::details_cmds::Get;
+use swarmception_domain::rows::BarRef;
+use swarmception_engine::details_cmds::{DetailsParams, Get};
 use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
-use swarmception_ui::{Shell, details_params};
+use swarmception_model::Timestamp;
+use swarmception_ui::control::{Answer, Inspect};
+use swarmception_ui::{Lit, Shell, details_params};
+use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::ranges_cmds::{RangeParams, Toggle};
+use timeline_engine::state_cmds::Get as GetState;
 
 /// #7 (PR #8) claimed, worked on, submitted and merged by gate-pr8; #9 claimed by another
 /// worker; main merges PR #8.
@@ -133,6 +139,152 @@ fn the_pane_draws_what_details_get_returns() {
         }
     }
     assert_eq!(shell.details().details().map(|d| d.title.as_str()), Some("worker-1 · mini"));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// `bars` by row key, as the widget's highlight holds them.
+fn by_row(bars: &[BarRef]) -> BTreeMap<String, Vec<usize>> {
+    let mut rows = BTreeMap::<String, Vec<usize>>::new();
+    for bar in bars {
+        rows.entry(bar.track.clone()).or_default().push(bar.range);
+    }
+    for ranges in rows.values_mut() {
+        ranges.sort_unstable();
+        ranges.dedup();
+    }
+    rows
+}
+
+/// The person's own selection on the timeline, as text to compare: its ranges, instant, focus
+/// and playhead.
+fn person(shell: &mut Shell) -> String {
+    let s = shell.timeline().widget().session().call::<GetState>(NoParams {}).unwrap().timeline.unwrap();
+    format!("{:?}", (s.selection, s.selected_ranges, s.selected_instant, s.focus, s.playhead))
+}
+
+#[test]
+fn the_timeline_highlights_the_details_subjects_bars_and_never_the_selection() {
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    // The person chose a bar of #9's on the timeline: the details are #9's, its bars highlighted.
+    let nine = shell.engine().call::<TicketBars>(TicketParams { issue: 9 }).unwrap().bars;
+    shell.timeline().widget().session().call::<Toggle>(RangeParams { track: nine[0].track.clone(), range: nine[0].range }).unwrap();
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.ui_state().details.subject, Some(Subject::Ticket { issue: 9 }));
+    assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (by_row(&nine), Lit::Details));
+    let before = person(&mut shell);
+
+    // Each kind of subject chosen in the pane: its bars highlighted, as details.get names them.
+    let seven = shell.engine().call::<TicketBars>(TicketParams { issue: 7 }).unwrap().bars;
+    let main = BarRef { track: "main".into(), range: 0 };
+    let stretches: Vec<BarRef> = seven.iter().filter(|b| b.track != "merged").cloned().collect();
+    let merge = shell.engine().call::<Get>(DetailsParams { track: Some("main".into()), range: Some(0), ..DetailsParams::default() }).unwrap().subject;
+    let with_main = [seven.clone(), vec![main.clone()]].concat();
+    for (subject, want) in [
+        (Subject::Ticket { issue: 7 }, seven.clone()),
+        (Subject::Gate { sub: "gate-pr8".into(), at: None }, with_main.clone()),
+        (Subject::Session { instance: "mini-aa1111".into(), at: None }, stretches),
+        (Subject::Session { instance: "mini-cc3333".into(), at: None }, vec![main.clone(), seven.iter().find(|b| b.track == "merged").unwrap().clone()]),
+        (merge, with_main),
+    ] {
+        shell.select(subject.clone());
+        frame(&mut shell, &ctx);
+        frame(&mut shell, &ctx);
+        let answer = shell.engine().call::<Get>(details_params(&subject)).unwrap().timeline;
+        assert_eq!(by_row(&answer.bars), by_row(&want), "{subject:?}: details.get names its bars");
+        assert_eq!(shell.timeline().highlighted(), by_row(&want), "{subject:?}: the timeline highlights them");
+        let inspect = shell.inspect();
+        assert_eq!((&inspect.details.subject, &inspect.details.bars, inspect.timeline.lit), (&Some(subject.clone()), &answer.bars, Lit::Details));
+        assert_eq!(person(&mut shell), before, "{subject:?}: the selection never touched");
+    }
+
+    // ← back: the subject before, and its bars.
+    shell.details_back();
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert!(matches!(shell.ui_state().details.subject, Some(Subject::Session { .. })));
+    assert_eq!(shell.timeline().highlighted().get("main"), Some(&vec![0]));
+
+    // Details the swarm never had: nothing highlighted, the selection as it was.
+    shell.select(Subject::Ticket { issue: 99 });
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert!(shell.timeline().highlighted().is_empty());
+    assert_eq!((shell.timeline().lit(), person(&mut shell)), (Lit::Nothing, before));
+
+    // The details pane closed: its subject highlights nothing.
+    shell.select(Subject::Ticket { issue: 7 });
+    let mut state = shell.ui_state();
+    state.panes.details = false;
+    shell.set_ui_state(state);
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert!(shell.timeline().highlighted().is_empty());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn ui_set_details_reports_its_subject_and_brings_its_bars_into_view() {
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let set = |shell: &mut Shell, params: &str| -> Inspect {
+        match shell.answer("ui.set", params) {
+            Answer::Now(Ok(text)) => serde_json::from_str(&text).unwrap(),
+            other => panic!("{params}: {other:?}"),
+        }
+    };
+    let window = |shell: &mut Shell| shell.inspect().timeline.window.map(|w| (w.start, w.end)).unwrap();
+    let t = |text: &str| Timestamp::parse(text).unwrap();
+    let before = person(&mut shell);
+
+    // The window after the merge onto main; the gate run's bars nowhere in it.
+    set(&mut shell, r#"{"window": {"start": "2026-10-31T03:45:20Z", "end": "2026-10-31T03:46:00Z"}}"#);
+    frame(&mut shell, &ctx);
+    assert_eq!(window(&mut shell), (t("2026-10-31T03:45:20Z"), t("2026-10-31T03:46:00Z")));
+    let inspect = set(&mut shell, r#"{"details": {"gate": {"sub": "gate-pr8"}}}"#);
+    assert_eq!(inspect.state.details.subject, Some(Subject::Gate { sub: "gate-pr8".into(), at: None }));
+    assert_eq!(inspect.details.subject, inspect.state.details.subject, "ui.inspect's details report the subject");
+    assert_eq!(inspect.details.title.as_deref(), Some("gate run gate-pr8"));
+    let gate = shell.engine().call::<Get>(details_params(&Subject::Gate { sub: "gate-pr8".into(), at: None })).unwrap().timeline;
+    assert_eq!(inspect.details.bars, gate.bars);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // Too wide for the window: the window holds them all, from #7's claim to the merge onto main.
+    let (start, end) = window(&mut shell);
+    assert!(start <= t("2026-10-31T03:01:00Z") && end >= t("2026-10-31T03:45:10Z"), "{start} → {end}");
+    assert_eq!(shell.timeline().highlighted(), by_row(&gate.bars));
+    assert_eq!(person(&mut shell), before, "the selection untouched");
+
+    // A subject on screen already: the window stays.
+    set(&mut shell, r#"{"window": {"start": "2026-10-31T03:10:00Z", "end": "2026-10-31T03:12:00Z"}}"#);
+    frame(&mut shell, &ctx);
+    let stays = window(&mut shell);
+    set(&mut shell, r#"{"details": {"ticket": {"issue": 7}}}"#);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(window(&mut shell), stays, "#7's working bar was in view");
+
+    // Narrower than the window: the same width, centred on them (the coordinator's merge).
+    set(&mut shell, r#"{"window": {"start": "2026-10-31T03:20:00Z", "end": "2026-10-31T03:20:50Z"}}"#);
+    frame(&mut shell, &ctx);
+    assert_eq!(window(&mut shell), (t("2026-10-31T03:20:00Z"), t("2026-10-31T03:20:50Z")));
+    set(&mut shell, r#"{"details": {"session": {"instance": "mini-cc3333"}}}"#);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let (start, end) = window(&mut shell);
+    assert!(start <= t("2026-10-31T03:45:00Z") && end >= t("2026-10-31T03:45:10Z"), "{start} → {end}");
+    assert!((end.0 - start.0 - 50).abs() <= 1, "the window's width kept: {start} → {end}");
+
+    // Cleared: nothing reported, nothing highlighted.
+    let inspect = set(&mut shell, r#"{"clearDetails": true}"#);
+    assert_eq!((inspect.details.subject, inspect.details.bars.len()), (None, 0));
+    frame(&mut shell, &ctx);
+    assert!(shell.timeline().highlighted().is_empty());
+    assert_eq!(person(&mut shell), before);
     std::fs::remove_dir_all(dir).ok();
 }
 

@@ -4,7 +4,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::details::{Details, PageKind, Subject, bar_subject, details};
+use swarmception_domain::details::{Details, PageKind, Subject, bar_subject, details_on};
 
 use crate::command::Command;
 use crate::error::{EngineError, Refusal, Unavailable};
@@ -38,7 +38,8 @@ pub struct DetailsParams {
 /// phases with their times, its send backs, its gate runs and its merge; for a gate run, its
 /// notes, the PRs it carried and its merges; for a session, its events; for a merge onto main,
 /// its gate run and its ticket's merge; each with the issue's title, labels and pages from the
-/// issues fetched.
+/// issues fetched; and where it is drawn on the timeline's rows now (`timeline`: its bars, which
+/// the window highlights while the details pane shows it, and the times they span, #55).
 pub struct Get;
 
 impl Command for Get {
@@ -55,7 +56,7 @@ impl Command for Get {
     fn run(session: &mut Session, params: DetailsParams) -> Result<Details, EngineError> {
         let subject = subject_of(session, &params)?;
         let Some(loaded) = &session.loaded else { return Err(EngineError::Disabled { command: Self::ID.to_owned(), reason: Unavailable::NoData }) };
-        let found = details(&loaded.activity, &loaded.tracking.merges, &session.issues.issues, &subject);
+        let found = details_on(&loaded.activity, &loaded.tracking.merges, &session.issues.issues, &session.rows, &subject);
         let mut found = found.ok_or_else(|| Refusal::NotFound { what: described(&subject) })?;
         for page in &mut found.pages {
             page.url = page_url(session, page.kind == PageKind::Pull, page.number);

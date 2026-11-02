@@ -404,6 +404,56 @@ fn hovering_a_chip_highlights_its_bars_and_never_touches_the_selection() {
 }
 
 #[test]
+fn a_hover_wins_the_highlight_and_its_leave_gives_it_back_to_the_details() {
+    use swarmception_domain::details::Subject;
+    use swarmception_ui::Lit;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let mut state = shell.ui_state();
+    state.panes.details = true;
+    shell.set_ui_state(state);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    let gate = Subject::Gate { sub: "gate-pr8".into(), at: None };
+    shell.select(gate.clone());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // The details' gate run: its merge onto main and #7's bars, highlighted.
+    let answer = shell.engine().call::<swarmception_engine::details_cmds::Get>(swarmception_ui::details_params(&gate)).unwrap();
+    let mut gate_bars = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    for bar in &answer.timeline.bars {
+        gate_bars.entry(bar.track.clone()).or_default().push(bar.range);
+    }
+    let mut want = ticket_bars(&mut shell, 7);
+    let on_main = gate_bars.get("main").cloned().unwrap_or_default();
+    assert_eq!(on_main.len(), 1, "one merge onto main: {gate_bars:?}");
+    let params = swarmception_engine::details_cmds::DetailsParams { track: Some("main".into()), range: Some(on_main[0]), ..Default::default() };
+    let merge = shell.engine().call::<swarmception_engine::details_cmds::Get>(params).unwrap();
+    assert!(merge.title.starts_with("PR #8"), "the merge onto main of PR #8: {}", merge.title);
+    want.insert("main".into(), on_main);
+    assert_eq!(gate_bars, want);
+    assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (gate_bars.clone(), Lit::Details));
+    let before = shell.timeline().selection().unwrap();
+
+    // A hover on #9's chip wins while it lasts.
+    let on = chips(&shell, 9)[0].center();
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(on)]);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().hovered(), Some(9));
+    assert_eq!(shell.timeline().highlighted(), ticket_bars(&mut shell, 9));
+    assert_eq!(shell.inspect().timeline.lit, Lit::Hovered { ticket: 9 });
+
+    // Its leave gives the gate run its highlight back; the selection and the details as they were.
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().hovered(), None);
+    assert_eq!((shell.timeline().highlighted(), shell.inspect().timeline.lit), (gate_bars, Lit::Details));
+    assert_eq!(shell.timeline().selection().unwrap(), before, "the selection never touched");
+    assert_eq!(shell.ui_state().details.subject, Some(gate));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
 fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     use timeline_engine::ranges_cmds::{RangeParams, Toggle};
     use timeline_engine::state_cmds::{Set, SetParams};
