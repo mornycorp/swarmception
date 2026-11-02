@@ -1,3 +1,4 @@
 {"effort":"high","event":"session.start","format":3,"machine":"christohersmini","model":"claude-opus-5-5","name":"worker-20","parent":"christohersmini-dd15cc","role":"worker","t":"2026-11-02T07:19:53Z"}
 {"event":"claim","issue":48,"mr":51,"t":"2026-11-02T07:20:12Z"}
 {"event":"work","issue":48,"t":"2026-11-02T07:20:15Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-c8dba77","t":"2026-11-02T07:29:00Z"}
