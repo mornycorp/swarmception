@@ -64,7 +64,7 @@ const LAYERS: &[swarm_core::layers::Entry] = &[
         package: "swarmception-cli",
         layer: None,
         kind: "app",
-        summary: "the headless CLI: list and run the engine's commands, JSON out",
+        summary: "the headless CLI: run the engine's commands, JSON out; `serve`, `mcp`",
     },
     swarm_core::layers::Entry { package: "xtask", layer: None, kind: "tool", summary: "cargo xtask: ci, layers, and the swarm's commands from swarm-core" },
     swarm_core::layers::Entry {
@@ -72,6 +72,12 @@ const LAYERS: &[swarm_core::layers::Entry] = &[
         layer: Some(4),
         kind: "L4",
         summary: "the UI shell: menus, toolbar, panes (the timeline), UI state as data",
+    },
+    swarm_core::layers::Entry {
+        package: "swarmception-automation",
+        layer: Some(4),
+        kind: "L4",
+        summary: "the control protocol (JSON lines, loopback, a token), the headless server, MCP",
     },
     swarm_core::layers::Entry {
         package: "swarmception-engine",
@@ -118,7 +124,7 @@ impl Hooks for Ours {
             ui_layer: 4,
             ui_crates: &["egui", "eframe", "winit"],
             dev_only: &[],
-            reply_readers: &["crates/ui/src/", "apps/"],
+            reply_readers: &["crates/ui/src/", "crates/automation/src/", "apps/"],
             allowed_reads: &[],
         })
     }

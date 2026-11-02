@@ -275,6 +275,26 @@ impl TimelinePane {
         Some(Selection::of(state))
     }
 
+    /// The scale the widget shows; none before it has data.
+    pub fn scale(&mut self) -> Option<String> {
+        let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
+        Some(state.scale)
+    }
+
+    /// Selects ticket `issue`'s bars (`timeline.ticketBars`), and nothing else; none clears the
+    /// selection. What a control channel's `ui.set` with a ticket does.
+    pub fn select_ticket(&mut self, engine: &mut Session, issue: Option<u64>) {
+        if !self.has_data {
+            return;
+        }
+        let session = self.widget.session();
+        let _ = session.call::<ClearRanges>(NoParams {});
+        let Some(Ok(found)) = issue.map(|issue| engine.call::<TicketBars>(TicketParams { issue })) else { return };
+        for bar in found.bars {
+            let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
+        }
+    }
+
     /// Shows `issue`'s bars selected while it is hovered in the factory, and puts the person's
     /// own selection back, exactly, once nothing is: the first hover puts it aside, a hover
     /// moving from ticket to ticket keeps it aside (never saving what a hover selected), and

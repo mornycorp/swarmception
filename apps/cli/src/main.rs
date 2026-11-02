@@ -1,6 +1,9 @@
 //! `swarmception-cli`: Swarmception's engine without a window (docs/architecture.md ›
 //! Automation). It lists the engine's commands, or opens a repository and runs commands on one
-//! session, printing each result as JSON: how an agent checks a change without a window.
+//! session, printing each result as JSON: how an agent checks a change without a window. `serve`
+//! speaks the app's control protocol headless (JSON lines on loopback with a token; no `ui.*`),
+//! `mcp` serves the engine's commands as MCP tools over stdio
+//! (`swarmception_automation`).
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
@@ -9,6 +12,8 @@
 use std::io::Write;
 use std::process::ExitCode;
 
+use swarmception_automation::session::SessionHandler;
+use swarmception_automation::tcp::{Shared, bind, serve, write_listening};
 use swarmception_engine::{EngineError, Session};
 
 const USAGE: &str = "\
@@ -18,6 +23,11 @@ usage: swarmception-cli [--repo <path>] <command>
   run <id> [<params JSON>] [<id> [<params JSON>]]…
                                     run commands on one session, one result a line; with --repo,
                                     after repo.open of that path
+  serve [--port <port>] [--control-file <path>]
+                                    serve the control protocol on 127.0.0.1 (any free port by
+                                    default), headless: prints the address and token as one JSON
+                                    line (and writes it to the file), then answers JSON lines
+  mcp                               serve the engine's commands as MCP tools on stdin / stdout
 
 A command's error prints its code and message to stderr and exits 1; bad usage exits 2.";
 
@@ -63,9 +73,37 @@ fn run(args: &[&str], out: &mut impl Write) -> Result<(), Failure> {
             }
             Ok(())
         }
+        ["serve", options @ ..] => serve_control(session, options, out),
+        ["mcp"] => swarmception_automation::mcp::serve(std::io::stdin().lock(), out, &mut session).map_err(|e| Failure::Usage(format!("mcp: {e}"))),
         [] => Err(Failure::Usage("no command".into())),
         other => Err(Failure::Usage(format!("unknown command `{}`", other.join(" ")))),
     }
+}
+
+/// `serve`: the control protocol on loopback over `session`, until the process is stopped.
+fn serve_control(session: Session, options: &[&str], out: &mut impl Write) -> Result<(), Failure> {
+    let (mut port, mut file) = (0, None);
+    let mut options = options.iter();
+    while let Some(option) = options.next() {
+        let mut value = || options.next().copied().ok_or_else(|| Failure::Usage(format!("{option} needs a value")));
+        match *option {
+            "--port" => {
+                let text = value()?;
+                port = text.parse().map_err(|_| Failure::Usage(format!("--port takes a port (0 to 65535), not {text}")))?;
+            }
+            "--control-file" => file = Some(std::path::PathBuf::from(value()?)),
+            other => return Err(Failure::Usage(format!("serve takes --port and --control-file, not {other}"))),
+        }
+    }
+    let (listener, listening) = bind(port, None).map_err(|e| Failure::Usage(format!("can't listen on 127.0.0.1:{port}: {e}")))?;
+    // The file first: a caller that read the line finds the file written.
+    if let Some(file) = file {
+        write_listening(&file, &listening).map_err(|e| Failure::Usage(format!("can't write {}: {e}", file.display())))?;
+    }
+    print(out, &serde_json::to_string(&listening).map_err(|e| Failure::Usage(e.to_string()))?)?;
+    out.flush().map_err(|e| Failure::Usage(format!("can't write: {e}")))?;
+    serve(&listener, &listening.token, &Shared::new(SessionHandler::new(session)));
+    Ok(())
 }
 
 fn print(out: &mut impl Write, line: &str) -> Result<(), Failure> {

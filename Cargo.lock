@@ -3156,6 +3156,8 @@ dependencies = [
  "muda",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
+ "serde_json",
+ "swarmception-automation",
  "swarmception-domain",
  "swarmception-engine",
  "swarmception-model",
@@ -3163,10 +3165,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "swarmception-automation"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "swarmception-domain",
+ "swarmception-engine",
+ "timeline-automation",
+ "timeline-engine",
+]
+
+[[package]]
 name = "swarmception-cli"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
+ "swarmception-automation",
  "swarmception-engine",
 ]
 
@@ -3342,6 +3359,17 @@ dependencies = [
  "quick-error",
  "weezl",
  "zune-jpeg",
+]
+
+[[package]]
+name = "timeline-automation"
+version = "0.1.0"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=ed630f13bc159ae3a756019a667327b201b0548c#ed630f13bc159ae3a756019a667327b201b0548c"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "timeline-engine",
 ]
 
 [[package]]
