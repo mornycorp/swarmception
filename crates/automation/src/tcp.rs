@@ -56,6 +56,24 @@ pub fn write_listening(path: &Path, listening: &Listening) -> io::Result<()> {
     file.flush()
 }
 
+/// Reads where a server listens and its token from `path`, as [`write_listening`] wrote it (the
+/// app's and `serve`'s `--control-file`).
+///
+/// # Errors
+///
+/// The read's I/O error; [`io::ErrorKind::InvalidData`] for a file that isn't one line of
+/// [`Listening`], or one longer than a few kilobytes.
+pub fn read_listening(path: &Path) -> io::Result<Listening> {
+    use std::io::Read;
+    const MOST: u64 = 4096;
+    let mut text = String::new();
+    std::fs::File::open(path)?.take(MOST + 1).read_to_string(&mut text)?;
+    if text.len() > usize::try_from(MOST).unwrap_or(usize::MAX) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{} is longer than a control file", path.display())));
+    }
+    serde_json::from_str(text.trim()).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, format!("{} isn't a control file: {e}", path.display())))
+}
+
 /// Serves `listener`'s connections forever, each on its own thread over `handler`, within
 /// [`Limits::DEFAULT`].
 pub fn serve<H: Handler + Send + 'static>(listener: &TcpListener, token: &str, handler: &Shared<H>) {

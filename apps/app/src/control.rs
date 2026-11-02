@@ -3,10 +3,12 @@
 //! JSON line (and writes it to `--control-file` when given), and answers each request on the UI
 //! thread between frames through [`swarmception_ui::Shell::answer`]: the engine's commands, the
 //! window's `ui.*` and the widget's `timeline.<id>`. A screenshot is taken a few frames after it
-//! is asked for, so what a `ui.set` moved has settled, and answered once it is saved.
+//! is asked for, so what a `ui.set` moved has settled, and answered once it is saved (PNG or
+//! PPM, [`swarmception_ui::shot`]); `ui.loaded` is answered once the window has loaded.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
+use std::time::Instant;
 
 use eframe::egui;
 use swarmception_automation::channel::{Call, ChannelHandler, Responder};
@@ -18,17 +20,23 @@ use swarmception_ui::control::{Answer, Saved, Screenshot, ShellError};
 /// Frames drawn after a screenshot is asked for, before it is taken.
 pub const SCREENSHOT_SETTLE: u32 = 8;
 
-/// The control channel's requests, and the screenshots waiting to be taken.
+/// The control channel's requests, and the answers waiting on a later frame.
 pub struct Control {
     calls: Receiver<Call>,
     pending: Vec<Pending>,
 }
 
-/// A screenshot asked for: frames still to draw first, the file, and where its answer goes.
+/// What a request waits for before its answer, and where the answer goes.
 struct Pending {
-    frames: u32,
-    path: PathBuf,
+    wait: Wait,
     reply: Responder,
+}
+
+enum Wait {
+    /// A screenshot: frames still to draw first, and the file.
+    Shot { frames: u32, path: PathBuf },
+    /// `ui.loaded`: the window loaded, or this time passed.
+    Loaded { until: Instant },
 }
 
 /// Listens on loopback at `port` (0 for any free one) and serves the channel on a thread of its
@@ -62,35 +70,68 @@ pub fn channel(ctx: &egui::Context) -> (Control, ChannelHandler) {
 }
 
 impl Control {
-    /// Answers the requests that came since the last frame, and takes the screenshots that are
-    /// due: before the shell draws, so this frame draws what they did.
+    /// Answers the requests that came since the last frame, and those waiting that are due:
+    /// before the shell draws, so this frame draws what they did.
     pub fn answer(&mut self, shell: &mut Shell, ctx: &egui::Context) {
         while let Ok(call) = self.calls.try_recv() {
             let Call { command, params, reply } = call;
-            match shell.answer(&command, &params) {
-                Answer::Now(result) => reply.send(result.map_err(protocol_error)),
-                Answer::Screenshot(Screenshot { path }) => self.pending.push(Pending { frames: SCREENSHOT_SETTLE, path: path.into(), reply }),
-            }
+            let wait = match shell.answer(&command, &params) {
+                Answer::Now(result) => {
+                    reply.send(result.map_err(protocol_error));
+                    continue;
+                }
+                Answer::Screenshot(Screenshot { path }) => Wait::Shot { frames: SCREENSHOT_SETTLE, path: path.into() },
+                Answer::Loaded(loaded) => Wait::Loaded { until: Instant::now() + loaded.wait() },
+            };
+            self.pending.push(Pending { wait, reply });
         }
         if self.pending.is_empty() {
             return;
         }
-        for shot in &mut self.pending {
-            shot.frames = shot.frames.saturating_sub(1);
+        let settled = self.pending.iter().any(|p| matches!(p.wait, Wait::Loaded { .. })) && shell.settled();
+        let now = Instant::now();
+        let mut waiting = Vec::new();
+        for mut pending in std::mem::take(&mut self.pending) {
+            match &mut pending.wait {
+                Wait::Shot { frames, .. } if *frames > 1 => *frames -= 1,
+                Wait::Shot { path, .. } => {
+                    take_screenshot(ctx, std::mem::take(path), pending.reply);
+                    continue;
+                }
+                Wait::Loaded { .. } if settled => {
+                    pending.reply.send(inspect(shell));
+                    continue;
+                }
+                Wait::Loaded { until } if now >= *until => {
+                    pending.reply.send(Err(ProtocolError::Ui { message: "the window is still loading".into() }));
+                    continue;
+                }
+                Wait::Loaded { .. } => {}
+            }
+            waiting.push(pending);
         }
-        let (due, waiting): (Vec<Pending>, Vec<Pending>) = std::mem::take(&mut self.pending).into_iter().partition(|p| p.frames == 0);
         self.pending = waiting;
-        for shot in due {
-            ctx.request_screenshot(move |image| {
-                let [width, height] = image.size;
-                let saved = crate::save_ppm(&shot.path, &image)
-                    .map_err(|e| ProtocolError::Ui { message: format!("can't save {}: {e}", shot.path.display()) })
-                    .map(|()| Saved { path: shot.path.display().to_string(), width, height })
-                    .and_then(|saved| serde_json::to_string(&saved).map_err(|e| ProtocolError::Ui { message: e.to_string() }));
-                shot.reply.send(saved);
-            });
-        }
         ctx.request_repaint();
+    }
+}
+
+/// Asks egui for the window's image, saved to `path` once it comes and answered with its size.
+fn take_screenshot(ctx: &egui::Context, path: PathBuf, reply: Responder) {
+    ctx.request_screenshot(move |image| {
+        let [width, height] = image.size;
+        let saved = swarmception_ui::shot::save(&path, &image)
+            .map_err(|e| ProtocolError::Ui { message: format!("can't save {}: {e}", path.display()) })
+            .map(|()| Saved { path: path.display().to_string(), width, height })
+            .and_then(|saved| serde_json::to_string(&saved).map_err(|e| ProtocolError::Ui { message: e.to_string() }));
+        reply.send(saved);
+    });
+}
+
+/// `ui.inspect`'s answer.
+fn inspect(shell: &mut Shell) -> Result<String, ProtocolError> {
+    match shell.answer("ui.inspect", "") {
+        Answer::Now(result) => result.map_err(protocol_error),
+        Answer::Screenshot(_) | Answer::Loaded(_) => Err(ProtocolError::Ui { message: "ui.inspect waited".into() }),
     }
 }
 
@@ -163,21 +204,45 @@ mod tests {
         dir
     }
 
+    /// The window's size in the tests, in points at one pixel a point.
+    const SCREEN: [usize; 2] = [1400, 900];
+
+    /// The image a screenshot of the test's window gets: no renderer here, so a pattern of its
+    /// size, as an integration hands the callback the frame it drew.
+    fn drawn_image() -> egui::ColorImage {
+        let [width, height] = SCREEN;
+        let pixels = (0..width * height).map(|i| egui::Color32::from_rgb((i % width % 256) as u8, (i / width % 256) as u8, 0x2a)).collect();
+        egui::ColorImage::new(SCREEN, pixels)
+    }
+
     fn frame(shell: &mut Shell, ctx: &egui::Context, control: &mut Control) {
         control.answer(shell, ctx);
-        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SCREEN[0] as f32, SCREEN[1] as f32));
         let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| shell.ui(ui));
         output.textures_delta.clear();
+        // The screenshots asked for this frame, completed as eframe does after drawing it.
+        for viewport in output.viewport_output.into_values() {
+            for command in viewport.commands {
+                if let egui::ViewportCommand::Screenshot(callback) = command {
+                    callback.complete(std::sync::Arc::new(drawn_image()));
+                }
+            }
+        }
     }
 
     /// Runs `ask` on a client thread over a real socket while this thread draws frames and
     /// answers its requests, as the app's UI thread does: what `ask` returned.
     fn drive<T: Send + 'static>(shell: &mut Shell, ctx: &egui::Context, ask: impl FnOnce(&mut Client) -> T + Send + 'static) -> T {
+        drive_at(shell, ctx, move |listening| ask(&mut Client::connect(listening.address, &listening.token, Duration::from_secs(20)).unwrap()))
+    }
+
+    /// As [`drive`], `ask` given where the window listens and its token.
+    fn drive_at<T: Send + 'static>(shell: &mut Shell, ctx: &egui::Context, ask: impl FnOnce(Listening) -> T + Send + 'static) -> T {
         let (mut control, handler) = channel(ctx);
         let (listener, listening) = bind(0, None).unwrap();
         let token = listening.token.clone();
         std::thread::spawn(move || serve(&listener, &token, &Shared::new(handler)));
-        let client = std::thread::spawn(move || ask(&mut Client::connect(listening.address, &listening.token, Duration::from_secs(20)).unwrap()));
+        let client = std::thread::spawn(move || ask(listening));
         while !client.is_finished() {
             frame(shell, ctx, &mut control);
             std::thread::sleep(Duration::from_millis(5));
@@ -241,12 +306,96 @@ mod tests {
             let commands: swarmception_engine::engine_cmds::CommandsResult = client.call("engine.commands", &()).unwrap();
             let widget: Result<serde_json::Value, ClientError> = client.call("timeline.view.nope", &());
             let unknown: Result<serde_json::Value, ClientError> = client.call("ui.nope", &());
-            let shot: Result<serde_json::Value, ClientError> = client.call("ui.screenshot", &serde_json::json!({"path": "x.png"}));
+            let shot: Result<serde_json::Value, ClientError> = client.call("ui.screenshot", &serde_json::json!({"path": "x.jpg"}));
             (commands, widget, unknown, shot)
         });
         assert!(commands.commands.iter().any(|c| c.id == "factory.at"));
         assert!(matches!(widget, Err(ClientError::Protocol(ProtocolError::Widget { .. }))));
         assert!(matches!(unknown, Err(ClientError::Protocol(ProtocolError::Engine { .. }))));
         assert!(matches!(shot, Err(ClientError::Protocol(ProtocolError::Engine { .. }))));
+    }
+
+    /// One JSON-RPC line a request.
+    fn rpc(id: u64, method: &str, params: &serde_json::Value) -> String {
+        serde_json::json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }).to_string()
+    }
+
+    fn call(id: u64, tool: &str, arguments: &serde_json::Value) -> String {
+        rpc(id, "tools/call", &serde_json::json!({ "name": tool, "arguments": arguments }))
+    }
+
+    #[test]
+    fn mcp_through_the_window_runs_every_tool_there_and_saves_a_png() {
+        use swarmception_automation::client::Remote;
+        use swarmception_automation::mcp::{CallResult, ToolList};
+
+        let dir = repo();
+        let png = dir.join("worker24-window.png");
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, Some(&dir));
+        let requests = [
+            rpc(1, "initialize", &serde_json::json!({})),
+            rpc(2, "tools/list", &serde_json::json!({})),
+            call(3, "ui_loaded", &serde_json::json!({"within": 15})),
+            call(4, "ui_set", &serde_json::json!({"at": "2026-10-31T03:42:00Z", "ticket": 7})),
+            call(5, "ui_screenshot", &serde_json::json!({ "path": png.display().to_string() })),
+            call(6, "timeline_view_fit", &serde_json::json!({})),
+            call(7, "factory_at", &serde_json::json!({"t": Timestamp::parse("2026-10-31T03:42:00Z").unwrap()})),
+            call(8, "ui_set", &serde_json::json!({"at": "noon"})),
+        ]
+        .join("\n");
+        // MCP's stdio, over the window: each tool a request on its control channel.
+        let output = drive_at(&mut shell, &ctx, move |listening| {
+            let mut output = Vec::new();
+            swarmception_automation::mcp::serve(requests.as_bytes(), &mut output, &mut Remote::new(listening, Duration::from_secs(25))).unwrap();
+            String::from_utf8(output).unwrap()
+        });
+        let replies: Vec<serde_json::Value> = output.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        assert_eq!(replies.len(), 8, "{output}");
+        let result = |n: usize| -> CallResult { serde_json::from_value(replies[n]["result"].clone()).unwrap() };
+
+        // The tools: the engine's, the window's and the widget's, each with its schema.
+        let tools: ToolList = serde_json::from_value(replies[1]["result"].clone()).unwrap();
+        let names: Vec<&str> = tools.tools.iter().map(|t| t.name.as_str()).collect();
+        for name in [
+            "engine_commands",
+            "factory_at",
+            "timeline_placeAt",
+            "ui_commands",
+            "ui_inspect",
+            "ui_set",
+            "ui_loaded",
+            "ui_screenshot",
+            "timeline_view_fit",
+            "timeline_state_get",
+        ] {
+            assert!(names.contains(&name), "{name} in {names:?}");
+        }
+        assert!(tools.tools.iter().all(|t| t.input_schema.is_object()), "each tool's input is a schema");
+        let ui_set = tools.tools.iter().find(|t| t.name == "ui_set").unwrap();
+        assert_eq!(ui_set.input_schema, serde_json::to_value(schemars::schema_for!(swarmception_ui::control::UiSet)).unwrap());
+
+        let loaded: Inspect = serde_json::from_str(&result(2).content[0].text).unwrap();
+        assert!(!loaded.loading && loaded.timeline.has_data, "ui.loaded answers once the timeline has its data");
+        let set: Inspect = serde_json::from_str(&result(3).content[0].text).unwrap();
+        assert_eq!((set.state.factory.t, set.state.factory.ticket), (Timestamp::parse("2026-10-31T03:42:00Z"), Some(7)));
+
+        // The screenshot, saved by the window as PNG: it reads back as the frame it was handed.
+        let saved: Saved = serde_json::from_str(&result(4).content[0].text).unwrap();
+        assert_eq!((saved.path.as_str(), saved.width, saved.height), (png.to_str().unwrap(), SCREEN[0], SCREEN[1]));
+        let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&png).unwrap())).read_info().unwrap();
+        let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut pixels).unwrap();
+        assert_eq!((info.width as usize, info.height as usize, info.color_type), (SCREEN[0], SCREEN[1], png::ColorType::Rgb));
+        let expected: Vec<u8> = drawn_image().pixels.iter().flat_map(|p| [p.r(), p.g(), p.b()]).collect();
+        assert!(pixels[..info.buffer_size()] == expected[..], "the PNG's pixels are the frame's");
+
+        assert!(!result(5).is_error, "the widget's command, through the window: {:?}", result(5));
+        assert!(!result(6).is_error && result(6).content[0].text.contains("\"gate\""), "the engine's, on the window's session: {:?}", result(6));
+        let refused = result(7);
+        assert!(refused.is_error);
+        let error: ProtocolError = serde_json::from_str(&refused.content[0].text).unwrap();
+        assert!(matches!(error, ProtocolError::Engine { .. }), "{error:?}");
+        std::fs::remove_dir_all(dir).ok();
     }
 }

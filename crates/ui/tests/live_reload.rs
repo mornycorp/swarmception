@@ -172,7 +172,7 @@ fn frames_until(shell: &mut Shell, ctx: &egui::Context, done: impl Fn(&mut Shell
 fn answer(shell: &mut Shell, command: &str, params: &str) -> String {
     match shell.answer(command, params) {
         Answer::Now(result) => result.unwrap_or_else(|e| panic!("{command}: {e:?}")),
-        Answer::Screenshot(_) => panic!("a screenshot"),
+        other => panic!("{command} answers later: {other:?}"),
     }
 }
 

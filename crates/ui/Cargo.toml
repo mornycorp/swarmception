@@ -16,6 +16,7 @@ swarmception-model = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
+png = { workspace = true }
 
 [lints]
 workspace = true

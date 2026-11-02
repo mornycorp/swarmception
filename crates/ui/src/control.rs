@@ -1,8 +1,10 @@
 //! The window's own commands for a control channel (docs/architecture.md › Automation):
-//! `ui.commands` lists them with their schemas, `ui.inspect` reads what the shell shows as data
-//! ([`Inspect`]: the panes, the factory's time and what it drew, the timeline's view and
-//! selection), `ui.set` sets it ([`UiSet`]) and `ui.screenshot` saves the window ([`Screenshot`],
-//! which the app takes: it owns the frame). [`Shell::answer`] runs them, forwards `timeline.<id>`
+//! `ui.commands` lists them with their schemas, and the widget's forwarded ones as
+//! `timeline.<id>`; `ui.inspect` reads what the shell shows as data ([`Inspect`]: the panes, the
+//! factory's time and what it drew, the timeline's view and selection), `ui.set` sets it
+//! ([`UiSet`]), `ui.loaded` answers once the window has loaded ([`Loaded`]) and `ui.screenshot`
+//! saves the window as PNG or PPM ([`Screenshot`]); the app answers those two: it owns the
+//! frame. [`Shell::answer`] runs them, forwards `timeline.<id>`
 //! to the timeline widget (`timeline.view.fit` is its `view.fit`; `timeline.ui.inspect` its own
 //! state) and hands every other command to the engine, so a host forwards a request knowing no
 //! id.
@@ -210,12 +212,35 @@ pub struct SpanAt {
     pub end: At,
 }
 
-/// `ui.screenshot`'s params: the file the window is saved to, a binary PPM.
+/// `ui.screenshot`'s params: the file the window is saved to, PNG or a binary PPM by its
+/// extension.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Screenshot {
-    /// A path ending in `.ppm`, in a directory that exists.
+    /// A path ending in `.png` or `.ppm`, in a directory that exists. A client on the same
+    /// machine (`swarmception-cli send`, `mcp --control`) makes a relative one its own.
     pub path: String,
+}
+
+/// The longest `ui.loaded` waits, in seconds: under the control channel's answer's 20.
+pub const LOADED_WITHIN_MOST: u32 = 19;
+
+/// `ui.loaded`'s params: answered with `ui.inspect`'s answer once nothing is loading, the GitHub
+/// issues are in and the timeline has its data, or the read has failed, or there is no
+/// repository; an error after `within` seconds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Loaded {
+    /// At most [`LOADED_WITHIN_MOST`] seconds; that when left out.
+    pub within: Option<u32>,
+}
+
+impl Loaded {
+    /// How long to wait.
+    #[must_use]
+    pub fn wait(self) -> std::time::Duration {
+        std::time::Duration::from_secs(u64::from(self.within.unwrap_or(LOADED_WITHIN_MOST).min(LOADED_WITHIN_MOST)))
+    }
 }
 
 /// `ui.screenshot`'s answer.
@@ -241,14 +266,18 @@ impl From<EngineError> for ShellError {
     }
 }
 
-/// The shell's answer to a request: now, or a screenshot for the host to take on the next frame.
+/// The shell's answer to a request: now, a screenshot for the host to take on a later frame, or
+/// a wait for the window to load ([`Shell::settled`]) that the host answers with `ui.inspect`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Answer {
     Now(Result<String, ShellError>),
     Screenshot(Screenshot),
+    Loaded(Loaded),
 }
 
-/// The window's own commands, with their schemas: what `ui.commands` answers.
+/// The window's own commands, then the widget's forwarded as `timeline.<id>`, with their
+/// schemas: what `ui.commands` answers. The widget's registry doesn't say which of its commands
+/// change nothing, so none of them is `readOnly` here.
 #[must_use]
 pub fn ui_commands() -> CommandsResult {
     let wire = |id: &str, label: &str, read_only: bool, params: schemars::Schema, result: schemars::Schema| CommandWire {
@@ -263,8 +292,18 @@ pub fn ui_commands() -> CommandsResult {
             wire("ui.commands", "Window Commands", true, schema_for!(NoParams), schema_for!(CommandsResult)),
             wire("ui.inspect", "Window State", true, schema_for!(NoParams), schema_for!(Inspect)),
             wire("ui.set", "Set Window State", false, schema_for!(UiSet), schema_for!(Inspect)),
+            wire("ui.loaded", "Wait Until Loaded", true, schema_for!(Loaded), schema_for!(Inspect)),
             wire("ui.screenshot", "Save a Screenshot", true, schema_for!(Screenshot), schema_for!(Saved)),
-        ],
+        ]
+        .into_iter()
+        .chain(timeline_engine::commands::all().iter().map(|entry| CommandWire {
+            id: format!("{WIDGET_PREFIX}{}", entry.id),
+            label: format!("Timeline: {}", entry.label),
+            read_only: false,
+            params: entry.params_schema().to_value(),
+            result: entry.result_schema().to_value(),
+        }))
+        .collect(),
     }
 }
 
@@ -277,13 +316,25 @@ impl Shell {
     /// the window's own `ui.*` commands, the widget's as `timeline.<id>`, every other the
     /// engine's.
     pub fn answer(&mut self, command: &str, params: &str) -> Answer {
-        if command == "ui.screenshot" {
-            return match parse::<Screenshot>(params).and_then(checked) {
+        match command {
+            "ui.screenshot" => match parse::<Screenshot>(params).and_then(checked) {
                 Ok(shot) => Answer::Screenshot(shot),
                 Err(error) => Answer::Now(Err(error.into())),
-            };
+            },
+            "ui.loaded" => match parse::<Loaded>(params) {
+                Ok(loaded) => Answer::Loaded(loaded),
+                Err(error) => Answer::Now(Err(error.into())),
+            },
+            _ => Answer::Now(self.answer_now(command, params)),
         }
-        Answer::Now(self.answer_now(command, params))
+    }
+
+    /// Whether the window has loaded, as `ui.loaded` waits for: nothing loading, the GitHub
+    /// issues in and the timeline's data drawn; or the read failed; or there is no repository.
+    pub fn settled(&mut self) -> bool {
+        self.sync();
+        let failed = self.error.is_some() || self.status.error.is_some();
+        !self.loading() && !self.fetching_issues() && (self.timeline.has_data() || failed || self.status.repo.is_none())
     }
 
     fn answer_now(&mut self, command: &str, params: &str) -> Result<String, ShellError> {
@@ -449,8 +500,8 @@ impl Shell {
 fn checked(shot: Screenshot) -> Result<Screenshot, EngineError> {
     let path = std::path::Path::new(&shot.path);
     let bad = |why: &str| Err(EngineError::BadParams { message: format!("path: {why}") });
-    if path.extension().and_then(|e| e.to_str()) != Some("ppm") {
-        return bad("a screenshot is a binary PPM: the path ends in .ppm");
+    if crate::shot::Format::of(path).is_none() {
+        return bad("a screenshot is a PNG or a binary PPM: the path ends in .png or .ppm");
     }
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| std::path::Path::new("."));
     if !parent.is_dir() {
@@ -466,7 +517,7 @@ mod tests {
     fn now(answer: Answer) -> Result<String, ShellError> {
         match answer {
             Answer::Now(result) => result,
-            Answer::Screenshot(shot) => panic!("a screenshot: {shot:?}"),
+            other => panic!("not now: {other:?}"),
         }
     }
 
@@ -476,10 +527,36 @@ mod tests {
         let mut shell = Shell::new(&ctx, None);
         let list: CommandsResult = serde_json::from_str(&now(shell.answer("ui.commands", "")).unwrap()).unwrap();
         let ids: Vec<&str> = list.commands.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(ids, ["ui.commands", "ui.inspect", "ui.set", "ui.screenshot"]);
+        assert_eq!(ids[..5], ["ui.commands", "ui.inspect", "ui.set", "ui.loaded", "ui.screenshot"]);
         for (listed, own) in list.commands.iter().zip(ui_commands().commands) {
             assert_eq!((&listed.label, &listed.params, &listed.result), (&own.label, &own.params, &own.result));
         }
+        // The widget's commands follow, each as `timeline.<id>` with its schemas, and each runs
+        // through the window by the id listed.
+        let widget = &list.commands[5..];
+        assert_eq!(widget.len(), timeline_engine::commands::all().len());
+        for (listed, entry) in widget.iter().zip(timeline_engine::commands::all()) {
+            assert_eq!(listed.id, format!("timeline.{}", entry.id));
+            assert_eq!((&listed.params, &listed.result), (&entry.params_schema().to_value(), &entry.result_schema().to_value()));
+            assert!(!entry.id.contains('_'), "{} has a `_`, which an MCP tool's name can't tell from its `.`", entry.id);
+        }
+        assert!(widget.iter().any(|c| c.id == "timeline.view.fit"));
+        for id in ["timeline.state.get", "timeline.engine.commands"] {
+            assert!(widget.iter().any(|c| c.id == id), "{id}");
+            assert!(now(shell.answer(id, "")).is_ok(), "{id} runs by the id listed");
+        }
+    }
+
+    #[test]
+    fn loaded_waits_for_the_host_and_a_window_with_no_repository_has_loaded() {
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, None);
+        assert_eq!(shell.answer("ui.loaded", ""), Answer::Loaded(Loaded { within: None }));
+        assert_eq!(shell.answer("ui.loaded", r#"{"within": 300}"#), Answer::Loaded(Loaded { within: Some(300) }));
+        assert_eq!(Loaded { within: Some(300) }.wait(), std::time::Duration::from_secs(19), "capped under the channel's 20 s");
+        assert_eq!(Loaded { within: Some(2) }.wait(), std::time::Duration::from_secs(2));
+        assert!(matches!(shell.answer("ui.loaded", r#"{"within": "soon"}"#), Answer::Now(Err(ShellError::Engine(EngineError::BadParams { .. })))));
+        assert!(shell.settled(), "nothing to load");
     }
 
     #[test]
@@ -496,11 +573,13 @@ mod tests {
         assert!(matches!(bad(&mut shell, "ui.nope", ""), ShellError::Engine(EngineError::UnknownCommand { .. })));
         assert!(matches!(bad(&mut shell, "timeline.view.nope", ""), ShellError::Widget(timeline_engine::EngineError::UnknownCommand { .. })));
         assert!(matches!(bad(&mut shell, "repo.reload", ""), ShellError::Engine(EngineError::Disabled { .. })));
-        assert!(matches!(now(shell.answer("ui.screenshot", r#"{"path": "a.png"}"#)), Err(ShellError::Engine(EngineError::BadParams { .. }))));
+        assert!(matches!(now(shell.answer("ui.screenshot", r#"{"path": "a.jpg"}"#)), Err(ShellError::Engine(EngineError::BadParams { .. }))));
         assert!(matches!(now(shell.answer("ui.screenshot", r#"{"path": "/no/such/dir/a.ppm"}"#)), Err(ShellError::Engine(EngineError::Invalid { .. }))));
         assert_eq!(shell.inspect().state, before.state);
-        let path = std::env::temp_dir().join("worker18-shot.ppm").display().to_string();
-        assert_eq!(shell.answer("ui.screenshot", &serde_json::json!({ "path": path }).to_string()), Answer::Screenshot(Screenshot { path }));
+        for name in ["worker18-shot.ppm", "worker24-shot.png"] {
+            let path = std::env::temp_dir().join(name).display().to_string();
+            assert_eq!(shell.answer("ui.screenshot", &serde_json::json!({ "path": path }).to_string()), Answer::Screenshot(Screenshot { path }));
+        }
     }
 
     #[test]

@@ -1,0 +1,23 @@
+# The screenshots a PR needs, taken from a running window (docs/architecture.md › Automation):
+#
+#   swarmception --repo <clone> --control --control-file <file> &
+#   swarmception-cli send --control <file> --script scripts/screenshots.jsonl
+#
+# scripts/screenshots.sh does both, and closes the window after. A step a line; a relative
+# screenshot path is the directory `send` runs in. It stops at the first error.
+#
+# Wait for the read, the issues and the timeline, then show everything at the last event.
+{"command":"ui.loaded","params":{"within":19}}
+{"command":"ui.set","params":{"panes":{"timeline":true,"factory":true,"details":true},"step":"lastEvent"}}
+{"command":"timeline.view.fit"}
+{"command":"ui.screenshot","params":{"path":"shot-all.png"}}
+# Each pane alone.
+{"command":"ui.set","params":{"panes":{"timeline":true,"factory":false,"details":false}}}
+{"command":"ui.screenshot","params":{"path":"shot-timeline.png"}}
+{"command":"ui.set","params":{"panes":{"timeline":false,"factory":true,"details":false}}}
+{"command":"ui.screenshot","params":{"path":"shot-factory.png"}}
+# A ticket of the change's own: add {"command":"ui.set","params":{"ticket":<n>}} before a shot
+# (its journey traced, its bars selected, its details shown), and `"at"` for a moment.
+# What the window shows, for the PR's notes.
+{"command":"ui.set","params":{"panes":{"timeline":true,"factory":true,"details":true}}}
+{"command":"ui.inspect"}
