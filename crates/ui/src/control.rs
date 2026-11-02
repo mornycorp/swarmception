@@ -32,8 +32,9 @@ use crate::timeline::Lit;
 use crate::{Panes, Shell, UiState};
 
 /// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
-/// how the panes share the window (`layout`) and the timeline's rows in view (#68).
-pub const INSPECT_VERSION: u32 = 4;
+/// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
+/// workers pane (#67).
+pub const INSPECT_VERSION: u32 = 5;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -150,6 +151,25 @@ pub struct Inspect {
     /// band's height, what it asked for and whether it is folded, the details' width.
     #[serde(default)]
     pub layout: crate::layout::LayoutDrawn,
+    /// The workers pane (#67).
+    #[serde(default)]
+    pub workers: WorkersInspect,
+}
+
+/// The workers pane, as `ui.inspect` reads it (#67): what it drew last frame from
+/// `workers.compare`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkersInspect {
+    /// The window it drew, as `workers.compare` returned it.
+    pub window: Option<Span>,
+    /// Each row drawn, in order, its key (a model × effort's label, a worker's instance, `all`)
+    /// then its cells, ` | ` between.
+    pub rows: Vec<String>,
+    /// The row under the pointer, by its key.
+    pub hovered: Option<String>,
+    /// Why there is nothing to draw: `workers.compare`'s refusal.
+    pub error: Option<String>,
 }
 
 /// The gates pane, as `ui.inspect` reads it (#61): what it drew last frame from `gates.list`.
@@ -456,6 +476,18 @@ impl Shell {
             saved: self.saved(),
             gates,
             layout: self.layout().clone(),
+            workers: self.workers_inspect(),
+        }
+    }
+
+    /// What the workers pane drew last frame (#67): each row its key, then its cells.
+    fn workers_inspect(&self) -> WorkersInspect {
+        let drawn = self.workers.drawn();
+        WorkersInspect {
+            window: drawn.window.map(|(start, end)| Span { start, end }),
+            rows: drawn.rows.iter().map(|r| std::iter::once(r.key.clone()).chain(r.cells.iter().cloned()).collect::<Vec<_>>().join(" | ")).collect(),
+            hovered: drawn.hovered.clone(),
+            error: self.workers.error().map(str::to_owned),
         }
     }
 
@@ -645,7 +677,11 @@ mod tests {
         let set = r#"{"panes": {"timeline": false, "factory": true}, "at": "2026-10-31T03:42:00Z", "ticket": 7, "speed": "hour", "steps": "merges"}"#;
         let inspect: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
         assert_eq!(inspect.version, INSPECT_VERSION);
-        assert_eq!(inspect.state.panes, Panes { timeline: false, factory: true, details: true, gates: true }, "details and gates left out: their defaults");
+        assert_eq!(
+            inspect.state.panes,
+            Panes { timeline: false, factory: true, details: true, gates: true, workers: false },
+            "details, gates and workers left out: their defaults"
+        );
         assert_eq!(inspect.state.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"));
         assert!(!inspect.state.factory.follow);
         assert_eq!((inspect.state.factory.ticket, inspect.state.factory.speed, inspect.state.factory.steps), (Some(7), Speed::Hour, Steps::Merges));

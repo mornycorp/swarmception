@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -104,7 +104,17 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `gate-43`, `-rerun`, the same id again), its colour, its tooltip lines and its details'
   `Subject`; each lane's `Figures` over the runs that started in the window (pass rate, median
   and longest run, busy time and share, reruns, failures by cause), per-hour figures, and the
-  longest queue at the dock (the most tickets waiting for merge at once).
+  longest queue at the dock (the most tickets waiting for merge at once). `workers` (#67) compares
+  the workers by the model and effort their `session.start` logged (`Comparison`): every worker
+  session (an instance, not a coordinator) and, pooled, each model × effort (`Group`, its label
+  `opus 5.5 · high`, more effort first, unknown last) and all of them: tickets claimed and landed,
+  landed per active hour (active: on shift less the swarm's quiet gaps, as `stats`, and less its
+  own idle time, a gap of over 15 min in its own events while it held no ticket claimed, working
+  or sent back to it), the median claim → merge and working time, send backs per landed and their
+  causes (`cause=conflict: …` is `conflict`), its `ready` checks' pass rate, tickets abandoned,
+  and time on shift and active; each rate and median a `Measure` with the samples it rests on,
+  `thin` under three (`THIN`). Each worker carries the tickets it touched in the window (what a
+  hover lights) and its session as its details' `Subject`.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
@@ -129,7 +139,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
   from a time: its time, its moments and its name),
   `ticket.urls` (a ticket's issue page and its PR's, and a number's page as a PR),
-  `gates.list` (#61: `{start?, end?}` as `stats.get`; `gates::GatesList`),
+  `gates.list` (#61: `{start?, end?}` as `stats.get`; `gates::GatesList`), `workers.compare` (#67:
+  `{start?, end?}` as `stats.get`; `workers::Comparison`),
   `details.get` (#47: exactly one of `ticket`, `gate`, `session`, `merge`, or a bar's `track` and
   `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs and,
   in `timeline`, its bars on the rows shown now (#55); a subject the swarm never had is
@@ -249,9 +260,22 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   each got (`LayoutDrawn`: the timeline's height and least, each band's height, what it asked and
   whether it is folded, by default or by choice), `timeline.inView` the rows on screen, and
   `ui.set`'s `folded` folds or opens a pane.
+  The workers pane (#67, View ▸ Workers, `--panes …,workers`, off by default) is a window over the
+  others, opening up from the bottom over the bands so the timeline's rows stay in sight, and
+  taking no room in the layout: a comparison is opened, read and put away. It draws what
+  `workers.compare` returns for the timeline's window (or the whole run, its choice; asked again
+  only when the window or the data moves): a row per model × effort (a swatch in its colour, the
+  tickets' palette by its place), its workers under it (name, start, `open` for a session with no
+  stop), then all workers; each figure with a small bar scaled to its column's largest, in the
+  group's colour, and its samples (`n=…`); a thin one marked `~`, its bar only outlined. A
+  header sorts by its column (again: the other way; none last either way; the first column: the
+  command's order). Hovering a row lights its tickets' bars on the timeline (`Hover::Worker`,
+  `Lit::HoveredWorker`, after a factory or gates hover); clicking a worker makes its session the
+  details' subject. `--hover-worker <name>` puts the pointer on a worker's row.
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
   moments it steps by, what the details are of; version 5: the gates pane, #61; version 6: the
-  folded panes, #68) is serde data. `saved` (#53) keeps the
+  folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run and
+  sort, #67) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -276,7 +300,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--size`, `--zoom` (the UI's
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate`, `--hover-worker`, `--step`, `--steps`, `--size`, `--zoom` (the UI's
   scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
   `--control-file`, `--state-dir` (else `$SWARMCEPTION_STATE_DIR`, else the platform's), `--fresh`;
   a `--screenshot` or `--control` run keeps the state only in a directory named) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
@@ -428,6 +452,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Model and effort compared per worker (#67): the domain's `workers`, `workers.compare`, the Workers pane as a window (View ▸ Workers, `--panes …,workers`, `--hover-worker`), `Hover::Worker`, `UiState` version 7, `ui.inspect` version 5 with `workers` |
 | 2026-11-02 | minor | A gates pane (#61): the domain's `gates`, `gates.list`, the Gates pane under the timeline (View ▸ Gates, `--panes …,gates`, `--hover-gate`), `TimelinePane::light_hover` and `axis`, `UiState` version 5, `ui.inspect` version 3 with `gates` |
 | 2026-11-02 | minor | Automation reaches the window (#60): `mcp --control` (tools through a running window, over `client::Remote`), `send` and its scripts (`script`), `ui.screenshot` and `--screenshot` as PNG (`swarmception_ui::shot`), `ui.commands` listing the widget's commands, `ui.loaded`; an MCP tool's error is its `ProtocolError`; `scripts/screenshots.{jsonl,sh}` |
 | 2026-11-02 | minor | The state survives a restart (#53): `saved` (`AppState` version 1, `StateStore`, `Keeper`), `UiState` version 4 with the panes' sizes, the timeline pane's `TimelineView`, `ui.inspect` version 2 with `saved`; `--state-dir`, `--fresh` |

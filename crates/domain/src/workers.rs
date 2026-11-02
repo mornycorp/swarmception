@@ -130,8 +130,8 @@ pub struct Worker {
 pub struct Group {
     pub model: Option<String>,
     pub effort: Option<String>,
-    /// `opus-5-5 · high`: the model without its `claude-`, and the effort; `unknown` for either
-    /// not logged.
+    /// `opus 5.5 · high`: the model as a person names it ([`model_name`]), and the effort;
+    /// `unknown` for either not logged.
     pub label: String,
     pub figures: Figures,
     /// By their first session's start.
@@ -227,7 +227,7 @@ pub fn compare(activity: &Activity, tickets: &[Ticket], window: Window) -> Compa
     let quiet = quiet_gaps(&activity.times);
     let within = |t: Timestamp| start <= t && t <= end;
     let senders = sendback_holders(tickets);
-    let mut groups: BTreeMap<(u8, Option<String>, u8, Option<String>), (Tally, Vec<Worker>)> = BTreeMap::new();
+    let mut groups: BTreeMap<GroupKey, (Tally, Vec<Worker>)> = BTreeMap::new();
     let mut all = Tally::default();
     for agent in activity.agents.iter().filter(|a| a.role != Role::Coordinator) {
         let on_shift = Intervals::of(shift(agent)).intersect(&span);
@@ -251,16 +251,11 @@ pub fn compare(activity: &Activity, tickets: &[Ticket], window: Window) -> Compa
             Group { label: label(model.as_deref(), effort.as_deref()), model, effort, figures: tally.figures(), workers }
         })
         .collect();
-    Comparison {
-        start,
-        end,
-        span_seconds: end.0.saturating_sub(start.0),
-        quiet_after_seconds: QUIET,
-        thin_below: THIN,
-        groups,
-        all: all.figures(),
-    }
+    Comparison { start, end, span_seconds: end.0.saturating_sub(start.0), quiet_after_seconds: QUIET, thin_below: THIN, groups, all: all.figures() }
 }
+
+/// Where a model × effort sorts, and what it is: the model's rank and name, the effort's.
+type GroupKey = (u8, Option<String>, u8, Option<String>);
 
 /// The efforts, most first.
 const EFFORTS: [&str; 5] = ["max", "xhigh", "high", "medium", "low"];
@@ -273,10 +268,31 @@ fn rank(value: Option<&str>, known: &[&str]) -> u8 {
     }
 }
 
-/// `opus-5-5 · high`.
+/// `opus 5.5 · high`.
 fn label(model: Option<&str>, effort: Option<&str>) -> String {
-    let model = model.map_or("unknown model", |m| m.strip_prefix("claude-").unwrap_or(m));
+    let model = model.map_or_else(|| "unknown model".to_owned(), model_name);
     format!("{model} · {}", effort.unwrap_or("unknown effort"))
+}
+
+/// A model as a person names it: `claude-opus-5-5` is `opus 5.5`, `claude-sonnet-4-5-20250929`
+/// `sonnet 4.5 20250929`; one it doesn't read so, as it is.
+#[must_use]
+pub fn model_name(model: &str) -> String {
+    let short = model.strip_prefix("claude-").unwrap_or(model);
+    let mut parts = short.split('-');
+    let family = parts.next().unwrap_or_default();
+    let rest: Vec<&str> = parts.collect();
+    let version: Vec<&str> = rest.iter().copied().take_while(|p| !p.is_empty() && p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())).collect();
+    if family.is_empty() || version.is_empty() {
+        return short.to_owned();
+    }
+    let tail: Vec<&str> = rest.iter().copied().skip(version.len()).collect();
+    let mut name = format!("{family} {}", version.join("."));
+    if !tail.is_empty() {
+        name.push(' ');
+        name.push_str(&tail.join("-"));
+    }
+    name
 }
 
 fn worker(agent: &Agent, figures: Figures, tickets: Vec<u64>, last: Timestamp) -> Worker {
@@ -334,13 +350,22 @@ fn held_before(ticket: &Ticket, i: usize) -> Option<&str> {
     before.iter().rev().find(|s| matches!(s.phase, Phase::Claimed | Phase::Working | Phase::Waiting)).map(|s| s.by.as_str())
 }
 
-/// Each send back, by its ticket and time, with the instance that held the ticket before the
-/// gate: its last claimed, working or waiting stretch's.
-fn sendback_holders(tickets: &[Ticket]) -> Vec<(u64, Timestamp, Option<String>, Option<String>)> {
+/// A send back: its ticket and time, the instance that held the ticket before the gate, and its
+/// note.
+struct SendBack {
+    issue: u64,
+    t: Timestamp,
+    holder: Option<String>,
+    note: Option<String>,
+}
+
+/// Each send back, with the instance that held the ticket before the gate: its last claimed,
+/// working or waiting stretch's.
+fn sendback_holders(tickets: &[Ticket]) -> Vec<SendBack> {
     let mut list = Vec::new();
     for ticket in tickets {
         for (i, stretch) in ticket.stretches.iter().enumerate().filter(|(_, s)| s.phase == Phase::SentBack) {
-            list.push((ticket.issue, stretch.start, held_before(ticket, i).map(str::to_owned), stretch.note.clone()));
+            list.push(SendBack { issue: ticket.issue, t: stretch.start, holder: held_before(ticket, i).map(str::to_owned), note: stretch.note.clone() });
         }
     }
     list
@@ -360,18 +385,11 @@ pub fn sendback_cause(note: Option<&str>) -> String {
 }
 
 /// One worker's counts and samples in the window, and the tickets it touched there.
-fn tally(
-    activity: &Activity,
-    tickets: &[Ticket],
-    senders: &[(u64, Timestamp, Option<String>, Option<String>)],
-    agent: &Agent,
-    within: &impl Fn(Timestamp) -> bool,
-) -> (Tally, Vec<u64>) {
+fn tally(activity: &Activity, tickets: &[Ticket], senders: &[SendBack], agent: &Agent, within: &impl Fn(Timestamp) -> bool) -> (Tally, Vec<u64>) {
     let me = agent.instance.as_str();
     let mut touched = BTreeSet::new();
-    let own = || activity.issue_events.iter().filter(|e| e.instance == me && e.sub.is_none());
     let mut claimed = BTreeSet::new();
-    for event in own().filter(|e| within(e.t)) {
+    for event in activity.issue_events.iter().filter(|e| e.instance == me && e.sub.is_none() && within(e.t)) {
         if matches!(event.kind, Kind::Claim { .. } | Kind::Work { .. } | Kind::Submit { .. }) {
             touched.insert(event.issue);
         }
@@ -380,23 +398,10 @@ fn tally(
         }
     }
     let mut tally = Tally { workers: 1, claimed: claimed.len(), ..Tally::default() };
-    for ticket in tickets.iter().filter(|t| t.worker.as_deref() == Some(me)) {
-        let Some(merged) = ticket.merged.as_ref().filter(|m| within(m.t)) else { continue };
-        tally.landed += 1;
-        touched.insert(ticket.issue);
-        let first = own().filter(|e| e.issue == ticket.issue && matches!(e.kind, Kind::Claim { .. } | Kind::Work { .. })).map(|e| e.t).next();
-        if let Some(from) = first.or(ticket.claimed).filter(|&from| from <= merged.t) {
-            tally.claim_to_merge.push(merged.t.0.saturating_sub(from.0));
-        }
-        let working: i64 =
-            ticket.stretches.iter().filter(|s| s.phase == Phase::Working && s.by == me).map(|s| s.end.0.saturating_sub(s.start.0).max(0)).fold(0, i64::saturating_add);
-        if working > 0 {
-            tally.working.push(working);
-        }
-    }
-    for (issue, _, _, note) in senders.iter().filter(|(_, t, by, _)| by.as_deref() == Some(me) && within(*t)) {
-        touched.insert(*issue);
-        *tally.sendbacks.entry(sendback_cause(note.as_deref())).or_default() += 1;
+    landed(&mut tally, &mut touched, activity, tickets, me, within);
+    for sendback in senders.iter().filter(|b| b.holder.as_deref() == Some(me) && within(b.t)) {
+        touched.insert(sendback.issue);
+        *tally.sendbacks.entry(sendback_cause(sendback.note.as_deref())).or_default() += 1;
     }
     for sub in agent.subs.iter().filter(|s| is_ready(s) && within(s.span.start)) {
         tally.ready_runs += 1;
@@ -406,14 +411,37 @@ fn tally(
             None => {}
         }
     }
-    let abandoned: BTreeSet<u64> = tickets
-        .iter()
-        .filter(|t| t.stretches.iter().any(|s| s.abandoned.as_ref().is_some_and(|a| a.holder == me && within(a.t))))
-        .map(|t| t.issue)
-        .collect();
+    let abandoned: BTreeSet<u64> =
+        tickets.iter().filter(|t| t.stretches.iter().any(|s| s.abandoned.as_ref().is_some_and(|a| a.holder == me && within(a.t)))).map(|t| t.issue).collect();
     tally.abandoned = abandoned.len();
     touched.extend(abandoned);
     (tally, touched.into_iter().collect())
+}
+
+/// The tickets `me` landed in the window: counted, and each one's claim → merge and working time.
+fn landed(tally: &mut Tally, touched: &mut BTreeSet<u64>, activity: &Activity, tickets: &[Ticket], me: &str, within: &impl Fn(Timestamp) -> bool) {
+    for ticket in tickets.iter().filter(|t| t.worker.as_deref() == Some(me)) {
+        let Some(merged) = ticket.merged.as_ref().filter(|m| within(m.t)) else { continue };
+        tally.landed += 1;
+        touched.insert(ticket.issue);
+        let first = activity
+            .issue_events
+            .iter()
+            .find(|e| e.instance == me && e.sub.is_none() && e.issue == ticket.issue && matches!(e.kind, Kind::Claim { .. } | Kind::Work { .. }))
+            .map(|e| e.t);
+        if let Some(from) = first.or(ticket.claimed).filter(|&from| from <= merged.t) {
+            tally.claim_to_merge.push(merged.t.0.saturating_sub(from.0));
+        }
+        let working = ticket
+            .stretches
+            .iter()
+            .filter(|s| s.phase == Phase::Working && s.by == me)
+            .map(|s| s.end.0.saturating_sub(s.start.0).max(0))
+            .fold(0, i64::saturating_add);
+        if working > 0 {
+            tally.working.push(working);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -484,7 +512,7 @@ mod tests {
     fn workers_by_model_and_effort() {
         let all = run(Window::default());
         let labels: Vec<&str> = all.groups.iter().map(|g| g.label.as_str()).collect();
-        assert_eq!(labels, ["opus-5-5 · high", "sonnet-5 · low"], "no coordinator");
+        assert_eq!(labels, ["opus 5.5 · high", "sonnet 5 · low"], "no coordinator");
         let opus = &all.groups[0];
         let names: Vec<&str> = opus.workers.iter().map(|w| w.name.as_str()).collect();
         assert_eq!(names, ["alder", "birch"]);
@@ -530,6 +558,16 @@ mod tests {
         assert_eq!(names, ["alder"], "only alder was on shift or landed after 10:05");
         assert_eq!(late.groups[0].workers[0].figures.landed, 1);
         assert_eq!(late.groups[0].workers[0].figures.claimed, 0);
+    }
+
+    #[test]
+    fn models_read_as_a_person_names_them() {
+        assert_eq!(model_name("claude-opus-5-5"), "opus 5.5");
+        assert_eq!(model_name("claude-sonnet-4-5-20250929"), "sonnet 4.5 20250929");
+        assert_eq!(model_name("claude-haiku-4"), "haiku 4");
+        assert_eq!(model_name("gpt-x"), "gpt-x");
+        assert_eq!(model_name("claude-"), "");
+        assert_eq!(model_name("-5"), "-5");
     }
 
     #[test]

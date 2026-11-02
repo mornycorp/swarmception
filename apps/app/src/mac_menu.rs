@@ -70,6 +70,7 @@ const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
         | MenuAction::Factory
         | MenuAction::Details
         | MenuAction::Gates
+        | MenuAction::Workers
         | MenuAction::Grouping(_)
         | MenuAction::Collapse
         | MenuAction::Fit => None,

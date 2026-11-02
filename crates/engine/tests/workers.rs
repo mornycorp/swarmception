@@ -103,7 +103,7 @@ fn each_worker_and_each_model_and_effort() {
     open(&mut session, &dir);
     let all: Comparison = call(&mut session, "workers.compare", "");
     let labels: Vec<&str> = all.groups.iter().map(|g| g.label.as_str()).collect();
-    assert_eq!(labels, ["opus-5-5 · high", "opus-5-5 · low"], "more effort first; no coordinator");
+    assert_eq!(labels, ["opus 5.5 · high", "opus 5.5 · low"], "more effort first; no coordinator");
     let high = &all.groups[0].workers[0];
     assert_eq!((high.name.as_str(), high.model.as_deref(), high.effort.as_deref()), ("worker-1", Some("claude-opus-5-5"), Some("high")));
     let f = &high.figures;

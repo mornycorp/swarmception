@@ -254,7 +254,7 @@ fn view_gates_shows_and_hides_the_pane() {
 
     // Alone, without the timeline: the whole run, on its own axis.
     let mut state = shell.ui_state();
-    state.panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, gates: true };
+    state.panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, gates: true, workers: false };
     shell.set_ui_state(state);
     frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
