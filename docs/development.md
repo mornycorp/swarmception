@@ -23,7 +23,14 @@ cargo run -- --repo ../swarm-timeline --grouping workers --collapse
 cargo run -- --repo ../swarm-timeline --screenshot shot.ppm   # draw, save the window, quit
 cargo run -- --repo ../swarm-timeline --panes factory --at 2026-10-30T23:47:30Z   # the factory at a moment
 cargo run -- --repo ../swarm-timeline --at 2026-10-30T23:47:30Z --hover 58 --trace 58 --screenshot shot.ppm
+cargo run -- --repo ../swarm-timeline --fresh   # start without the saved state
 ```
+
+The app keeps its state per repository across a restart (the panes and their sizes, the rows,
+the factory's settings, the details' subject, the timeline's view, the window), under
+`~/Library/Application Support/swarmception/state/` on macOS. A `--screenshot` or `--control` run
+neither reads nor writes it unless a directory is named (`--state-dir <dir>` or
+`SWARMCEPTION_STATE_DIR`): agents' runs leave the owner's alone and draw the same picture each time.
 
 The CLI runs the engine headless, one session, one JSON result a line:
 

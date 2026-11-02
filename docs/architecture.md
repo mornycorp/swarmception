@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -203,8 +203,22 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket while it lasts, else the details' bars, so a hover's leave gives them back
   (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
-  `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by,
-  what the details are of; version 3) is serde data. `control` (#46) is the window's side of the control channel: `Shell::answer`
+  `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
+  moments it steps by, what the details are of; version 4) is serde data. `saved` (#53) keeps the
+  app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
+  size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
+  playhead, the window as clock times, whether it was fitted or ended at the last event, the
+  playhead's time) per repository (`repo_key`: its canonical top level), in
+  `<dir>/state/<name>-<FNV-1a of the path>.json` under the platform's app-data directory
+  (`~/Library/Application Support/swarmception` on macOS, `%APPDATA%`, `$XDG_STATE_HOME`), written
+  whole when it changes and holds still a second (at most every five while it keeps changing,
+  `Keeper`) and on quit. `StateStore::load` never fails: each section reads on its own, so a
+  corrupt, another repository's, older or newer file keeps what it can, and the status bar says
+  what was left out once (a click puts it away). The restored view comes back where it was, at
+  the new end as wide when it ended at the last event, the whole swarm when fitted, the details'
+  subject not moving it, the playhead at its time (kept across the loads after, as #54's reload
+  keeps it), and Live as the person left it (`live.set`, only when they chose it);
+  `ui.inspect`'s `saved` says where it is kept and was read from. `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).
 - **L4 `swarmception-automation`** (#46): the control protocol as types (`protocol`: `Request`,
@@ -214,7 +228,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
   `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`, `--control`,
-  `--control-file`) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
+  `--control-file`, `--state-dir` (else `$SWARMCEPTION_STATE_DIR`, else the platform's), `--fresh`;
+  a `--screenshot` or `--control` run keeps the state only in a directory named) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
   `mcp`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the
@@ -338,6 +353,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The state survives a restart (#53): `saved` (`AppState` version 1, `StateStore`, `Keeper`), `UiState` version 4 with the panes' sizes, the timeline pane's `TimelineView`, `ui.inspect` version 2 with `saved`; `--state-dir`, `--fresh` |
 | 2026-11-02 | minor | Watching a live swarm (#54): `live.get` / `live.set` / `live.check`, the source's one-trip `fetch` and `heads`, a reload that keeps or follows the view and carries the selection (`timeline.carryBars`), Live in the toolbar, View menu and status bar; `ui.inspect`'s `timeline.loadMs` |
 | 2026-11-02 | minor | The details pane and the timeline select together (#55): `details.get`'s `timeline` (the subject's bars), highlighted with one owner (a factory hover wins while it lasts) and brought into view; `ui.set`'s `details`, `ui.inspect`'s `details` and `timeline.lit` |
 | 2026-11-02 | minor | The factory's chip hover uses the widget's highlight (`Timeline::set_highlight`), not the selection; `ui.inspect`'s `highlighted`; swarm-timeline pinned at 9bf2651 (#48) |

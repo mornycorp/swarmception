@@ -21,6 +21,7 @@ mod factory_tip;
 pub mod fonts;
 pub mod icons;
 pub mod menu;
+pub mod saved;
 mod timeline;
 
 use std::path::Path;
@@ -48,11 +49,11 @@ pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use menu::{MenuAction, MenuState};
-pub use timeline::{Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane};
+pub use timeline::{Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
-/// details pane and what it is about.
-pub const UI_STATE_VERSION: u32 = 3;
+/// details pane and what it is about; 4: the panes' sizes (#53).
+pub const UI_STATE_VERSION: u32 = 4;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -71,7 +72,16 @@ impl Default for Panes {
     }
 }
 
-/// What the shell keeps between frames: plain data.
+/// The sizes the panes were last drawn at, in whole points, their margins included (#53): the
+/// details pane's width and the factory's height under the timeline. None: the pane's default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct PaneSizes {
+    pub details: Option<u32>,
+    pub factory: Option<u32>,
+}
+
+/// What the shell keeps between frames: plain data, kept across a restart ([`saved`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiState {
@@ -80,11 +90,19 @@ pub struct UiState {
     pub factory: FactoryView,
     /// What the details pane tells the story of.
     pub details: DetailsView,
+    /// The panes' sizes (#53).
+    pub sizes: PaneSizes,
 }
 
 impl Default for UiState {
     fn default() -> Self {
-        Self { version: UI_STATE_VERSION, panes: Panes::default(), factory: FactoryView::default(), details: DetailsView::default() }
+        Self {
+            version: UI_STATE_VERSION,
+            panes: Panes::default(),
+            factory: FactoryView::default(),
+            details: DetailsView::default(),
+            sizes: PaneSizes::default(),
+        }
     }
 }
 
@@ -113,6 +131,10 @@ pub struct Shell {
     native_menu: bool,
     /// The pages opened from context menus, newest last: what was handed to `ctx.open_url`.
     opened: Vec<String>,
+    /// Keeps the state in its file across a restart (#53); none: neither read nor written.
+    keeper: Option<saved::Keeper>,
+    /// The window's size and place on screen, as last drawn (or as restored).
+    window_place: Option<saved::WindowPlace>,
 }
 
 impl Shell {
@@ -146,6 +168,8 @@ impl Shell {
             error: None,
             native_menu: false,
             opened: Vec::new(),
+            keeper: None,
+            window_place: None,
         };
         if let Some(repo) = repo {
             let result = shell.engine.call::<Open>(OpenParams { path: repo.display().to_string() });
@@ -162,6 +186,116 @@ impl Shell {
 
     pub fn set_ui_state(&mut self, state: UiState) {
         self.ui = state;
+    }
+
+    /// Keeps the state of `repo` (its [`saved::repo_key`]) in `store` from now on (#53): restored
+    /// from what `loaded` read, when it read anything (none: a fresh start, `--fresh`), then
+    /// written when it changes and holds still, and by [`Self::save_state`] on quit.
+    pub fn keep_state(&mut self, store: saved::StateStore, repo: &Path, loaded: Option<&saved::Loaded>) {
+        if let Some(state) = loaded.and_then(|l| l.state.as_ref()) {
+            self.restore(state);
+        }
+        self.keeper = Some(saved::Keeper::new(store, repo, loaded));
+    }
+
+    /// Puts the shell as `state` has it: the panes and their sizes, the factory's settings and
+    /// *t*, what the details are of, the rows (`rows.set`), the window's place, and the timeline's
+    /// view once it has data.
+    pub fn restore(&mut self, state: &saved::AppState) {
+        self.ui = UiState { version: UI_STATE_VERSION, ..state.ui.clone() };
+        // The traced ticket was followed already: the details stay on what they were of.
+        self.followed.1 = self.ui.factory.ticket;
+        // Its subject was in view as it was left: the restored window stays, not moved to it.
+        self.revealed.clone_from(&self.ui.details.subject);
+        if !self.ui.factory.follow {
+            self.playhead_to = self.ui.factory.t;
+        }
+        self.set_rows(SetRowsParams { grouping: Some(state.rows.grouping), collapse: Some(state.rows.collapse) });
+        if let Some(view) = &state.timeline {
+            self.timeline.restore_view(view.clone());
+        }
+        self.window_place = state.window;
+        self.restore_live(state.live);
+    }
+
+    /// Live as the person left it (#54), through `live.set`; an interval this build refuses is
+    /// left at its default, the choice of on or off kept.
+    fn restore_live(&mut self, live: saved::LiveChoice) {
+        if live == saved::LiveChoice::default() {
+            return;
+        }
+        let params = SetLiveParams { on: live.on, interval_seconds: live.interval_seconds };
+        if self.engine.call::<SetLive>(params).is_err() && live.on.is_some() {
+            self.set_live(SetLiveParams { on: live.on, interval_seconds: None });
+        }
+    }
+
+    /// The state as it would be saved now; none when the shell keeps none. The factory's *t*
+    /// only when it isn't following the timeline, and play off.
+    pub fn app_state(&mut self) -> Option<saved::AppState> {
+        let repo = self.keeper.as_ref()?.repo().to_path_buf();
+        let mut ui = self.ui.clone();
+        ui.factory.playing = false;
+        if ui.factory.follow {
+            ui.factory.t = None;
+        }
+        Some(saved::AppState {
+            ui,
+            rows: self.spec,
+            window: self.window_place,
+            timeline: self.timeline.view_state(&mut self.engine),
+            live: self.engine.call::<GetLive>(NoParams {}).map_or_else(
+                |_| saved::LiveChoice::default(),
+                |live| saved::LiveChoice { on: (!live.default).then_some(live.on), interval_seconds: Some(live.interval_seconds) },
+            ),
+            ..saved::AppState::new(&repo)
+        })
+    }
+
+    /// Writes the state now (on quit); the file it went to, none when the shell keeps none.
+    ///
+    /// # Errors
+    ///
+    /// Why it couldn't be written.
+    pub fn save_state(&mut self) -> Result<Option<std::path::PathBuf>, String> {
+        self.sync();
+        let Some(state) = self.app_state() else { return Ok(None) };
+        self.keeper.as_mut().map(|keeper| keeper.write_now(state)).transpose()
+    }
+
+    /// Where the state is kept, read from and what was said of it (`ui.inspect`'s `saved`).
+    #[must_use]
+    pub fn saved(&self) -> saved::SavedInspect {
+        self.keeper.as_ref().map(saved::Keeper::inspect).unwrap_or_default()
+    }
+
+    /// The window's size and place to save, as the app reads them from its viewport.
+    fn note_window(&mut self, ctx: &egui::Context) {
+        let place = ctx.input(|i| {
+            let v = i.viewport();
+            if v.minimized == Some(true) || v.fullscreen == Some(true) {
+                return None;
+            }
+            let (inner, outer) = (v.inner_rect?, v.outer_rect?);
+            Some(saved::WindowPlace { x: outer.min.x, y: outer.min.y, width: inner.width(), height: inner.height() })
+        });
+        if place.is_some() {
+            self.window_place = place;
+        }
+    }
+
+    /// Hands this frame's state to the keeper, which writes it once it holds still; a frame is
+    /// asked for when a write waits.
+    fn keep(&mut self, ctx: &egui::Context) {
+        if self.keeper.is_none() {
+            return;
+        }
+        self.note_window(ctx);
+        let Some(state) = self.app_state() else { return };
+        let now = ctx.input(|i| i.time);
+        if let Some(wait) = self.keeper.as_mut().and_then(|keeper| keeper.observe(state, now)) {
+            ctx.request_repaint_after(wait);
+        }
     }
 
     /// The details pane, to read what it shows.
@@ -337,6 +471,7 @@ impl Shell {
         if let Err(error) = self.timeline.sync(&mut self.engine) {
             self.error = Some(error);
         }
+        self.timeline.restore_pending(&mut self.engine);
     }
 
     fn set_rows(&mut self, params: SetRowsParams) {
@@ -372,20 +507,22 @@ impl Shell {
         self.details.sync(&mut self.engine, &self.ui.details);
         if self.ui.panes.details {
             let width = ui.available_width();
-            egui::Panel::right("details")
+            let shown = egui::Panel::right("details")
                 .resizable(true)
-                .default_size((width * 0.3).clamp(300.0, 460.0))
+                .default_size(self.ui.sizes.details.map_or((width * 0.3).clamp(300.0, 460.0), points_f32))
                 .size_range(220.0..=(width * 0.6).max(220.0))
                 .show(ui, |ui| self.details.ui(ui, &self.ui.details));
+            self.ui.sizes.details = Some(whole_points(shown.response.rect.width()));
         }
         egui::CentralPanel::default().show(ui, |ui| match (self.ui.panes.timeline, self.ui.panes.factory) {
             (true, true) => {
                 let height = ui.available_height();
-                egui::Panel::bottom("factory")
+                let shown = egui::Panel::bottom("factory")
                     .resizable(true)
-                    .default_size(height * 0.58)
+                    .default_size(self.ui.sizes.factory.map_or(height * 0.58, points_f32))
                     .size_range(140.0..=(height - 100.0).max(140.0))
                     .show(ui, |ui| self.factory.ui(ui, &mut self.ui.factory, &self.status));
+                self.ui.sizes.factory = Some(whole_points(shown.response.rect.height()));
                 self.timeline.ui(ui, &self.status);
             }
             (true, false) => self.timeline.ui(ui, &self.status),
@@ -407,6 +544,7 @@ impl Shell {
         self.follow(ui.ctx());
         self.reveal_details(ui.ctx());
         self.light_timeline(ui.ctx());
+        self.keep(ui.ctx());
     }
 
     /// What the details are of, following the selection (#47): a bar newly chosen on the
@@ -572,6 +710,8 @@ impl Shell {
 
     fn status_bar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
+            // First, where it is seen however narrow the window: it goes once read.
+            self.saved_note(ui);
             let s = &self.status;
             match &s.repo {
                 Some(repo) => ui.label(format!("{}  {repo}", icons::FOLDER)),
@@ -598,6 +738,7 @@ impl Shell {
             }
             self.live_note(ui);
             self.issues_note(ui);
+            let s = &self.status;
             let problem = self.error.as_ref().or(s.error.as_ref());
             if let Some(problem) = problem {
                 ui.separator();
@@ -687,6 +828,23 @@ impl Shell {
         label.on_hover_text(hover.join("\n"));
     }
 
+    /// The status bar's word on the saved state (#53), said once: what of the file was left out
+    /// and why, or why it couldn't be written; a click puts it away.
+    fn saved_note(&mut self, ui: &mut egui::Ui) {
+        let Some(note) = self.keeper.as_ref().and_then(saved::Keeper::note) else { return };
+        let short: String = note.chars().take(120).collect();
+        let short = if short.len() < note.len() { format!("{short}…") } else { short };
+        let file = self.saved().file.unwrap_or_default();
+        let full = format!("{note}\n{file}\n(click to dismiss)");
+        let text = egui::RichText::new(format!("{}  {short}", icons::WARNING)).color(ui.visuals().warn_fg_color);
+        if ui.add(egui::Label::new(text).sense(egui::Sense::click())).on_hover_text(full).clicked()
+            && let Some(keeper) = &mut self.keeper
+        {
+            keeper.dismiss();
+        }
+        ui.separator();
+    }
+
     /// The status bar's word on the GitHub issues: how many and from where, the fetch going on,
     /// or why there are none (a warning, never a failed load).
     fn issues_note(&self, ui: &mut egui::Ui) {
@@ -718,6 +876,16 @@ impl Shell {
             label.on_hover_text(hover.join("\n"));
         }
     }
+}
+
+/// A size in whole points, as [`PaneSizes`] keeps it.
+fn whole_points(size: f32) -> u32 {
+    if size.is_finite() { size.round().clamp(0.0, 16_384.0) as u32 } else { 0 }
+}
+
+/// A [`PaneSizes`] size as egui takes it.
+const fn points_f32(size: u32) -> f32 {
+    size as f32
 }
 
 fn icon_button(icon: &str) -> egui::Button<'_> {
