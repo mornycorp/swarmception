@@ -111,6 +111,9 @@ pub struct TimelineInspect {
     pub lit: Lit,
     /// The playhead's item.
     pub playhead_item: Option<u64>,
+    /// How long the last load into the widget took, its view put back, in milliseconds (#54).
+    #[serde(default)]
+    pub load_ms: Option<u64>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -340,6 +343,7 @@ impl Shell {
             highlighted: self.timeline.highlighted(),
             lit: self.timeline.lit(),
             playhead_item: selection.playhead,
+            load_ms: self.timeline.load_time().map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
         };
         let shown = self.details.details().filter(|_| self.details.on_timeline(&self.ui.details).is_some());
         let details = DetailsInspect {

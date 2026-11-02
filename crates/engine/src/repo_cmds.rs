@@ -117,6 +117,7 @@ impl Command for Open {
         }
         session.repo = Some(path);
         session.loaded = None;
+        session.live = session.live.reopened();
         session.rebuild();
         let read = session.start(Job::Read);
         session.start_issues(true);
@@ -125,11 +126,13 @@ impl Command for Open {
     }
 }
 
-fn has_repo(session: &Session) -> Result<(), Unavailable> {
+/// A repository is open and no read is going on: a live check (#54) gives way to a Reload or a
+/// Fetch, so it never holds them up.
+pub(crate) fn has_repo(session: &Session) -> Result<(), Unavailable> {
     if session.repo.is_none() {
         return Err(Unavailable::NoRepo);
     }
-    if session.job.is_some() {
+    if session.job.as_ref().is_some_and(|(job, _)| *job != Job::Live) {
         return Err(Unavailable::Loading);
     }
     Ok(())

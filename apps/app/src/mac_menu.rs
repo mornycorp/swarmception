@@ -65,6 +65,7 @@ const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
         MenuAction::Reload => Some((Modifiers::META, Code::KeyR)),
         MenuAction::Fetch => Some((Modifiers::META.union(Modifiers::SHIFT), Code::KeyR)),
         MenuAction::Quit => Some((Modifiers::META, Code::KeyQ)),
+        MenuAction::Live => Some((Modifiers::META, Code::KeyL)),
         MenuAction::Timeline | MenuAction::Factory | MenuAction::Details | MenuAction::Grouping(_) | MenuAction::Collapse | MenuAction::Fit => None,
     }
 }

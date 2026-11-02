@@ -30,3 +30,5 @@ pub const ISSUES: &str = "\u{f06a}";
 pub const INFO: &str = "\u{f05a}";
 pub const BACK: &str = "\u{f060}";
 pub const EXTERNAL: &str = "\u{f35d}";
+/// broadcast-tower: the live watch (#54).
+pub const LIVE: &str = "\u{f519}";
