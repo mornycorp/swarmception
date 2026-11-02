@@ -145,6 +145,8 @@ fn ticket_moments(activity: &Activity, ticket: &Ticket) -> Vec<Moment> {
         let by = || Some(name_of(activity, &stretch.by));
         let (kind, text, who) = match stretch.phase {
             Phase::Claimed => (MomentKind::Claim, format!("#{n} claimed"), by()),
+            // A rework's start is inferred, not logged (#83): no moment of its own.
+            Phase::Working if stretch.rework => continue,
             Phase::Working => (MomentKind::Work, format!("#{n} work began"), by()),
             Phase::Waiting => {
                 let pr = ticket.pr.map(|pr| format!(" (PR #{pr})")).unwrap_or_default();

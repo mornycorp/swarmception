@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -46,7 +46,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   began, finished (its submit) and merged, and its stretches (claimed, working, waiting for merge,
   sent back, stopped); a claimed, working or sent back stretch ends where its holder's session
   ended, the ticket *abandoned* (#28: `Ticket::abandoned`, the bar's tooltip says whose session
-  ended when, and the factory puts it on the shelf then). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
+  ended when, and the factory puts it on the shelf then). A worker's `submit` straight after a
+  send-back, with no `work` logged between, is its rework (#83: `Stretch::rework`): the send-back
+  keeps a minute's mark (`SENT_BACK_MARK`), the rest up to the submit is *working* again, so a
+  ticket's second run is drawn in its own colour as its first was. `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed: `Collapse` off, `empty` (no events at all) or `window`, #74, which `true`
   and `false` still read as), under two rows at the top, the merges onto `main` and the tickets'
   merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
@@ -519,6 +522,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | A submit straight after a send-back is its rework, drawn as working in the ticket's colour after a minute's sent-back mark (#83) |
 | 2026-11-02 | minor | `ui.set` reaches the Workers window (#76: `workers`, its place in `WorkersView` and `UiState` version 8, `ui.inspect` version 8 with `workers.rect`); MCP answers a screenshot's PNG as an image up to `IMAGE_MOST` (`mcp::Content`, `image_too_large`, `image_unreadable`); Open… off macOS through the desktop's picker as a child process (`picker`, `Picked`) |
 | 2026-11-02 | minor | One definition of a gate run (#75): `gates::runs` and `gates::figures`, counted by `gates.list` and `stats.get` alike (`Stats::gates` gains `running` and `inferred`, its `noResult` no longer counting running runs; `Figures::inferred`); the Gates band draws both lanes' hours, mirrored (`GatesDrawn::hour_columns`), `ui.inspect` version 7 with `gates.hours` |
 | 2026-11-02 | minor | Opening a repository from the app (#69): the source's `probe`, `repo.open`'s refusals before anything changes, `repo.recent` / `repo.clearRecent`, `Session::opens`; File ▸ Open… (AppKit's open panel, ⌘O) and Open Recent, the shell switching state per repository, `recent.json`, `ui.inspect` version 6 with `open`, `--menu`; every live check that reads again refreshes the issues |
