@@ -129,3 +129,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #73","sub":"gate-73","t":"2026-11-02T13:20:06Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #78 (#75, gates band ready hours; one gate-run definition); capacity=3 free=11.0; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-78","t":"2026-11-02T17:43:08Z"}
 {"event":"merge","issue":75,"mr":78,"sub":"gate-78","t":"2026-11-02T17:43:34Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #78","sub":"gate-78","t":"2026-11-02T17:43:40Z"}
