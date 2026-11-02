@@ -39,8 +39,9 @@ use crate::{Panes, Shell, UiState};
 /// runs as rows of the timeline (#84: `timeline.hoveredRun`; the gates pane's `runs` gone, its
 /// `hovered` an hour); 11: the
 /// factory follows the timeline (#85): its `t` the time it shows, its sources the timeline's, what
-/// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip.
-pub const INSPECT_VERSION: u32 = 11;
+/// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip; 12:
+/// the timeline's folds (#86, `timeline.folds`; the state's `fold`).
+pub const INSPECT_VERSION: u32 = 12;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -166,6 +167,9 @@ pub struct TimelineInspect {
     /// `<sub>@<start>`: its tickets' bars are lit.
     #[serde(default)]
     pub hovered_run: Option<String>,
+    /// The stretches the timeline folds (#86), as clock times: none while folding is off.
+    #[serde(default)]
+    pub folds: Vec<Span>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -313,8 +317,8 @@ pub enum StepTo {
 }
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the rows'
-/// collapse; the panes, their folds, the workers pane, speed and steps; `at`; follow and play;
-/// the ticket; the step; the details; the window; the strip's hour.
+/// collapse and the timeline's folding; the panes, their folds, the workers pane, speed and
+/// steps; `at`; follow and play; the ticket; the step; the details; the window; the strip's hour.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -355,6 +359,12 @@ pub struct UiSet {
     pub window: Option<SpanAt>,
     /// Which rows Collapse leaves out (#74), as `rows.set` sets it: `off`, `empty` or `window`.
     pub collapse: Option<swarmception_domain::Collapse>,
+    /// The timeline folds its quiet time (#86), as View ▸ Fold Quiet Time does.
+    pub fold_quiet: Option<bool>,
+    /// The quiet time folded is longer than this many seconds (#86): 1 to a week; kept, folding
+    /// on or off. Left out, it stays as it is (at first `stats.get`'s `quietAfterSeconds`, 15
+    /// minutes).
+    pub fold_after_seconds: Option<i64>,
     /// As a click on the factory's statistics strip's bar of the hour holding this time (#85):
     /// the timeline's window on that hour, its playhead at its last second, the strip keeping its
     /// range with the hour marked. After the window.
@@ -544,6 +554,7 @@ impl Shell {
             left_out: self.timeline.left_out().to_vec(),
             collapse_us: self.timeline.collapse_time().map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
             hovered_run: self.timeline.hovered(&mut self.engine).run(),
+            folds: self.timeline.folds().into_iter().map(|(start, end)| Span { start, end }).collect(),
         };
         let details = self.details_inspect();
         let gates = self.gates_inspect();
@@ -649,9 +660,21 @@ impl Shell {
                 message: format!("workers.place: ({}, {}) is over {} points from the window's corner", place.x, place.y, crate::WorkersPlace::MOST),
             });
         }
+        if let Some(seconds) = set.fold_after_seconds.filter(|s| !(crate::FoldView::LEAST..=crate::FoldView::MOST).contains(s)) {
+            return Err(EngineError::BadParams {
+                message: format!("foldAfterSeconds: {seconds} is outside {} to {}", crate::FoldView::LEAST, crate::FoldView::MOST),
+            });
+        }
         if let Some(collapse) = set.collapse {
             self.engine.call::<swarmception_engine::rows_cmds::Set>(swarmception_engine::rows_cmds::SetParams { collapse: Some(collapse), grouping: None })?;
         }
+        if let Some(seconds) = set.fold_after_seconds {
+            self.ui.fold.after_seconds = Some(seconds);
+        }
+        if let Some(on) = set.fold_quiet {
+            self.ui.fold.on = on;
+        }
+        self.timeline.fold_quiet(self.ui.fold.threshold());
         self.sync();
         self.apply_view(set, at);
         self.apply_selection(set);

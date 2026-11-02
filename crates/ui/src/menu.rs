@@ -42,6 +42,9 @@ pub enum MenuAction {
     /// View ▸ Collapse Empty Rows and Collapse to Window (#74): `rows.set` with that collapse,
     /// or with none when it is the one on. `Collapse(Off)` is no item of the menus.
     Collapse(Collapse),
+    /// View ▸ Fold Quiet Time (#86): the timeline folds the stretches where nothing happened
+    /// (the widget's `view.fold`), toggled.
+    FoldQuiet,
     /// View ▸ Fit: the widget's `view.fit`.
     Fit,
     /// View ▸ Live: `live.set` toggled, watching the swarm (#54).
@@ -51,7 +54,7 @@ pub enum MenuAction {
 impl MenuAction {
     /// Every item of the menus themselves, in menu order (Open Recent's own are
     /// [`MenuAction::recent_items`]).
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Open,
         Self::Recent,
         Self::Reload,
@@ -66,6 +69,7 @@ impl MenuAction {
         Self::Grouping(Grouping::Workers),
         Self::Collapse(Collapse::Empty),
         Self::Collapse(Collapse::Window),
+        Self::FoldQuiet,
         Self::Fit,
         Self::Live,
     ];
@@ -81,7 +85,7 @@ impl MenuAction {
     }
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 14] = [
+    pub const VIEW: [Option<Self>; 15] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
@@ -93,6 +97,7 @@ impl MenuAction {
         None,
         Some(Self::Collapse(Collapse::Empty)),
         Some(Self::Collapse(Collapse::Window)),
+        Some(Self::FoldQuiet),
         Some(Self::Fit),
         None,
         Some(Self::Live),
@@ -119,6 +124,7 @@ impl MenuAction {
             Self::Collapse(Collapse::Empty) => "view.collapse",
             Self::Collapse(Collapse::Window) => "view.collapseWindow",
             Self::Collapse(Collapse::Off) => "view.collapseOff",
+            Self::FoldQuiet => "view.foldQuiet",
             Self::Fit => "view.fit",
             Self::Live => "view.live",
         }
@@ -152,6 +158,7 @@ impl MenuAction {
             Self::Collapse(Collapse::Empty) => "Collapse Empty Rows",
             Self::Collapse(Collapse::Window) => "Collapse to Window",
             Self::Collapse(Collapse::Off) => "Every Row",
+            Self::FoldQuiet => "Fold Quiet Time",
             Self::Fit => "Fit",
             Self::Live => "Live",
         }
@@ -177,6 +184,7 @@ impl MenuAction {
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
             Self::Collapse(Collapse::Empty | Collapse::Off) => icons::COLLAPSE,
             Self::Collapse(Collapse::Window) => icons::COLLAPSE_WINDOW,
+            Self::FoldQuiet => icons::FOLD,
             Self::Fit => icons::FIT,
             Self::Live => icons::LIVE,
         }
@@ -240,6 +248,8 @@ pub struct MenuState {
     pub workers: bool,
     pub grouping: Grouping,
     pub collapse: Collapse,
+    /// The timeline folds its quiet time (#86).
+    pub fold_quiet: bool,
     /// The live watch is on (#54).
     pub live: bool,
     /// How many repositories Open Recent lists (#69, `repo.recent`).
@@ -265,6 +275,7 @@ impl MenuState {
             | MenuAction::Workers
             | MenuAction::Grouping(_)
             | MenuAction::Collapse(_)
+            | MenuAction::FoldQuiet
             | MenuAction::Live => true,
         }
     }
@@ -280,6 +291,7 @@ impl MenuState {
             MenuAction::Workers => Some(self.workers),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse(collapse) => Some(self.collapse == collapse),
+            MenuAction::FoldQuiet => Some(self.fold_quiet),
             MenuAction::Live => Some(self.live),
             MenuAction::Open
             | MenuAction::Recent
@@ -352,6 +364,7 @@ mod tests {
             workers: true,
             grouping: Grouping::Workers,
             collapse: Collapse::Window,
+            fold_quiet: true,
             live: true,
             recent: 2,
         };
@@ -373,6 +386,8 @@ mod tests {
         assert_eq!(state.checked(MenuAction::Collapse(Collapse::Window)), Some(true));
         assert!(state.enabled(MenuAction::Collapse(Collapse::Window)));
         assert_eq!(state.checked(MenuAction::Live), Some(true));
+        assert_eq!(state.checked(MenuAction::FoldQuiet), Some(true));
+        assert!(state.enabled(MenuAction::FoldQuiet));
         assert!(state.enabled(MenuAction::Live), "on or off whatever is being read");
 
         assert_eq!(state.checked(MenuAction::Reload), None);

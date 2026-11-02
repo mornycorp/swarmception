@@ -361,6 +361,9 @@ struct UiSections {
     #[serde(default)]
     folded: Option<serde_json::Value>,
     workers: Option<serde_json::Value>,
+    /// Folding the timeline's quiet time (#86, version 10): off in an older state.
+    #[serde(default)]
+    fold: Option<serde_json::Value>,
 }
 
 /// `value` as a `T`, its default when it is missing or doesn't read (`name` added to `skipped`).
@@ -402,6 +405,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         sizes: section::<PaneSizes>(ui.sizes, "sizes", &mut skipped),
         folded: section::<crate::layout::Folded>(ui.folded, "folded", &mut skipped),
         workers: section::<WorkersView>(ui.workers, "workers", &mut skipped),
+        fold: section::<crate::FoldView>(ui.fold, "fold", &mut skipped),
     });
     let state = AppState {
         version: APP_STATE_VERSION,
