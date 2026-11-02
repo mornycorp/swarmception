@@ -3243,6 +3243,7 @@ dependencies = [
  "swarmception-domain",
  "swarmception-engine",
  "swarmception-model",
+ "timeline-core",
  "timeline-egui",
  "timeline-engine",
 ]
@@ -3368,7 +3369,7 @@ dependencies = [
 [[package]]
 name = "timeline-automation"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=9bf2651b2ea7a56875483a2e66653760155610ca#9bf2651b2ea7a56875483a2e66653760155610ca"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=efdf212e1db5a63b1964a4929dbc9f058de89d99#efdf212e1db5a63b1964a4929dbc9f058de89d99"
 dependencies = [
  "schemars",
  "serde",
@@ -3379,12 +3380,12 @@ dependencies = [
 [[package]]
 name = "timeline-core"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=9bf2651b2ea7a56875483a2e66653760155610ca#9bf2651b2ea7a56875483a2e66653760155610ca"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=efdf212e1db5a63b1964a4929dbc9f058de89d99#efdf212e1db5a63b1964a4929dbc9f058de89d99"
 
 [[package]]
 name = "timeline-egui"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=9bf2651b2ea7a56875483a2e66653760155610ca#9bf2651b2ea7a56875483a2e66653760155610ca"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=efdf212e1db5a63b1964a4929dbc9f058de89d99#efdf212e1db5a63b1964a4929dbc9f058de89d99"
 dependencies = [
  "egui",
  "schemars",
@@ -3397,7 +3398,7 @@ dependencies = [
 [[package]]
 name = "timeline-engine"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=9bf2651b2ea7a56875483a2e66653760155610ca#9bf2651b2ea7a56875483a2e66653760155610ca"
+source = "git+https://github.com/mornycorp/swarm-timeline.git?rev=efdf212e1db5a63b1964a4929dbc9f058de89d99#efdf212e1db5a63b1964a4929dbc9f058de89d99"
 dependencies = [
  "schemars",
  "serde",

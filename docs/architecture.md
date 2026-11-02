@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -192,7 +192,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Open… (⌘O), Open Recent (#69), Reload, Fetch and Reload, Quit; View:
-  the panes, the grouping, Collapse Empty Rows and Collapse to Window (#74), Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
+  the panes, the grouping, Collapse Empty Rows and Collapse to Window (#74), Fold Quiet Time (#86), Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
   in-window bar draws and `Shell::run_menu` runs; on macOS the app puts it in the system menu
   bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
   their marks following `Shell::menu_state`; the toolbar (Font Awesome 5's solid face,
@@ -290,6 +290,18 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `timeline.hoveredRun`), else a Workers pane hover's (`Hover`), else the details' bars, so a
   hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). A run's bar
   clicked is the details' subject as any bar is (`details.get`'s `track` and `range`).
+  **Folding quiet time** (#86, swarm-timeline's §5.3): View ▸ Fold Quiet Time, the toolbar's
+  checkbox beside the Collapse toggles and `ui.set`'s `foldQuiet` (`UiState::fold`, `FoldView`)
+  have the widget fold every stretch where no row has a bar for longer than the threshold
+  (`ui.set`'s `foldAfterSeconds`, else the swarm's own quiet gap, `stats.get`'s
+  `quietAfterSeconds`, 15 min): each a narrow zig-zag marker with its tooltip (`quiet 5 h 32
+  min`, `03:29 → 09:01`), the ruler jumping over it with its edges' times. The pane tells the
+  widget (`view.fold`) when it changes and again after every load and restore
+  (`TimelinePane::fold_quiet`), so it composes with Collapse, the grouping and a live reload;
+  `ui.inspect`'s `timeline.folds` (version 12) are the stretches folded, as clock times. What is
+  drawn aligned with the timeline goes through its folds: the pane keeps last frame's
+  `TimeAxis` (the widget's window across its width as `PixelMap::folded` maps it, its ends on
+  screen, the `Time` scale's origin), and the Gates band puts each time where it puts it.
   The gates pane (#61, View ▸ Gates, on by default) is a band between the timeline and the
   factory drawing what `gates.list` returns for the timeline's window (asked again only when
   the window or the data moves): the headline figures as pills along its top (the gate's pass
@@ -341,7 +353,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   and the moments it steps by, what the details are of; version 5: the gates pane, #61; version 6:
   the folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run
   and sort, #67; version 8: its window's place, #76; version 9: no factory *t*, #85, an older
-  state's `t` dropped as it reads) is serde data. `saved` (#53) keeps the
+  state's `t` dropped as it reads; version 10: `fold`, folding the timeline's quiet time, #86, an
+  older state's off) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -387,7 +400,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse [off|empty|window]`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate` (#84: a run's bar on the timeline), `--hover-worker`,
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate` (#84: a run's bar on the timeline), `--hover-worker`, `--fold` and `--hover-fold <n>` (#86: quiet time folded, the pointer on a fold's marker),
   `--menu file|file.recent` (#69: the window's own menu bar, File clicked open and the pointer on
   Open Recent, for a screenshot), `--step`, `--steps`, `--size`, `--zoom` (the UI's
   scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
@@ -551,6 +564,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Folding the timeline's quiet time (#86): swarm-timeline at efdf212 (its §5.3); View ▸ Fold Quiet Time, the toolbar's checkbox, `ui.set`'s `foldQuiet` and `foldAfterSeconds`, `UiState` version 10 (`fold`), `ui.inspect` version 12 (`timeline.folds`); `TimelinePane::fold_quiet` and `time_axis`, the Gates band's hours through the folds (`TimeAxis`) |
 | 2026-11-02 | minor | The Factory follows the timeline (#85): no clock of its own (its *t* the playhead's, a time put on it kept while the playhead stays on its item; `UiState` version 9 without `t`), its header's buttons first at fixed places, the details' subject selected in it and brought into view (`Selected`, `Block::commit`), the strip keeping its range after an hour's click (`ui.set`'s `hour`); `ui.inspect` version 11 |
 | 2026-11-02 | minor | Gate runs and ready checks as rows on the timeline (#84): the domain's Gate runs and Ready checks rows under the merges rows (`Style::GateRun`, `Style::ReadyCheck`, `Bar::run`, `RunBar`, `TOP_KEYS`), `gates.list`'s runs a bar each; `bar_subject` and a gate run's `OnTimeline` read them; `timeline.bar`, `timeline.runBars`; the timeline's hovered run lights its tickets (`TimelinePane::hovered`); the Gates band keeps its figures, causes and hours, its lanes gone; `ui.inspect` version 10 (`timeline.hoveredRun`; `gates.runs` gone, `gates.hovered` an hour) |
 | 2026-11-02 | minor | A submit straight after a send-back is its rework, drawn as working in the ticket's colour after a minute's sent-back mark (#83) |

@@ -29,6 +29,7 @@ use crate::factory_stats::percent;
 use crate::factory_tip::legible;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
+use crate::timeline::TimeAxis;
 
 /// One lane's column of an hour as the pane drew it: the counts it stacked, and where.
 #[derive(Debug, Clone, PartialEq)]
@@ -153,9 +154,10 @@ impl GatesPane {
         self.drawn = GatesDrawn::default();
     }
 
-    /// Draws the pane; `axis`, where the timeline's window starts and ends across the screen, to
-    /// line the hours up under it (none: the pane's own); `t`, the factory's time, marked.
-    pub fn ui(&mut self, ui: &mut egui::Ui, axis: Option<(f32, f32)>, t: Option<Timestamp>) {
+    /// Draws the pane; `axis`, where the timeline's times fall across the screen (its window's
+    /// ends, through its folds, #86), to line the hours up under it (none: the pane's own); `t`,
+    /// the factory's time, marked.
+    pub fn ui(&mut self, ui: &mut egui::Ui, axis: Option<&TimeAxis>, t: Option<Timestamp>) {
         self.drawn = GatesDrawn::default();
         let Some(list) = self.list.clone() else {
             ui.horizontal(|ui| {
@@ -174,12 +176,16 @@ impl GatesPane {
             return;
         }
         let response = ui.allocate_rect(body, Sense::hover());
-        let (x0, x1) = match axis {
-            Some((x0, x1)) if x0 - body.left() >= NARROWEST_COLUMN && x1 - x0 > 40.0 => (x0, x1.min(body.right() + 16.0)),
-            _ => (body.left() + OWN_COLUMN, body.right() - 8.0),
+        let lined = axis.filter(|a| {
+            let (x0, x1) = a.ends();
+            x0 - body.left() >= NARROWEST_COLUMN && x1 - x0 > 40.0
+        });
+        let (x0, x1) = match lined {
+            Some(a) => (a.ends().0, a.ends().1.min(body.right() + 16.0)),
+            None => (body.left() + OWN_COLUMN, body.right() - 8.0),
         };
         self.drawn.axis = Some((x0, x1));
-        let scale = Scale { start: list.start, end: list.end, x0, x1 };
+        let scale = Scale { start: list.start, end: list.end, x0, x1, through: lined.cloned() };
         // Out to the timeline's right edge, which the panel's margin can pass.
         let painter = ui.painter_at(body.with_max_x(body.right().max(x1)));
         let visuals = ui.visuals().clone();
@@ -390,12 +396,14 @@ impl GatesPane {
     }
 }
 
-/// Where times fall across the screen: the window from `x0` to `x1`.
+/// Where times fall across the screen: the window from `x0` to `x1`, through the timeline's own
+/// mapping when lined up under it (its folds, #86), else evenly.
 struct Scale {
     start: Timestamp,
     end: Timestamp,
     x0: f32,
     x1: f32,
+    through: Option<TimeAxis>,
 }
 
 impl Scale {
@@ -404,6 +412,9 @@ impl Scale {
     }
 
     fn at(&self, t: Timestamp) -> f32 {
+        if let Some(axis) = &self.through {
+            return axis.x(t).clamp(self.x0, self.x1);
+        }
         let width = self.end.0.saturating_sub(self.start.0).max(1) as f64;
         let fraction = t.0.saturating_sub(self.start.0) as f64 / width;
         self.x0 + (self.x1 - self.x0) * fraction as f32
@@ -531,7 +542,7 @@ mod tests {
     use super::*;
 
     fn scale() -> Scale {
-        Scale { start: Timestamp(1_000), end: Timestamp(2_000), x0: 100.0, x1: 1_100.0 }
+        Scale { start: Timestamp(1_000), end: Timestamp(2_000), x0: 100.0, x1: 1_100.0, through: None }
     }
 
     #[test]
@@ -541,7 +552,7 @@ mod tests {
         assert_eq!(s.x(Timestamp(999)), None);
         assert_eq!(s.across(Timestamp(500), Timestamp(1_100)), Some((100.0, 200.0)), "clipped at the start");
         assert_eq!(s.across(Timestamp(2_500), Timestamp(3_000)), None);
-        let empty = Scale { start: Timestamp(5), end: Timestamp(5), x0: 0.0, x1: 10.0 };
+        let empty = Scale { start: Timestamp(5), end: Timestamp(5), x0: 0.0, x1: 10.0, through: None };
         assert_eq!(empty.across(Timestamp(5), Timestamp(5)), Some((0.0, 0.0)), "no width: no division by nothing");
     }
 

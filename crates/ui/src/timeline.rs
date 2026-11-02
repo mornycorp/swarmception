@@ -20,6 +20,11 @@
 //! read back (`query.tooltip`'s bar, `timeline.bar`), and a run's lights the bars of the tickets
 //! it carried ([`TimelinePane::hovered`], which the shell hands to [`TimelinePane::light_hover`]).
 //!
+//! Folding quiet time (#86): when on, the pane has the widget fold every stretch where no row has
+//! anything for longer than the threshold (the widget's `view.fold`), again after every load and
+//! restore; the bands drawn under it line their times up through the folds ([`TimeAxis`], the
+//! widget's own mapping from time to x).
+//!
 //! What the owner fixed (#35) the pane sets by command on every load, and the widget's toolbar
 //! leaves out: the `Time` scale, the absolute origin, the minimap always and a click selecting
 //! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
@@ -46,6 +51,7 @@ use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
 use timeline_engine::tracks_cmds::{Expand, GroupParams, HitParams, Layout, LayoutParams, SetTrack, SetTrackParams};
 
+use timeline_engine::fold_cmds::{FoldParams, SetFold};
 use timeline_engine::highlight_cmds::HighlightParams;
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, RangeParams, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
@@ -282,7 +288,77 @@ pub struct TimelinePane {
     pointed: Option<(String, usize)>,
     /// The gate run under the pointer (#84), and the rows' generation and bar it was read for.
     hovered: (Option<(u64, String, usize)>, Hover),
+    /// Folding quiet time (#86): the threshold in seconds when on, as the shell wants it.
+    fold: Option<i64>,
+    /// What the widget was last told to fold: none since a load or a restore, which reset it.
+    folded: Option<Option<i64>>,
+    /// The time at position 0 of the `Time` scale: the axis's origin, read at each load.
+    origin: Option<Timestamp>,
+    /// Where times fell across the screen last frame, through the folds (#86).
+    time_axis: Option<TimeAxis>,
 }
+
+/// Where times fall across the screen, as the timeline drew them last frame (#86): its window's
+/// start at `x0` and end at `x1`, through the widget's own mapping, folds and all, so a band drawn
+/// under the timeline puts a time under the timeline's x for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TimeAxis {
+    x0: f32,
+    x1: f32,
+    /// The time at position 0.
+    origin: Timestamp,
+    /// The window's start and end, as clock times.
+    start: Timestamp,
+    end: Timestamp,
+    /// The widget's window across its width, through its folds.
+    map: timeline_core::axis::PixelMap,
+}
+
+impl TimeAxis {
+    /// The axis over the widget's `state` from `x0` to `x1` on screen, position 0 at `origin`;
+    /// none for a width that isn't positive.
+    #[must_use]
+    pub fn new(state: &TimelineState, origin: Timestamp, (x0, x1): (f32, f32)) -> Option<Self> {
+        let span = |s: SpanWire| timeline_core::axis::Span::new(s.start, s.end).ok();
+        let axis = timeline_core::axis::Axis::new(timeline_core::axis::Domain::Time, span(state.extent)?);
+        let window = axis.window(state.window.start, state.window.end).ok()?;
+        let folds = timeline_core::fold::Folds::new(state.folds.iter().filter_map(|&f| span(f)), axis.extent());
+        let map = timeline_core::axis::PixelMap::folded(window, state.width, &folds).ok()?;
+        let at = |position: i64| Timestamp(origin.0.saturating_add(position.div_euclid(NANOS)));
+        (x1 > x0).then(|| Self { x0, x1, origin, start: at(state.window.start), end: at(state.window.end), map })
+    }
+
+    /// The window's start and end across the screen.
+    #[must_use]
+    pub const fn ends(&self) -> (f32, f32) {
+        (self.x0, self.x1)
+    }
+
+    /// The window, as clock times.
+    #[must_use]
+    pub const fn window(&self) -> (Timestamp, Timestamp) {
+        (self.start, self.end)
+    }
+
+    /// Where `t` falls across the screen, through the folds: inside a fold's marker for a time
+    /// it folded; outside `x0` to `x1` for a time outside the window.
+    #[must_use]
+    pub fn x(&self, t: Timestamp) -> f32 {
+        let position = t.0.saturating_sub(self.origin.0).saturating_mul(NANOS);
+        let width = self.map.width();
+        let across = if width > 0.0 { (self.x1 - self.x0) / width } else { 0.0 };
+        self.x0 + self.map.x(position) * across
+    }
+
+    /// Whether the window folds anything.
+    #[must_use]
+    pub fn folded(&self) -> bool {
+        self.map.fold_map().is_some()
+    }
+}
+
+/// Nanoseconds a second: the `Time` scale's positions.
+const NANOS: i64 = 1_000_000_000;
 
 impl Default for TimelinePane {
     fn default() -> Self {
@@ -305,6 +381,10 @@ impl Default for TimelinePane {
             window_rows: WindowRowsState::default(),
             pointed: None,
             hovered: (None, Hover::Nothing),
+            fold: None,
+            folded: None,
+            origin: None,
+            time_axis: None,
         }
     }
 }
@@ -333,6 +413,20 @@ impl TimelinePane {
             let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
             Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
         })
+    }
+
+    /// Where on screen the `n`th fold's marker (from 0, left to right) drawn last frame is
+    /// (#86): its middle, a few rows down: for a host to put the pointer on it (the app's
+    /// `--hover-fold`, to see its tooltip). None when there is no such fold on screen.
+    pub fn fold_point(&mut self, n: usize) -> Option<egui::Pos2> {
+        let rect = self.rect.filter(|_| self.has_data)?;
+        let session = self.widget.session();
+        let layout = session.call::<Layout>(LayoutParams { pane: rect.height(), scroll: 0.0 }).ok()?;
+        let folds = session.call::<timeline_engine::fold_cmds::QueryFolds>(NoParams {}).ok()?;
+        let fold = folds.folds.get(n)?;
+        let x = rect.left() + layout.label_width + f32::midpoint(fold.x0, fold.x1);
+        let row = layout.rows.get(4).or_else(|| layout.rows.last())?;
+        Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
     }
 
     /// Where on screen gate run `sub`'s bar drawn last frame is (#84), on the Gate runs or Ready
@@ -384,6 +478,55 @@ impl TimelinePane {
     #[must_use]
     pub fn axis(&self) -> Option<(f32, f32)> {
         self.axis.filter(|_| self.has_data)
+    }
+
+    /// Where times fell across the screen last frame, through the folds (#86): what a band drawn
+    /// under the timeline lines its times up by. None before the pane has drawn data, or on a
+    /// scale other than `Time`.
+    #[must_use]
+    pub fn time_axis(&self) -> Option<&TimeAxis> {
+        self.time_axis.as_ref().filter(|_| self.has_data)
+    }
+
+    /// Folds the timeline's quiet time (#86): `Some(threshold)` in seconds folds every stretch
+    /// where no row has anything for longer than it, `None` unfolds. Told to the widget now when
+    /// it has data, and again after every load or restore.
+    pub fn fold_quiet(&mut self, threshold: Option<i64>) {
+        self.fold = threshold;
+        self.apply_fold();
+    }
+
+    /// What the pane folds: the threshold in seconds when on.
+    #[must_use]
+    pub const fn folding(&self) -> Option<i64> {
+        self.fold
+    }
+
+    /// Tells the widget what to fold, when it has data and was told otherwise (or nothing since
+    /// a load or a restore).
+    fn apply_fold(&mut self) {
+        if !self.has_data || self.folded == Some(self.fold) {
+            return;
+        }
+        let params = match self.fold {
+            Some(seconds) => FoldParams {
+                on: Some(true),
+                threshold: Some(u64::try_from(seconds.max(1)).unwrap_or(1).saturating_mul(NANOS.unsigned_abs())),
+                ranges: Some(Vec::new()),
+            },
+            None => FoldParams { on: Some(false), ..FoldParams::default() },
+        };
+        if self.widget.session().call::<SetFold>(params).is_ok() {
+            self.folded = Some(self.fold);
+        }
+    }
+
+    /// The stretches the timeline folds now, as clock times (#86): none while off.
+    pub fn folds(&mut self) -> Vec<(Timestamp, Timestamp)> {
+        let Some(origin) = self.origin.filter(|_| self.has_data) else { return Vec::new() };
+        let Some(state) = self.widget.session().call::<Get>(NoParams {}).ok().and_then(|s| s.timeline) else { return Vec::new() };
+        let at = |position: i64| Timestamp(origin.0.saturating_add(position.div_euclid(NANOS)));
+        state.folds.iter().map(|f| (at(f.start), at(f.end))).collect()
     }
 
     /// The pages chosen from bars' context menus since the last call (#17): a bar's Open Issue
@@ -443,13 +586,18 @@ impl TimelinePane {
         let previous = self.loaded.replace(generation);
         let before = if self.has_data { self.view() } else { None };
         let Some(timeline) = engine.widget_timeline().map_err(|e| e.to_string())? else {
-            *self = Self { loaded: self.loaded, pending: self.pending.take(), ..Self::default() };
+            *self = Self { loaded: self.loaded, pending: self.pending.take(), fold: self.fold, ..Self::default() };
             return Ok(());
         };
+        self.origin = engine.call::<TimeAt>(TimeAtParams { position: 0 }).ok().map(|t| t.time);
         let session = self.widget.session();
         session.load(timeline);
         self.has_data = true;
         Self::fix_view(session);
+        // A load folds nothing: told again (#86).
+        self.folded = None;
+        self.apply_fold();
+        let session = self.widget.session();
         match before {
             Some(kept) => {
                 self.restore_window(&kept);
@@ -533,6 +681,10 @@ impl TimelinePane {
             self.window_rows.applied = None;
         }
         Self::fix_view(session);
+        // The saved state's own folding gives way to the pane's (#86).
+        self.folded = None;
+        self.apply_fold();
+        let session = self.widget.session();
         match view.window {
             _ if view.fitted => {
                 let _ = session.call::<Fit>(NoParams {});
@@ -1014,8 +1166,11 @@ impl TimelinePane {
         });
         self.rect = Some(shown.inner);
         self.visible = Some(shown.inner_rect);
-        let label_width = self.widget.session().call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.label_width);
+        let state = self.widget.session().call::<Get>(NoParams {}).ok().and_then(|s| s.timeline);
+        let label_width = state.as_ref().map(|s| s.label_width);
         self.axis = label_width.filter(|w| w.is_finite()).map(|w| (shown.inner.left() + w.clamp(0.0, shown.inner.width()), shown.inner.right()));
+        // Through the widget's own mapping, folds and all (#86).
+        self.time_axis = state.filter(|s| s.scale == TIME).zip(self.origin).zip(self.axis).and_then(|((s, origin), ends)| TimeAxis::new(&s, origin, ends));
         self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));
     }
 }

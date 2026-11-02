@@ -56,7 +56,7 @@ pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use gates::{GatesDrawn, GatesPane, HourDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
-pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
+pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimeAxis, TimelinePane, TimelineView};
 pub use workers::{
     Column as WorkersColumn, Place as WorkersPlace, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView,
     cells as worker_cells,
@@ -66,8 +66,34 @@ pub use workers::{
 /// details pane and what it is about; 4: the panes' sizes (#53); 5: the gates pane and its
 /// height (#61); 6: the folded panes (#68); 7: the workers pane, its window and its sort (#67);
 /// 8: where the workers' window is (#76); 9: the factory keeps no time of its own (#85: the
-/// factory's `t` is gone, and an older state's is dropped as it reads).
-pub const UI_STATE_VERSION: u32 = 9;
+/// factory's `t` is gone, and an older state's is dropped as it reads); 10: folding the timeline's
+/// quiet time (#86, `fold`; an older state's is off).
+pub const UI_STATE_VERSION: u32 = 10;
+
+/// Folding the timeline's quiet time (#86): View ▸ Fold Quiet Time, the toolbar's checkbox and
+/// `ui.set`'s `foldQuiet` turn it on; the widget then folds each stretch where no row has
+/// anything for longer than the threshold.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+pub struct FoldView {
+    pub on: bool,
+    /// The threshold in seconds (`ui.set`'s `foldAfterSeconds`); none: the swarm's own quiet gap,
+    /// `stats.get`'s `quietAfterSeconds` (15 minutes).
+    pub after_seconds: Option<i64>,
+}
+
+impl FoldView {
+    /// The least threshold `ui.set` takes, in seconds.
+    pub const LEAST: i64 = 1;
+    /// The greatest, a week.
+    pub const MOST: i64 = 7 * 24 * 3_600;
+
+    /// The threshold in seconds the timeline folds by while on; none while off.
+    #[must_use]
+    pub fn threshold(self) -> Option<i64> {
+        self.on.then(|| self.after_seconds.unwrap_or(swarmception_domain::stats::QUIET).clamp(Self::LEAST, Self::MOST))
+    }
+}
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -117,6 +143,8 @@ pub struct UiState {
     pub folded: layout::Folded,
     /// What the workers pane compares over, and its sort (#67); where its window is (#76).
     pub workers: WorkersView,
+    /// Folding the timeline's quiet time (#86): off by default.
+    pub fold: FoldView,
 }
 
 impl Default for UiState {
@@ -129,6 +157,7 @@ impl Default for UiState {
             sizes: PaneSizes::default(),
             folded: layout::Folded::default(),
             workers: WorkersView::default(),
+            fold: FoldView::default(),
         }
     }
 }
@@ -420,6 +449,16 @@ impl Shell {
         self.timeline.bar_point(&mut self.engine, issue)
     }
 
+    /// Where on screen the timeline's `n`th fold's marker was drawn last frame (#86), from 0.
+    pub fn fold_point(&mut self, n: usize) -> Option<egui::Pos2> {
+        self.timeline.fold_point(n)
+    }
+
+    /// Folds the timeline's quiet time or not (#86): the app's `--fold`.
+    pub fn fold_quiet(&mut self, on: bool) {
+        self.set_fold(on);
+    }
+
     /// Where on screen gate run `sub`'s bar on the timeline was drawn last frame (#84).
     pub fn run_point(&mut self, sub: &str) -> Option<egui::Pos2> {
         self.timeline.run_point(&mut self.engine, sub)
@@ -450,6 +489,7 @@ impl Shell {
             workers: self.ui.panes.workers,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
+            fold_quiet: self.ui.fold.on,
             live: self.live.on,
             recent: u8::try_from(self.recent().len()).unwrap_or(u8::MAX),
         }
@@ -503,6 +543,7 @@ impl Shell {
                 let collapse = if self.spec.collapse == collapse { Collapse::Off } else { collapse };
                 self.set_rows(SetRowsParams { collapse: Some(collapse), ..SetRowsParams::default() });
             }
+            MenuAction::FoldQuiet => self.set_fold(!self.ui.fold.on),
             MenuAction::Fit => self.timeline.fit(),
             MenuAction::Live => self.set_live(SetLiveParams { on: Some(!self.live.on), interval_seconds: None }),
         }
@@ -544,6 +585,15 @@ impl Shell {
             self.error = Some(error);
         }
         self.timeline.restore_pending(&mut self.engine);
+        // What the person chose, told again after a load or restore (#86).
+        self.timeline.fold_quiet(self.ui.fold.threshold());
+    }
+
+    /// Folds the timeline's quiet time or not (#86), as View ▸ Fold Quiet Time and the toolbar's
+    /// checkbox do.
+    fn set_fold(&mut self, on: bool) {
+        self.ui.fold.on = on;
+        self.timeline.fold_quiet(self.ui.fold.threshold());
     }
 
     fn set_rows(&mut self, params: SetRowsParams) {
@@ -904,9 +954,10 @@ impl Shell {
 
     /// The gates pane, its hours under the timeline's window when the timeline shows.
     fn gates_ui(&mut self, ui: &mut egui::Ui) {
-        let axis = if self.ui.panes.timeline { self.timeline.axis() } else { None };
+        // Through the timeline's folds (#86): an hour's column under the timeline's x for it.
+        let axis = if self.ui.panes.timeline { self.timeline.time_axis().cloned() } else { None };
         let t = self.factory.scene().map(|s| s.t).filter(|_| self.ui.panes.factory);
-        self.gates.ui(ui, axis, t);
+        self.gates.ui(ui, axis.as_ref(), t);
     }
 
     /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or
@@ -1010,6 +1061,13 @@ impl Shell {
             collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, "Collapse to the window: leave out rows with nothing in the visible window, as it settles");
             if spec != self.spec {
                 self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
+            }
+            let mut fold = self.ui.fold.on;
+            let minutes = self.ui.fold.after_seconds.unwrap_or(swarmception_domain::stats::QUIET) / 60;
+            let hover =
+                format!("Fold quiet time: each stretch where nothing happened for over {minutes} min drawn as a narrow marker; the ruler jumps over it");
+            if ui.checkbox(&mut fold, format!("{}  Fold quiet time", icons::FOLD)).on_hover_text(hover).changed() {
+                self.set_fold(fold);
             }
             // The zoom in / out / fit buttons are the timeline widget's own toolbar's (#35).
             if self.loading() {
@@ -1348,6 +1406,7 @@ mod tests {
                 workers: false,
                 grouping: Grouping::Flat,
                 collapse: Collapse::Off,
+                fold_quiet: false,
                 live: false,
                 recent: 0
             }
