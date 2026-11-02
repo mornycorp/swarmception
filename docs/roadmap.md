@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 6: automation through the window, incremental issues, a gates pane) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 7: workers compared, the panes share the window, opening a repository) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,14 +29,14 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **Swarm analytics panes** ([G9](gaps.md#g9-swarm-analytics-panes)): model and effort per worker
-2. **The panes share the window** ([G18](gaps.md#g18-the-panes-share-the-window))
-3. **The restored window and the Details' rows are always in view** ([G17](gaps.md#g17-the-restored-window-and-the-details-rows-are-always-in-view))
+1. **Collapse to the window** ([G6](gaps.md#g6-collapse-to-the-window))
+2. **Loose ends from M2 and M3** ([G19](gaps.md#g19-loose-ends-from-m2-and-m3))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 7: M3 built (G9 done), with the owner to pass M1–M3; focus G6, G19 |
 | 2026-11-02 | minor | Batch 6: G13, G15 done, G9 grew (a gates pane); focus moved to G9, G18, G17 |
 | 2026-11-02 | minor | Batch 5: M2 built (G4, G5, G16 done), with the owner to pass it; focus moved to G15, G9, G13 |
 | 2026-11-02 | minor | Batch 4: M2 mostly built (G2, G3 done); focus moved to G5, G4, G16 |

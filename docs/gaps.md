@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 6: automation through the window, incremental issues, a gates pane) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 7: workers compared, the panes share the window, opening a repository) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,11 +19,12 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42, #61 | 3–6 h |
-| 2 | [G18 The panes share the window](#g18-the-panes-share-the-window) | open | | 1–3 h |
-| 3 | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | open | | 1–2 h |
-| 4 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
-| 5 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 1 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 2 | [G19 Loose ends from M2 and M3](#g19-loose-ends-from-m2-and-m3) | open | | 2–4 h |
+| — | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | done | #18, #20, #22, #31–#33, #42, #61, #67 | |
+| — | [G18 The panes share the window](#g18-the-panes-share-the-window) | done | #68 | |
+| — | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | done | #68 | |
+| — | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | done | #69 | |
 | — | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | done | #60 | |
 | — | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | done | #62 | |
 | — | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | done | #53 | |
@@ -127,22 +128,35 @@ marked **Human:** with what is needed.
 
 ## G17 The restored window and the Details' rows are always in view
 
-- **Missing:** a window restored (G5) onto a monitor since unplugged can open off screen: only
-  its size and corner are checked. In by-worker grouping, a Details subject's bars inside a
-  collapsed group are highlighted but hidden, and nothing opens the group (G16); the scroll to a
-  subject's rows isn't tested. In the widget, a selected range's outline in a row scrolled under
-  the ruler can draw over it (swarm-timeline).
-- **Evidence:** `crates/ui/src/saved.rs`, `apps/app/src/main.rs`, `crates/ui/src/lib.rs`.
-- **Estimate:** 1–2 agent-hours.
+- **Done** (#68, PR #71): a window restored partly or wholly off the monitors moves onto the one
+  it overlaps most, or the nearest, and shrinks to fit (`WindowPlace::onto`; unit-tested, the
+  app's wiring checked by build only: no monitor to unplug). A Details subject in a collapsed
+  group opens that group (`details.get` names its groups), and the scroll reaches a merged
+  ticket's own rows, not only the merges row. The widget's selection outline over the ruler
+  didn't reproduce; nothing filed.
+- **Evidence:** `crates/ui/src/saved.rs`, `crates/ui/tests/layout.rs`.
 
 ## G18 The panes share the window
 
-- **Missing:** with the Timeline, Gates, Factory and Details panes all open (all on by default
-  now) the timeline keeps only about four rows on a laptop screen (#61's screenshots). The panes
-  want sensible default sizes for the window, a way to fold a band to its header, and the
-  timeline keeping a minimum of rows.
-- **Evidence:** `crates/ui/src/lib.rs`, `gates.rs`, `factory.rs`, `details.rs`.
-- **Estimate:** 1–3 agent-hours.
+- **Done** (#68, PR #71): `crates/ui/src/layout.rs`. The timeline keeps its chrome, the merges
+  rows and six rows under them (all if fewer); the bands under it (Gates, Factory) ask for a
+  height (dragged, or a default from the window) and give way first, in proportion to their
+  slack, coming back as the window grows. A band folds to its header from its title, Details to
+  a strip; the window decides until the person does (saved, `UiState` 6); `ui.set {folded}` and
+  `ui.inspect`'s `layout`. At 1440×900 with every pane open the timeline shows all 14 of
+  mc-engine's grouped rows (about 4 before).
+- **Left:** dragging one band taller at the timeline's minimum takes some of the other's room.
+- **Evidence:** `crates/ui/src/layout.rs`, `crates/ui/tests/layout.rs`; screenshots checked
+  2026-11-02.
+
+## G19 Loose ends from M2 and M3
+
+- **Missing:** small things the batches left: the workers' `ready` checks fail with no cause
+  (their notes say only `rc=1`: a swarm-core change to log the failing step); the Gates band
+  draws the ready lane's hours only in a tooltip; `gates.list` counts inferred gate runs that
+  `stats.get` doesn't; `ui.set` can't set the Workers pane's sort or window; MCP returns a
+  screenshot's path, not image content; off macOS, File ▸ Open… asks for a typed path.
+- **Estimate:** 2–4 agent-hours, part in swarm-core.
 
 ## G1 The ruler reads clock time
 
@@ -235,9 +249,16 @@ marked **Human:** with what is needed.
 
 ## G8 Opening a repository from the app
 
-- **Missing:** File › Open… (a folder picker) and recent repositories; today `--repo` or the
-  current directory.
-- **Estimate:** 1–2 agent-hours.
+- **Done** (#69, PR #72): File ▸ Open… (⌘O; AppKit's folder panel through `objc2-app-kit`,
+  already in the lock; a typed path elsewhere) and File ▸ Open Recent (10, app-wide, "(missing)"
+  marked, Clear Menu), in the window's and the macOS menu bar. `repo.open` checks a folder first
+  (5 s deadline) and refuses a missing folder, a file, a non-repository or one with no tracking
+  branch with a typed reason, the open repository staying; `repo.recent`, `repo.clearRecent`.
+  Switching saves the old repository's state and restores the new one's, Live included. Every
+  live check that brings events now refreshes the issues (537 ms incremental on mc-engine, off
+  the UI thread).
+- **Evidence:** `crates/engine/tests/open.rs`, `crates/ui/tests/open_repo.rs`,
+  `crates/engine/tests/live.rs`; screenshots checked 2026-11-02.
 
 ## G9 Swarm analytics panes
 
@@ -252,7 +273,7 @@ marked **Human:** with what is needed.
   - **Statistics** (#20, PR #21; #22, PR #23): `stats.get` and a strip in the Factory's header
     for the visible window; a click on an hour's bar zooms the timeline to it. Tickets landed per
     active hour (active = a worker on shift, less gaps over 15 min with no events): mc-engine 6.9
-    (100 in 14.42 h), swarm-timeline 10.6 (86 in 8.12 h) (measured 2026-11-02).
+    (105 in 15.2 h), swarm-timeline 10.6 (86 in 8.12 h) (measured 2026-11-02).
   - **Colours** (#15, PR #25; #34, PR #36; #40, PR #41): one colour per ticket from a fixed
     11-colour palette (scheme B, the owner's choice), shared by the timeline and the Factory, kept
     clear of the phase colours.
@@ -262,9 +283,14 @@ marked **Human:** with what is needed.
     ready checks, runs per hour, causes; hover lights a run's tickets, a click tells its story.
     mc-engine: gate 124 runs, 99.2% pass, median 64 s, busy 7.3%; ready 138, 85.3%.
     swarm-timeline: gate 83, 93.8%, median 28 s; ready 107, 96.3% (measured 2026-11-02).
-- **Left:** model and effort compared per worker; the ready lane's hours drawn (only in the
-  tooltip now); the ready checks' failures carry no cause (their notes say only `rc=1`: a
-  swarm-core change); `gates.list` counts inferred runs `stats.get` doesn't.
+  - **Workers** (#67, PR #70): `workers.compare` (per worker session, per model × effort and all
+    together: landed, landed per active hour, claim → merge, working time, send-backs by cause,
+    ready pass rate, abandoned, shift and active time; each figure with its sample count, thin
+    under 3) and View ▸ Workers, a floating window: sortable, a hover lights a worker's
+    tickets, a click tells their session. mc-engine: high 2.7 landed / active h (n=50, claim →
+    merge 26 min), medium 3.6 (n=29, 16 min), low 3.8 (n=17, 11 min) (measured 2026-11-02; the
+    efforts ran on different tickets, so a hint).
+- **Left:** [G19](#g19-loose-ends-from-m2-and-m3).
 - **Evidence:** `crates/domain/src/factory.rs`, `moments.rs`, `stats.rs`, `colours.rs`;
   `crates/ui/src/factory*.rs`.
 - **Estimate:** 3–6 agent-hours, in issues of their own.
@@ -273,6 +299,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 7: G8, G9, G17, G18 done (#67–#69); G19 new; M3 built |
 | 2026-11-02 | minor | Batch 6: G13, G15 done (#60, #62); G9 grew (#61, a gates pane); G18 new; focus G9, G18, G17 |
 | 2026-11-02 | minor | Batch 5: G4, G5, G16 done (#53–#55); G17 new; M2 built; focus G15, G9, G13 |
 | 2026-11-02 | minor | Batch 4: G2, G3, G12, G14 done (#46–#48, swarm-timeline#183, #188); G15, G16 new; focus G5, G4, G16 |

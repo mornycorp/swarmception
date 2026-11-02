@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 6: automation through the window, incremental issues, a gates pane) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 7: workers compared, the panes share the window, opening a repository) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -18,7 +18,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 |---|---|---|---|
 | Timeline (M1) | 8 | 0 | 0 |
 | Read and drive (M2) | 4 | 0 | 0 |
-| Understand (M3) | 5 | 0 | 1 |
+| Understand (M3) | 6 | 0 | 0 |
 
 ## Measured
 
@@ -27,7 +27,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | What | Number | Source |
 |---|---|---|
-| Tests | 275 passed | `cargo nextest run --workspace`, 2026-11-02 |
+| Tests | 314 passed | `cargo nextest run --workspace`, 2026-11-02 |
 | Landed per active hour | mc-engine 6.9, swarm-timeline 10.6 | `stats.get`, 2026-11-02 |
 | Rows for swarm-timeline's tickets | 12 flat | `rows.list`, 2026-10-31 |
 
@@ -61,13 +61,14 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | UN-5 | The Factory steps back and forth by key moment | done | `factory.moments`, `factory.step`; `crates/domain/src/moments.rs` tests; UI test by clicks and keys (#33) |
 | UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
 | UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61) |
-| UN-6 | Model and effort compared per worker | missing | [G9](gaps.md#g9-swarm-analytics-panes) |
+| UN-6 | Model and effort compared per worker | done | `workers.compare`; View ▸ Workers; `crates/domain/src/workers.rs`, `crates/ui/tests/workers_pane.rs`; screenshots checked 2026-11-02 (#67) |
 | UN-4 | Live watching | done | `live.set`, `live.get`; `crates/engine/tests/live.rs` (a remote that gains events), `crates/ui/tests/live_reload.rs`; mc-engine watched 2026-11-02 (#54) |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 7: UN-6 done; measured numbers |
 | 2026-11-02 | minor | Batch 6: RD-3, UN-3 done; UN-6 added; measured numbers |
 | 2026-11-02 | minor | Batch 5: RD-1 widened, RD-4 and UN-4 done; measured numbers |
 | 2026-11-02 | minor | Batch 4: the Read and drive area (RD-1–RD-4); TL-6, TL-7, UN-1 widened; measured numbers |
