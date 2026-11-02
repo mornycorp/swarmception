@@ -215,7 +215,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `Keeper`) and on quit. `StateStore::load` never fails: each section reads on its own, so a
   corrupt, another repository's, older or newer file keeps what it can, and the status bar says
   what was left out once (a click puts it away). The restored view comes back where it was, at
-  the new end as wide when it ended at the last event, the whole swarm when fitted;
+  the new end as wide when it ended at the last event, the whole swarm when fitted, the details'
+  subject not moving it, the playhead at its time (kept across the loads after, as #54's reload
+  keeps it), and Live as the person left it (`live.set`, only when they chose it);
   `ui.inspect`'s `saved` says where it is kept and was read from. `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).

@@ -8,13 +8,14 @@ use std::path::{Path, PathBuf};
 use swarmception_domain::Grouping;
 use swarmception_domain::details::Subject;
 use swarmception_engine::Github;
+use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams};
 use swarmception_model::Timestamp;
 use swarmception_ui::control::{Answer, Inspect};
 use swarmception_ui::saved::{self, Keeping, StateStore};
 use swarmception_ui::{MenuAction, Shell};
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::rulers_cmds::{Add, AddParams};
-use timeline_engine::state_cmds::Get;
+use timeline_engine::state_cmds::{Get, Set as SetState, SetParams as SetStateParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire};
 
 fn scratch(what: &str) -> PathBuf {
@@ -162,6 +163,10 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
         r#"{"window": {"start": "2026-10-31T03:10:00Z", "end": "2026-10-31T03:50:00Z"}, "at": "2026-10-31T04:30:00Z", "speed": "hour", "steps": "merges"}"#,
     );
     first.timeline().widget().session().call::<Add>(AddParams { domain: RulerDomainWire::Clock, origin: Some(OriginWire::Absolute) }).unwrap();
+    // The playhead on #7's submit, 03:30.
+    let submit = Timestamp::parse("2026-10-31T03:30:00Z").unwrap();
+    let item = first.engine().call::<PlaceAt>(PlaceAtParams { time: submit }).unwrap().item;
+    first.timeline().widget().session().call::<SetState>(SetStateParams { playhead: item, ..SetStateParams::default() }).unwrap();
     frame(&mut first, &ctx, 10.0);
     // Written once it has held still a second, with no quit.
     assert_eq!(first.inspect().saved.writes, settled, "not while it may still be moving");
@@ -178,17 +183,21 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     drop(first);
 
     // A new shell over the same file shows what the first did.
-    let (_ctx, mut second) = started(&dir, &store);
+    let (ctx2, mut second) = started(&dir, &store);
     let after = second.inspect();
     assert_eq!(after.state, before.state, "the panes and their sizes, the factory's settings and t, the details");
     assert!(!after.state.panes.factory && after.state.sizes.details.is_some());
     assert_eq!(after.state.details.subject, Some(Subject::Ticket { issue: 9 }));
     assert_eq!(second.menu_state().grouping, Grouping::Workers, "the rows by worker, through rows.set");
     assert_eq!(after.timeline.window, before.timeline.window, "the window it was left at, not moved to the details subject's bars");
-    assert_eq!(after.timeline.playhead, before.timeline.playhead);
+    assert_eq!((after.timeline.playhead, before.timeline.playhead), (Some(submit), Some(submit)), "the playhead, by its time");
     assert_eq!(rulers(&mut second), rulers_before, "the widget's own state, through state.save and state.restore");
     let file = store.file(&saved::repo_key(&dir)).display().to_string();
     assert_eq!((after.saved.keeping, after.saved.loaded_from.as_deref(), after.saved.note), (Keeping::Kept, Some(file.as_str()), None));
+    // New rows (a load clears the widget's playhead) keep it where it was.
+    second.run_menu(&ctx2, MenuAction::Collapse);
+    frame(&mut second, &ctx2, 0.0);
+    assert_eq!(second.inspect().timeline.playhead, Some(submit));
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(home).ok();
 }
