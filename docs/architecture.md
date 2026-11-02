@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the details of what is selected: `details.get` and the details pane, #47; automation, #46) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the factory's hover highlights a ticket's bars, swarm-timeline at 9bf2651, #48; the details pane, #47) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -144,9 +144,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   gating (#31). The tooltips are the scene's lines in colour (`factory_tip`: phases in their
   colours, passes green, failures red, durations emphasised, clock times quiet). Each ticket is
   the same chip at every station (its fill its colour, its border its phase, its size by station),
-  gliding and resizing as *t* moves; hovering one rings it everywhere and selects its bars on the
-  timeline (`timeline.ticketBars`, the widget's `ranges.toggle`; the person's own selection is put
-  aside on the first hover and put back exactly when the pointer leaves), clicking one traces its
+  gliding and resizing as *t* moves; hovering one rings it everywhere and highlights its bars on
+  the timeline (#48: `timeline.ticketBars`, the widget's `highlight.set` through
+  `Timeline::set_highlight`, cleared on leave; drawn as amber rings apart from the selection,
+  which a hover never touches; the pane tells the widget only when the ticket or the rows'
+  generation moves, so a reload under a hover highlights again), clicking one traces its
   journey; main's wall (#32) packs a brick per merge in rows from the ground up, each as wide as
   its ticket's claim → merge time against the median (no narrower than its number, no wider than
   four times the median's), a strip along its foot with its life's segments in
@@ -261,7 +263,8 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   `command` is an engine command's id (`engine.commands` lists them with their schemas); the
   window's own `ui.commands`, `ui.inspect` (`swarmception_ui::control::Inspect`: the shell's
   `UiState`, and what the panes show: the factory's *t*, where it came from, the key moment, what
-  each station drew last frame, the timeline's scale, window, playhead and selected ranges),
+  each station drew last frame, the timeline's scale, window, playhead, selected ranges and
+  highlighted ones),
   `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
   selected, a step, the window) and `ui.screenshot` (`{"path": "<file>.ppm"}`, taken a few frames
   later so a `ui.set` has settled, answered with its size once saved); or `timeline.<id>`, the
@@ -305,6 +308,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The factory's chip hover uses the widget's highlight (`Timeline::set_highlight`), not the selection; `ui.inspect`'s `highlighted`; swarm-timeline pinned at 9bf2651 (#48) |
 | 2026-11-02 | minor | The details of what is selected (#47): the domain's `details`, `details.get`, the details pane following the timeline's and the factory's selection; `--details` |
 | 2026-11-02 | minor | Automation (#46): `swarmception-automation`, the app's `--control`, `ui.inspect` / `ui.set` / `ui.screenshot`, the widget's commands as `timeline.<id>`, `swarmception-cli serve` and `mcp` |
 | 2026-11-01 | minor | A gate that never logged its stop ends at its coordinator's session's end or the next gate's start, with no result (#42); the factory's working border a warm white and in-the-gate a magenta, apart from scheme B |

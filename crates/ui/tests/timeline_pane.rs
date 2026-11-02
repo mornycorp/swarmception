@@ -13,6 +13,11 @@ use timeline_engine::wire::{OriginWire, RulerDomainWire};
 
 /// A repository in a temporary directory whose tracking branch holds one ticket.
 fn repo() -> PathBuf {
+    repo_with("2026-10-31T03:30:00Z")
+}
+
+/// As [`repo`], #7 submitted at `submit`: claimed at 03:01, working until then.
+fn repo_with(submit: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "swarmception-ui-{}-{}-{}",
         std::process::id(),
@@ -31,9 +36,10 @@ fn repo() -> PathBuf {
             "\n",
             r#"{"event":"claim","issue":7,"mr":8,"t":"2026-10-31T03:01:00Z"}"#,
             "\n",
-            r#"{"event":"submit","issue":7,"mr":8,"t":"2026-10-31T03:30:00Z"}"#,
-            "\n",
-        ),
+        )
+        .to_owned()
+            + &format!(r#"{{"event":"submit","issue":7,"mr":8,"t":"{submit}"}}"#)
+            + "\n",
     )
     .unwrap();
     let run = |args: &[&str]| {
@@ -112,6 +118,66 @@ fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_comma
     pane.sync(&engine).unwrap();
     assert_eq!(fixed(&mut pane), expected);
     assert_eq!(pane.widget().session().call::<GetToolbar>(NoParams {}).unwrap().show, wanted);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// The pane over a repository whose #7 was submitted at `submit`, and the engine under it.
+fn opened(submit: &str) -> (PathBuf, Session, TimelinePane) {
+    let dir = repo_with(submit);
+    let mut engine = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
+    let mut pane = TimelinePane::default();
+    pane.sync(&engine).unwrap();
+    (dir, engine, pane)
+}
+
+#[test]
+fn a_hovered_tickets_highlight_leaves_the_selection_and_comes_back_after_a_reload() {
+    use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
+    let (dir, mut engine, mut pane) = opened("2026-10-31T03:30:00Z");
+    let bars = engine.call::<TicketBars>(TicketParams { issue: 7 }).unwrap().bars;
+    let mut want = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    for bar in bars {
+        want.entry(bar.track).or_default().push(bar.range);
+    }
+    let before = pane.selection().unwrap();
+    assert!(pane.light_ticket(&mut engine, Some(7)), "the widget is told");
+    assert_eq!(pane.highlighted(), want);
+    assert!(!pane.light_ticket(&mut engine, Some(7)), "and not again while nothing moved");
+    assert_eq!(pane.selection().unwrap(), before, "the selection untouched");
+    // New rows: the widget's load cleared its highlight; the pane highlights the bars again.
+    engine.execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
+    pane.sync(&engine).unwrap();
+    assert!(pane.highlighted().is_empty(), "a load clears the widget's highlight");
+    assert!(pane.light_ticket(&mut engine, Some(7)));
+    assert!(!pane.highlighted().is_empty());
+    assert!(pane.light_ticket(&mut engine, None));
+    assert!(pane.highlighted().is_empty());
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn bar_labels_and_tooltips_read_durations_in_hours_and_minutes() {
+    use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
+    use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};
+    use timeline_engine::tracks_cmds::{HitParams, Layout, LayoutParams};
+    // #7 works from 03:01 to 04:59:30: 1 h 58 min 30 s, read as a person reads it.
+    let (dir, _engine, mut pane) = opened("2026-10-31T04:59:30Z");
+    let session = pane.widget().session();
+    session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
+    let layout = session.call::<Layout>(LayoutParams { pane: 600.0, scroll: 0.0 }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: None, label_char_width: Some(7.0) }).unwrap();
+    let labels: Vec<&str> = bars.tracks.iter().flat_map(|t| t.labels.iter().map(|l| l.text.as_str())).collect();
+    assert!(labels.iter().any(|l| l.ends_with("(1 h 58 min)")), "{labels:?}");
+    assert!(!labels.iter().any(|l| l.contains(",") && l.ends_with(" s)")), "no seconds by the thousand: {labels:?}");
+    // Its tooltip, over the bar's middle.
+    let (track, bar) = bars.tracks.iter().find_map(|t| t.ranges.iter().max_by(|a, b| a.width.total_cmp(&b.width)).map(|b| (t, b))).unwrap();
+    let row = layout.rows.iter().find(|r| r.key == track.key).unwrap();
+    let point = HitParams { pane: 600.0, scroll: 0.0, x: layout.label_width + bar.x + bar.width / 2.0, y: row.y + row.height / 2.0 };
+    let tip = session.call::<Tooltip>(point).unwrap();
+    let lines: Vec<String> = tip.lines.iter().map(|l| l.text()).collect();
+    assert!(lines.iter().any(|l| l.contains("1 h 58 min")), "{lines:?}");
     std::fs::remove_dir_all(dir).ok();
 }
 

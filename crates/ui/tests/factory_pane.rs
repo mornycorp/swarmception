@@ -241,8 +241,7 @@ fn one_chip_its_whole_life_sized_by_station() {
 }
 
 #[test]
-fn hovering_a_ticket_rings_it_everywhere_and_selects_its_bars() {
-    use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
+fn hovering_a_ticket_rings_it_everywhere_and_highlights_its_bars() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
     shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
@@ -260,16 +259,16 @@ fn hovering_a_ticket_rings_it_everywhere_and_selects_its_bars() {
     assert!(everywhere >= 1);
     assert_eq!(drawn.highlighted.iter().filter(|i| **i == 7).count(), everywhere, "ringed at every station it is drawn at");
     assert!(drawn.highlighted.iter().all(|i| *i == 7), "and nothing else");
-    let bars = shell.engine().call::<TicketBars>(TicketParams { issue: 7 }).unwrap();
-    let want: Vec<(String, usize)> = bars.bars.into_iter().map(|b| (b.track, b.range)).collect();
+    let want = ticket_bars(&mut shell, 7);
     assert!(!want.is_empty());
-    assert_eq!(selected(&mut shell), want, "its bars selected on the timeline");
+    assert_eq!(shell.timeline().highlighted(), want, "its bars highlighted on the timeline");
+    assert!(selected(&mut shell).is_empty(), "and none selected");
 
-    // The pointer leaves: nothing hovered, nothing selected.
+    // The pointer leaves: nothing hovered, nothing highlighted.
     frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
     frame(&mut shell, &ctx);
     assert_eq!(shell.factory().hovered(), None);
-    assert!(selected(&mut shell).is_empty());
+    assert!(shell.timeline().highlighted().is_empty());
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -330,6 +329,75 @@ fn a_merge_no_ticket_names_is_a_grey_brick_marked_with_its_pr() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Ticket `issue`'s bars (`timeline.ticketBars`), by row key, as the widget's highlight holds them.
+fn ticket_bars(shell: &mut Shell, issue: u64) -> std::collections::BTreeMap<String, Vec<usize>> {
+    let bars = shell.engine().call::<swarmception_engine::factory_cmds::TicketBars>(swarmception_engine::factory_cmds::TicketParams { issue }).unwrap().bars;
+    let mut by_row = std::collections::BTreeMap::<String, Vec<usize>>::new();
+    for bar in bars {
+        by_row.entry(bar.track).or_default().push(bar.range);
+    }
+    for ranges in by_row.values_mut() {
+        ranges.sort_unstable();
+        ranges.dedup();
+    }
+    by_row
+}
+
+#[test]
+fn hovering_a_chip_highlights_its_bars_and_never_touches_the_selection() {
+    use timeline_engine::ranges_cmds::{RangeParams, Toggle};
+    use timeline_engine::state_cmds::{Set, SetParams};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // The person's selection: a bar of #11 selected and focused, the playhead on item 0.
+    let eleven = ticket_bars(&mut shell, 11);
+    let (row, ranges) = eleven.iter().next().unwrap();
+    let session = shell.timeline().widget().session();
+    session.call::<Toggle>(RangeParams { track: row.clone(), range: ranges[0] }).unwrap();
+    session.call::<Set>(SetParams { playhead: Some(0), ..SetParams::default() }).unwrap();
+    let person = |shell: &mut Shell| {
+        let s = shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
+        (s.selection, s.selected_ranges, s.selected_instant, s.focus, s.playhead)
+    };
+    let before = person(&mut shell);
+    assert!(shell.timeline().highlighted().is_empty(), "nothing highlighted before a hover");
+
+    // Every frame of a hover on #7, then on #9, then away: the selection as it was, the
+    // highlight on the hovered ticket's bars, then on none.
+    let mut seen = Vec::new();
+    for (issue, at) in [(Some(7), chips(&shell, 7)[0].center()), (Some(9), chips(&shell, 9)[0].center())] {
+        frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(at)]);
+        for _ in 0..3 {
+            assert_eq!(person(&mut shell), before, "the selection untouched while #{issue:?} is hovered");
+            frame(&mut shell, &ctx);
+        }
+        assert_eq!(shell.factory().hovered(), issue);
+        let lit = shell.timeline().highlighted();
+        assert!(!lit.is_empty());
+        assert_eq!(lit, ticket_bars(&mut shell, issue.unwrap()), "the highlight follows #{issue:?}'s bars");
+        // The control channel's ui.inspect reports it beside the selection.
+        let inspect = shell.inspect();
+        assert_eq!((inspect.timeline.highlighted, inspect.timeline.selected.clone()), (lit.clone(), before.1.clone()));
+        seen.push(lit);
+    }
+    assert_ne!(seen[0], seen[1], "moving from ticket to ticket moves the highlight");
+    // The widget is told once per change, not every frame: the revision stands while the hover does.
+    let revision = shell.timeline().widget().session().revision();
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.timeline().widget().session().revision(), revision);
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().hovered(), None);
+    assert!(shell.timeline().highlighted().is_empty());
+    assert_eq!(person(&mut shell), before);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 #[test]
 fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     use timeline_engine::ranges_cmds::{RangeParams, Toggle};
@@ -346,7 +414,7 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
         frame(shell, &ctx);
         frame(shell, &ctx);
         assert_eq!(shell.factory().hovered(), Some(issue));
-        let lit = selected(shell);
+        let lit = shell.timeline().highlighted();
         // Straight on to another ticket, then away.
         let next = chips(shell, 11)[0].center();
         frame_with(shell, &ctx, vec![egui::Event::PointerMoved(next)]);
@@ -368,8 +436,9 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     }
     let before = shell.timeline().selection().unwrap();
     let lit = hover_and_leave(&mut shell, 7);
-    assert_ne!(lit, selected(&mut shell), "the hover showed #7's bars instead");
-    assert_eq!(shell.timeline().selection().unwrap(), before, "and put the person's selection back exactly");
+    assert_eq!(lit, ticket_bars(&mut shell, 7), "the hover highlighted #7's bars");
+    assert_eq!(shell.timeline().selection().unwrap(), before, "and left the person's selection exactly as it was");
+    assert!(shell.timeline().highlighted().is_empty(), "nothing highlighted once the pointer left");
 
     // A merge's span selected alone, the playhead moved to its start: put back too.
     let session = shell.timeline().widget().session();

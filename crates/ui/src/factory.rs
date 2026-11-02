@@ -19,7 +19,7 @@
 //! A ticket is the same chip at every station ([`crate::factory_chip`]), gliding and resizing
 //! between them when *t* moves, and what happened in the last stretch of *t* glows, fading as it
 //! gets older: the pane repaints only while a chip moves or play runs. Hovering a ticket rings it
-//! everywhere it is drawn (and the shell selects its bars on the timeline); clicking it traces
+//! everywhere it is drawn (and the shell highlights its bars on the timeline, #48); clicking it traces
 //! its journey through the stations (`FactoryView::ticket`), clicking it again or the floor
 //! stops.
 
