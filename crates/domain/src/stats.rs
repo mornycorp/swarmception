@@ -206,7 +206,7 @@ pub(crate) fn is_ready(sub: &Sub) -> bool {
 }
 
 /// An agent's sessions, less their pauses.
-fn shift(agent: &Agent) -> Vec<(i64, i64)> {
+pub(crate) fn shift(agent: &Agent) -> Vec<(i64, i64)> {
     agent
         .sessions
         .iter()
@@ -218,7 +218,7 @@ fn shift(agent: &Agent) -> Vec<(i64, i64)> {
 }
 
 /// Every gap between consecutive events longer than [`QUIET`].
-fn quiet_gaps(times: &[Timestamp]) -> Intervals {
+pub(crate) fn quiet_gaps(times: &[Timestamp]) -> Intervals {
     Intervals::of(times.windows(2).filter_map(|w| match w {
         [a, b] if b.0.saturating_sub(a.0) > QUIET => Some((a.0, b.0)),
         _ => None,
