@@ -85,3 +85,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #45","sub":"gate-45","t":"2026-11-01T12:37:13Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #49 (#46, automation); capacity=1 free=12.9; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-49","t":"2026-11-02T07:14:37Z"}
 {"event":"merge","issue":46,"mr":49,"sub":"gate-49","t":"2026-11-02T07:14:59Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #49","sub":"gate-49","t":"2026-11-02T07:15:05Z"}
