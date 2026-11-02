@@ -4,7 +4,10 @@
 //! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes <list>]
 //! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]`: `--repo` is any
 //! directory in a swarm's clone (the current directory if not given); `--panes` the panes shown
-//! (`timeline`, `factory`, or both, comma-separated); `--at` puts the factory at a UTC time
+//! (`timeline`, `factory`, `details`, comma-separated); `--details <what>` shows the details of
+//! a ticket (`47`, `#47`), a gate run (`gate:<sub>[@<time>]`), a session
+//! (`session:<instance>[@<time>]`) or a merge onto main (`merge:<commit>`), its pane open (#47);
+//! `--at` puts the factory at a UTC time
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline;
@@ -31,21 +34,50 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
 use swarmception_domain::Grouping;
+use swarmception_domain::details::Subject;
 use swarmception_domain::moments::Direction;
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
 use swarmception_model::Timestamp;
 
-/// `--panes`' list: `timeline`, `factory`, or both.
+/// `--panes`' list: `timeline`, `factory`, `details`.
 fn panes(list: &str) -> Result<swarmception_ui::Panes, String> {
-    let mut panes = swarmception_ui::Panes { timeline: false, factory: false };
+    let mut panes = swarmception_ui::Panes { timeline: false, factory: false, details: false };
     for name in list.split(',').map(str::trim) {
         match name {
             "timeline" => panes.timeline = true,
             "factory" => panes.factory = true,
-            other => return Err(format!("--panes takes timeline and factory, not {other}")),
+            "details" => panes.details = true,
+            other => return Err(format!("--panes takes timeline, factory and details, not {other}")),
         }
     }
     Ok(panes)
+}
+
+/// `--details`' subject: `47` or `#47` (or `ticket:47`), `gate:<sub>[@<time>]`,
+/// `session:<instance>[@<time>]`, `merge:<commit>`.
+fn subject(text: &str) -> Result<Subject, String> {
+    let at = |rest: &str| -> Result<(String, Option<Timestamp>), String> {
+        match rest.split_once('@') {
+            Some((name, t)) => {
+                Ok((name.to_owned(), Some(Timestamp::parse(t).ok_or_else(|| format!("--details' time is UTC, like 2026-10-31T13:20:00Z, not {t}"))?)))
+            }
+            None => Ok((rest.to_owned(), None)),
+        }
+    };
+    let (kind, rest) = text.split_once(':').unwrap_or(("ticket", text));
+    let subject = match kind {
+        "ticket" => Subject::Ticket { issue: issue(rest)? },
+        "gate" => at(rest).map(|(sub, at)| Subject::Gate { sub, at })?,
+        "session" => at(rest).map(|(instance, at)| Subject::Session { instance, at })?,
+        "merge" => Subject::Merge { commit: rest.to_owned() },
+        other => return Err(format!("--details takes a ticket, gate:, session: or merge:, not {other}:")),
+    };
+    match &subject {
+        Subject::Gate { sub: name, .. } | Subject::Session { instance: name, .. } | Subject::Merge { commit: name } if name.is_empty() => {
+            Err(format!("--details {kind}: needs a name"))
+        }
+        _ => Ok(subject),
+    }
 }
 
 /// An issue number: `18` or `#18`.
@@ -53,7 +85,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -63,6 +95,7 @@ struct Options {
     repo: Option<PathBuf>,
     rows: SetRowsParams,
     panes: Option<swarmception_ui::Panes>,
+    details: Option<Subject>,
     at: Option<Timestamp>,
     trace: Option<u64>,
     hover: Option<u64>,
@@ -94,6 +127,7 @@ impl Options {
                 }
                 "--collapse" => options.rows.collapse = Some(true),
                 "--panes" => options.panes = Some(panes(&value()?)?),
+                "--details" => options.details = Some(subject(&value()?)?),
                 "--at" => {
                     let text = value()?;
                     options.at = Some(Timestamp::parse(&text).ok_or_else(|| format!("--at takes a UTC time like 2026-10-31T13:20:00Z, not {text}"))?);
@@ -218,6 +252,11 @@ fn set_up(shell: &mut swarmception_ui::Shell, options: &Options) -> Result<(), S
     }
     if let Some(at) = options.at {
         shell.set_factory_at(at);
+    }
+    if let Some(subject) = &options.details {
+        let state = shell.ui_state();
+        shell.set_ui_state(swarmception_ui::UiState { panes: swarmception_ui::Panes { details: true, ..state.panes }, ..state });
+        shell.select(subject.clone());
     }
     if let Some(ticket) = options.trace {
         let state = shell.ui_state();
@@ -346,7 +385,7 @@ mod tests {
         assert!(parse(&["--size", "10", "10"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
         let options = parse(&["--panes", "factory", "--at", "2026-10-31T13:20:00Z"]).unwrap();
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true }));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false }));
         assert_eq!(options.at.map(|t| t.to_string()).as_deref(), Some("2026-10-31T13:20:00Z"));
         assert!(parse(&["--panes", "timeline,gantt"]).is_err());
         assert!(parse(&["--at", "teatime"]).is_err());
@@ -366,6 +405,20 @@ mod tests {
         assert_eq!(parse(&["--control", "--dark"]).unwrap().control, Some(0));
         assert!(parse(&["--control", "port"]).is_err());
         assert!(parse(&["--control", "70000"]).is_err());
+
+        let details = |text: &str| parse(&["--details", text]).map(|o| o.details);
+        assert_eq!(details("#47"), Ok(Some(Subject::Ticket { issue: 47 })));
+        assert_eq!(details("ticket:47"), Ok(Some(Subject::Ticket { issue: 47 })));
+        assert_eq!(details("gate:gate-pr50"), Ok(Some(Subject::Gate { sub: "gate-pr50".into(), at: None })));
+        assert_eq!(
+            details("session:mini-aa1111@2026-10-31T13:20:00Z"),
+            Ok(Some(Subject::Session { instance: "mini-aa1111".into(), at: Timestamp::parse("2026-10-31T13:20:00Z") }))
+        );
+        assert_eq!(details("merge:be043bc0"), Ok(Some(Subject::Merge { commit: "be043bc0".into() })));
+        for bad in ["gate:", "gate:x@teatime", "nope:1", "seven"] {
+            assert!(details(bad).is_err(), "{bad}");
+        }
+        assert_eq!(parse(&["--panes", "details"]).unwrap().panes, Some(swarmception_ui::Panes { timeline: false, factory: false, details: true }));
 
         assert_eq!(parse(&["--help"]), Err(String::new()));
     }

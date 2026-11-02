@@ -31,6 +31,8 @@ pub struct Drawn {
     pub gate: Vec<u64>,
     /// The runs going on, then the runs before *t*.
     pub runs: Vec<String>,
+    /// A gate run clicked this frame, its sub-agent's id and its start: the details pane shows it.
+    pub run_clicked: Option<(String, swarmception_model::Timestamp)>,
     pub blocks: usize,
     pub done: Vec<u64>,
     /// How many crates a station had no room for, all told.
@@ -709,7 +711,11 @@ impl Floor<'_> {
         }
         let width = age.left() - line.left() - 24.0;
         pieces(&self.painter, line.left_center() + vec2(19.0, 0.0), Align2::LEFT_CENTER, &what, font, width);
-        self.tooltip(line, ("run", n, &run.sub), &run.tooltip);
+        let id = self.ui.scope_id().with(("factory", ("run", n, &run.sub)));
+        let response = factory_tip::show(self.ui.interact(line, id, egui::Sense::click()), &run.tooltip);
+        if response.clicked() {
+            self.drawn.run_clicked = Some((run.sub.clone(), run.start));
+        }
         self.drawn.runs.push(run.sub.clone());
     }
 

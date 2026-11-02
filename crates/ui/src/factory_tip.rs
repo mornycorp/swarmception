@@ -147,7 +147,7 @@ pub fn tones(line: &str) -> Vec<(&str, Tone)> {
 }
 
 /// A phase's colour, darkened on a light theme so it reads on a light tooltip.
-fn legible(colour: Color32, visuals: &egui::Visuals) -> Color32 {
+pub(crate) fn legible(colour: Color32, visuals: &egui::Visuals) -> Color32 {
     if visuals.dark_mode { colour } else { colour.lerp_to_gamma(Color32::BLACK, 0.35) }
 }
 

@@ -114,6 +114,10 @@ fn frame_with(shell: &mut Shell, ctx: &egui::Context, events: Vec<egui::Event>) 
 fn loaded(dir: &std::path::Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
+    // The factory's layout at the window's full width: the details pane (#47) closed.
+    let mut state = shell.ui_state();
+    state.panes.details = false;
+    shell.set_ui_state(state);
     for _ in 0..500 {
         frame(&mut shell, &ctx);
         if shell.has_timeline() {

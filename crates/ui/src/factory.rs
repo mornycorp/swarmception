@@ -435,7 +435,7 @@ impl FactoryPane {
     /// Draws the pane: its header (the clock, play, speed, follow) and the floor.
     pub fn ui(&mut self, ui: &mut egui::Ui, view: &mut FactoryView, status: &StatusResult) {
         self.keys(ui, ui.max_rect());
-        ui.horizontal(|ui| self.header(ui, view));
+        ui.horizontal_wrapped(|ui| self.header(ui, view));
         if let Some(t) = self.scene.as_ref().map(|s| s.t) {
             self.strip.ui(ui, t);
         }
@@ -450,7 +450,8 @@ impl FactoryPane {
             self.rect = None;
             return;
         };
-        let rect = ui.available_rect_before_wrap();
+        // Within what shows: a header or strip wider than the pane would widen the floor past its edge.
+        let rect = ui.available_rect_before_wrap().intersect(ui.clip_rect());
         ui.allocate_rect(rect, egui::Sense::hover());
         self.rect = Some(rect);
         let marks = Marks { hovered: self.hovered, traced: view.ticket };

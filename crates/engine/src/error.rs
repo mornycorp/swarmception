@@ -46,6 +46,8 @@ pub enum Refusal {
     BadTime { text: String },
     /// A window that ends before it starts.
     BackwardWindow { start: swarmception_model::Timestamp, end: swarmception_model::Timestamp },
+    /// What was asked for isn't in the swarm: no such ticket, gate run, session or merge.
+    NotFound { what: String },
 }
 
 impl fmt::Display for Refusal {
@@ -55,6 +57,7 @@ impl fmt::Display for Refusal {
             Self::Source { message } | Self::Timeline { message } => write!(f, "{message}"),
             Self::BadTime { text } => write!(f, "{text:?} is not a UTC time (YYYY-MM-DDTHH:MM:SSZ) or seconds since the epoch"),
             Self::BackwardWindow { start, end } => write!(f, "the window ends ({end}) before it starts ({start})"),
+            Self::NotFound { what } => write!(f, "the swarm has no {what}"),
         }
     }
 }

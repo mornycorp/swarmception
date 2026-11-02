@@ -1,16 +1,18 @@
 //! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View, as data in
 //! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the
-//! timeline, and under it the factory) and the status bar, over the engine's commands.
+//! timeline, under it the factory, and beside them the details of what is selected) and the
+//! status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
 //! timeline widget's (`view.fit`; the zoom buttons are the widget's toolbar's since #35, which
-//! shows only [`TIMELINE_TOOLBAR`]); what the shell keeps of its own, the panes shown
-//! and the factory's time, is [`UiState`], plain serde data.
+//! shows only [`TIMELINE_TOOLBAR`]); what the shell keeps of its own, the panes shown, the
+//! factory's time and what the details are of, is [`UiState`], plain serde data.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
 pub mod control;
+mod details;
 mod factory;
 mod factory_chip;
 mod factory_paint;
@@ -29,12 +31,15 @@ use swarmception_domain::timeline::Link;
 use swarmception_domain::{Grouping, RowsSpec};
 use swarmception_engine::{Github, Session};
 
+use swarmception_domain::details::Subject;
+use swarmception_engine::details_cmds::{DetailsParams, Get as GetDetails};
 use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::factory_cmds::TicketParams;
 use swarmception_engine::issues_cmds::Urls;
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
 
+pub use details::{DetailsDrawn, DetailsPane, DetailsView, params as details_params};
 pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed, Steps};
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
@@ -42,8 +47,9 @@ pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use menu::{MenuAction, MenuState};
 pub use timeline::{Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane};
 
-/// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time.
-pub const UI_STATE_VERSION: u32 = 2;
+/// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
+/// details pane and what it is about.
+pub const UI_STATE_VERSION: u32 = 3;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -52,26 +58,30 @@ pub struct Panes {
     pub timeline: bool,
     /// The factory, under the timeline when both show.
     pub factory: bool,
+    /// The details of what is selected, beside the others (#47).
+    pub details: bool,
 }
 
 impl Default for Panes {
     fn default() -> Self {
-        Self { timeline: true, factory: true }
+        Self { timeline: true, factory: true, details: true }
     }
 }
 
 /// What the shell keeps between frames: plain data.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct UiState {
     pub version: u32,
     pub panes: Panes,
     pub factory: FactoryView,
+    /// What the details pane tells the story of.
+    pub details: DetailsView,
 }
 
 impl Default for UiState {
     fn default() -> Self {
-        Self { version: UI_STATE_VERSION, panes: Panes::default(), factory: FactoryView::default() }
+        Self { version: UI_STATE_VERSION, panes: Panes::default(), factory: FactoryView::default(), details: DetailsView::default() }
     }
 }
 
@@ -80,6 +90,9 @@ pub struct Shell {
     engine: Session,
     timeline: TimelinePane,
     factory: FactoryPane,
+    details: DetailsPane,
+    /// What the details followed last: the timeline's chosen bar, the factory's traced ticket.
+    followed: (Option<(String, usize)>, Option<u64>),
     /// A time put on the factory (`--at`) that the timeline's playhead goes to once it has data.
     playhead_to: Option<swarmception_model::Timestamp>,
     /// The ticket whose bars the timeline has selected because it is hovered in the factory.
@@ -116,6 +129,8 @@ impl Shell {
             engine,
             timeline: TimelinePane::default(),
             factory: FactoryPane::default(),
+            details: DetailsPane::default(),
+            followed: (None, None),
             playhead_to: None,
             lit: None,
             ui: UiState::default(),
@@ -135,12 +150,23 @@ impl Shell {
 
     /// The shell's own state.
     #[must_use]
-    pub const fn ui_state(&self) -> UiState {
-        self.ui
+    pub fn ui_state(&self) -> UiState {
+        self.ui.clone()
     }
 
-    pub const fn set_ui_state(&mut self, state: UiState) {
+    pub fn set_ui_state(&mut self, state: UiState) {
         self.ui = state;
+    }
+
+    /// The details pane, to read what it shows.
+    #[must_use]
+    pub const fn details(&self) -> &DetailsPane {
+        &self.details
+    }
+
+    /// Shows the details of `subject`, as a selection does; ← goes back to what was before.
+    pub fn select(&mut self, subject: swarmception_domain::details::Subject) {
+        self.details.select(&mut self.ui.details, subject);
     }
 
     /// The engine's session, to run commands on.
@@ -205,6 +231,7 @@ impl Shell {
             can_fit: self.timeline.has_data(),
             timeline: self.ui.panes.timeline,
             factory: self.ui.panes.factory,
+            details: self.ui.panes.details,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
         }
@@ -245,6 +272,7 @@ impl Shell {
             }
             MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
             MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
+            MenuAction::Details => self.ui.panes.details = !self.ui.panes.details,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
             MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
@@ -308,6 +336,15 @@ impl Shell {
         if self.ui.panes.factory {
             self.step_factory(ui.ctx());
         }
+        self.details.sync(&mut self.engine, &self.ui.details);
+        if self.ui.panes.details {
+            let width = ui.available_width();
+            egui::Panel::right("details")
+                .resizable(true)
+                .default_size((width * 0.3).clamp(300.0, 460.0))
+                .size_range(220.0..=(width * 0.6).max(220.0))
+                .show(ui, |ui| self.details.ui(ui, &self.ui.details));
+        }
         egui::CentralPanel::default().show(ui, |ui| match (self.ui.panes.timeline, self.ui.panes.factory) {
             (true, true) => {
                 let height = ui.available_height();
@@ -321,7 +358,7 @@ impl Shell {
             (true, false) => self.timeline.ui(ui, &self.status),
             (false, true) => self.factory.ui(ui, &mut self.ui.factory, &self.status),
             (false, false) => {
-                ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline or View ▸ Factory shows one."));
+                ui.centered_and_justified(|ui| ui.weak("Neither the timeline nor the factory is shown: View ▸ Timeline or View ▸ Factory shows one."));
             }
         });
         self.light_timeline(ui.ctx());
@@ -331,8 +368,55 @@ impl Shell {
         }
         let mut links = self.timeline.take_links();
         links.extend(self.factory.drawn().open);
+        links.extend(self.details.drawn().open.filter(|_| self.ui.panes.details));
         for link in links {
             self.open_link(ui.ctx(), link);
+        }
+        self.follow(ui.ctx());
+    }
+
+    /// What the details are of, following the selection (#47): a bar newly chosen on the
+    /// timeline (the person's own selection, not a factory hover's), a ticket newly traced or a
+    /// gate run clicked in the factory, or a line, name or chip clicked in the pane, or its ←.
+    fn follow(&mut self, ctx: &egui::Context) {
+        let before = self.ui.details.subject.clone();
+        self.follow_timeline();
+        let traced = self.ui.factory.ticket;
+        if traced != self.followed.1 {
+            self.followed.1 = traced;
+            if let Some(issue) = traced {
+                self.select(Subject::Ticket { issue });
+            }
+        }
+        if let Some((sub, at)) = self.factory.drawn().run_clicked.clone().filter(|_| self.ui.panes.factory) {
+            self.select(Subject::Gate { sub, at: Some(at) });
+        }
+        if self.ui.panes.details {
+            let drawn = self.details.drawn().clone();
+            if drawn.back {
+                self.details.back(&mut self.ui.details);
+            } else if let Some(subject) = drawn.chosen {
+                self.select(subject);
+            }
+        }
+        if self.ui.details.subject != before {
+            self.details.sync(&mut self.engine, &self.ui.details);
+            ctx.request_repaint();
+        }
+    }
+
+    /// A bar newly chosen on the timeline: the details of what `details.get` reads it as (its
+    /// ticket, or its merge onto main).
+    fn follow_timeline(&mut self) {
+        let bar = self.timeline.chosen_bar();
+        if bar == self.followed.0 {
+            return;
+        }
+        self.followed.0.clone_from(&bar);
+        let Some((track, range)) = bar else { return };
+        let params = DetailsParams { track: Some(track), range: Some(range), ..DetailsParams::default() };
+        if let Ok(found) = self.engine.call::<GetDetails>(params) {
+            self.select(found.subject);
         }
     }
 
@@ -520,7 +604,7 @@ mod tests {
 
     #[test]
     fn ui_state_reads_back_and_defaults() {
-        let state = UiState { panes: Panes { timeline: false, factory: true }, ..UiState::default() };
+        let state = UiState { panes: Panes { timeline: false, factory: true, details: false }, ..UiState::default() };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<UiState>(&text).unwrap(), state);
         assert_eq!(serde_json::from_str::<UiState>("{}").unwrap(), UiState::default());
@@ -528,6 +612,9 @@ mod tests {
         // Version 1, before the factory, still reads, with the factory's defaults.
         let old: UiState = serde_json::from_str(r#"{"version":1,"panes":{"timeline":false}}"#).unwrap();
         assert_eq!((old.panes.timeline, old.panes.factory, old.factory), (false, true, FactoryView::default()));
+        assert!(old.panes.details && old.details.subject.is_none(), "the details pane, with nothing selected");
+        let selected: UiState = serde_json::from_str(r#"{"version":3,"details":{"subject":{"ticket":{"issue":47}}}}"#).unwrap();
+        assert_eq!(selected.details.subject, Some(Subject::Ticket { issue: 47 }));
     }
 
     #[test]
@@ -535,7 +622,10 @@ mod tests {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
         let state = shell.menu_state();
-        assert_eq!(state, MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, grouping: Grouping::Flat, collapse: false });
+        assert_eq!(
+            state,
+            MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, details: true, grouping: Grouping::Flat, collapse: false }
+        );
 
         shell.run_menu(&ctx, MenuAction::Timeline);
         shell.run_menu(&ctx, MenuAction::Factory);
