@@ -1,7 +1,7 @@
 //! Swarmception, the desktop app: a swarm's tickets on a timeline, read from its repository's
 //! `tracking` branch and `main`.
 //!
-//! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes <list>]
+//! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes <list>]
 //! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>]`: `--repo` is any
 //! directory in a swarm's clone (the current directory if not given); `--panes` the panes shown
 //! (`timeline`, `factory`, `details`, `gates`, `workers`, comma-separated); `--details <what>` shows the details of
@@ -55,7 +55,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use eframe::egui;
-use swarmception_domain::Grouping;
+use swarmception_domain::{Collapse, Grouping};
 use swarmception_domain::details::Subject;
 use swarmception_domain::moments::Direction;
 use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams};
@@ -128,7 +128,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -189,7 +189,19 @@ impl Options {
                         other => return Err(format!("--grouping takes flat or workers, not {other}")),
                     });
                 }
-                "--collapse" => options.rows.collapse = Some(true),
+                "--collapse" => {
+                    // `--collapse` alone leaves out the empty rows; a mode may follow (#74).
+                    let mode = args.peek().and_then(|next| match next.as_str() {
+                        "off" => Some(Collapse::Off),
+                        "empty" => Some(Collapse::Empty),
+                        "window" => Some(Collapse::Window),
+                        _ => None,
+                    });
+                    if mode.is_some() {
+                        args.next();
+                    }
+                    options.rows.collapse = Some(mode.unwrap_or(Collapse::Empty));
+                }
                 "--panes" => options.panes = Some(panes(&value()?)?),
                 "--details" => options.details = Some(subject(&value()?)?),
                 "--at" => {
@@ -629,8 +641,12 @@ mod tests {
     fn options_parse() {
         let options = parse(&["--repo", "../swarm-timeline", "--grouping", "workers", "--collapse", "--dark"]).unwrap();
         assert_eq!(options.repo, Some(PathBuf::from("../swarm-timeline")));
-        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(true) });
+        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(Collapse::Empty) });
         assert_eq!(options.theme, Some(egui::Theme::Dark));
+        // A mode may follow --collapse (#74).
+        assert_eq!(parse(&["--collapse", "window", "--dark"]).unwrap().rows.collapse, Some(Collapse::Window));
+        assert_eq!(parse(&["--collapse", "off"]).unwrap().rows.collapse, Some(Collapse::Off));
+        assert_eq!(parse(&["--collapse"]).unwrap().rows.collapse, Some(Collapse::Empty));
         assert!(parse(&["--repo"]).is_err());
         assert!(parse(&["--grouping", "tree"]).is_err());
         assert!(parse(&["--size", "10", "10"]).is_err());

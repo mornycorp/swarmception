@@ -201,7 +201,7 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     let file = store.file(&saved::repo_key(&dir)).display().to_string();
     assert_eq!((after.saved.keeping, after.saved.loaded_from.as_deref(), after.saved.note), (Keeping::Kept, Some(file.as_str()), None));
     // New rows (a load clears the widget's playhead) keep it where it was.
-    second.run_menu(&ctx2, MenuAction::Collapse);
+    second.run_menu(&ctx2, MenuAction::Collapse(swarmception_domain::Collapse::Empty));
     frame(&mut second, &ctx2, 0.0);
     assert_eq!(second.inspect().timeline.playhead, Some(submit));
     std::fs::remove_dir_all(dir).ok();

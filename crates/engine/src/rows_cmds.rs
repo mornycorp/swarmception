@@ -1,15 +1,18 @@
-//! The rows: grouped how (the tickets flat, or by worker), collapsed or not; the rows
-//! themselves; and the clock time at a position on the timeline's axis.
+//! The rows: grouped how (the tickets flat, or by worker), collapsed how; the rows
+//! themselves, and those a window leaves out (#74); and the clock time at a position on the
+//! timeline's axis.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::{Grouping, Node, RowsSpec};
+use swarmception_domain::rows::left_out;
+use swarmception_domain::{Collapse, Grouping, Node, RowsSpec};
 use swarmception_model::Timestamp;
 
 use crate::command::Command;
 use crate::engine_cmds::NoParams;
-use crate::error::{EngineError, Unavailable};
+use crate::error::{EngineError, Refusal, Unavailable};
 use crate::session::Session;
+use crate::stats_cmds::At;
 
 /// `rows.get`: the rows asked for.
 pub struct Get;
@@ -31,11 +34,14 @@ impl Command for Get {
 #[serde(deny_unknown_fields)]
 pub struct SetParams {
     pub grouping: Option<Grouping>,
-    pub collapse: Option<bool>,
+    /// `off`, `empty` or `window` (#74); `true` and `false` still read, as `empty` and `off`.
+    pub collapse: Option<Collapse>,
 }
 
-/// `rows.set`: the tickets flat or by worker, collapsed or not. Bars always carry their
-/// tickets' titles: `titles` is no field of it (#34), so `{"titles":false}` is refused.
+/// `rows.set`: the tickets flat or by worker, collapsed how. Bars always carry their tickets'
+/// titles: `titles` is no field of it (#34), so `{"titles":false}` is refused. Collapsed to the
+/// window, the rows are those with events, as `empty`'s; `rows.window` says which of them a
+/// window leaves out.
 pub struct Set;
 
 impl Command for Set {
@@ -74,6 +80,78 @@ impl Command for List {
 
     fn run(session: &mut Session, _params: NoParams) -> Result<ListResult, EngineError> {
         Ok(ListResult { spec: session.spec, rows: session.rows.clone() })
+    }
+}
+
+/// `rows.window`'s params: the window, and the rows it keeps whatever it holds.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct WindowParams {
+    /// The window's start and end, each in seconds since the epoch or `YYYY-MM-DDTHH:MM:SSZ`;
+    /// with neither, there is no window and nothing is left out.
+    pub start: Option<At>,
+    pub end: Option<At>,
+    /// Rows kept however empty the window leaves them, by key: those holding the selection, so
+    /// it isn't lost.
+    #[serde(default)]
+    pub keep: Vec<String>,
+}
+
+/// The rows a window shows and those it leaves out.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowResult {
+    pub collapse: Collapse,
+    /// The window asked about, when there is one.
+    pub start: Option<Timestamp>,
+    pub end: Option<Timestamp>,
+    /// Every row and group the window shows, by key, top to bottom (a group before its rows).
+    pub shown: Vec<String>,
+    /// The rows and groups it leaves out, by key: a group with nothing in the window in place
+    /// of its rows. None unless the rows are collapsed to the window.
+    pub left_out: Vec<String>,
+}
+
+/// `rows.window` (#74): which of the rows (`rows.list`'s) a window from `start` to `end`
+/// leaves out, collapsed to the window: a row none of whose bars overlaps it, unless `keep`
+/// names it, and a group with no row left. What the timeline pane hides once its window settles,
+/// so its rows are `shown`. Any other collapse leaves out nothing.
+pub struct WindowRows;
+
+impl Command for WindowRows {
+    const ID: &'static str = "rows.window";
+    const LABEL: &'static str = "Rows in a Window";
+    const READ_ONLY: bool = true;
+    type Params = WindowParams;
+    type Result = WindowResult;
+
+    fn run(session: &mut Session, params: WindowParams) -> Result<WindowResult, EngineError> {
+        let start = params.start.as_ref().map(At::time).transpose()?;
+        let end = params.end.as_ref().map(At::time).transpose()?;
+        let window = match (start, end) {
+            (Some(start), Some(end)) if end < start => return Err(Refusal::BackwardWindow { start, end }.into()),
+            (Some(start), Some(end)) => Some((start, end)),
+            (None, None) => None,
+            _ => return Err(EngineError::BadParams { message: "rows.window takes both start and end, or neither".into() }),
+        };
+        let keep: Vec<&str> = params.keep.iter().map(String::as_str).collect();
+        let left_out = match window {
+            Some((start, end)) if session.spec.collapse == Collapse::Window => left_out(&session.rows, start, end, &keep),
+            _ => Vec::new(),
+        };
+        let mut shown = Vec::new();
+        shown_keys(&session.rows, &left_out, &mut shown);
+        Ok(WindowResult { collapse: session.spec.collapse, start, end, shown, left_out })
+    }
+}
+
+/// The keys of `rows` that `left_out` doesn't name, top to bottom, a group's before its rows'.
+fn shown_keys(rows: &[Node], left_out: &[String], shown: &mut Vec<String>) {
+    for node in rows.iter().filter(|node| !left_out.iter().any(|key| key == node.key())) {
+        shown.push(node.key().to_owned());
+        if let Node::Group { children, .. } = node {
+            shown_keys(children, left_out, shown);
+        }
     }
 }
 

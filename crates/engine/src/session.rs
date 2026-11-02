@@ -372,7 +372,7 @@ impl Session {
         }
         self.rows = self.loaded.as_ref().map(|l| rows_with(&l.activity, &l.tracking.merges, self.spec, &self.issues.issues)).unwrap_or_default();
 
-        self.built = match build(&self.rows, !self.spec.collapse) {
+        self.built = match build(&self.rows, !self.spec.collapse.is_on()) {
             Ok(built) => Some(built),
             Err(error) => {
                 self.error = Some(format!("the timeline refused the rows: {error}"));

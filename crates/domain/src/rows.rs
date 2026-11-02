@@ -35,15 +35,77 @@ pub enum Grouping {
     Workers,
 }
 
-/// Grouped how, collapsed or not. A ticket's bars are always labelled with its title
+/// Which rows Collapse leaves out (#74).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase", from = "CollapseWire")]
+pub enum Collapse {
+    /// Every row, empty or not.
+    #[default]
+    Off,
+    /// Rows with no events at all, and groups left with no rows: the rows stay put while panning.
+    Empty,
+    /// Rows with nothing in the timeline's visible window as well ([`left_out`]), and groups
+    /// left with no rows; the rows follow a pan and a zoom once the window settles.
+    Window,
+}
+
+/// What `collapse` reads: a mode's name, or the bool it was before #74 (`true` is
+/// [`Collapse::Empty`]), so an older saved state or script keeps its choice.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum CollapseWire {
+    /// Before #74: `true` leaves out the empty rows.
+    Old(bool),
+    Mode(CollapseMode),
+}
+
+/// [`Collapse`]'s names.
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum CollapseMode {
+    Off,
+    Empty,
+    Window,
+}
+
+impl From<CollapseWire> for Collapse {
+    fn from(wire: CollapseWire) -> Self {
+        match wire {
+            CollapseWire::Old(false) | CollapseWire::Mode(CollapseMode::Off) => Self::Off,
+            CollapseWire::Old(true) | CollapseWire::Mode(CollapseMode::Empty) => Self::Empty,
+            CollapseWire::Mode(CollapseMode::Window) => Self::Window,
+        }
+    }
+}
+
+impl JsonSchema for Collapse {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Collapse".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        CollapseWire::json_schema(generator)
+    }
+}
+
+impl Collapse {
+    /// Whether it leaves out rows at all.
+    #[must_use]
+    pub const fn is_on(self) -> bool {
+        !matches!(self, Self::Off)
+    }
+}
+
+/// Grouped how, collapsed how. A ticket's bars are always labelled with its title
 /// (`#58 Architecture review`) when GitHub's issues have it, else with its phase (`#58 working`):
 /// no option (#34).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct RowsSpec {
     pub grouping: Grouping,
-    /// Rows with nothing in them, and groups left with no rows, are left out.
-    pub collapse: bool,
+    /// Which rows are left out: none, those with no events, or those with nothing in the
+    /// visible window (#74). `true` and `false` still read, as `empty` and `off`.
+    pub collapse: Collapse,
 }
 
 /// What a bar shows; its colour follows from this and its ticket ([`style_colour`]).
@@ -220,7 +282,62 @@ pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issu
         Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY, text)),
         Grouping::Workers => rows.extend(by_workers(activity, &tickets, text)),
     }
-    if spec.collapse { collapsed(rows) } else { rows }
+    if spec.collapse.is_on() { collapsed(rows) } else { rows }
+}
+
+/// Whether `bar` has anything between `start` and `end`, its ends included.
+fn overlaps(bar: &Bar, start: Timestamp, end: Timestamp) -> bool {
+    bar.start <= end && bar.end >= start
+}
+
+/// The keys of the rows of `rows` a window from `start` to `end` leaves out (#74, Collapse to
+/// the window): a row of bars none of which overlaps the window, unless its key is in `keep`
+/// (a row holding the selection keeps it in view), and a group none of whose rows is left in,
+/// in place of its rows (it folds away whole). In the tree's order, each group after the rows
+/// under it. The keys stay those of `rows`: what the window leaves out comes back as it was.
+#[must_use]
+pub fn left_out(rows: &[Node], start: Timestamp, end: Timestamp, keep: &[&str]) -> Vec<String> {
+    fn walk(node: &Node, window: (Timestamp, Timestamp), keep: &[&str], out: &mut Vec<String>) -> bool {
+        match node {
+            Node::Ranges { key, bars, .. } => {
+                let shown = keep.contains(&key.as_str()) || bars.iter().any(|bar| overlaps(bar, window.0, window.1));
+                if !shown {
+                    out.push(key.clone());
+                }
+                shown
+            }
+            Node::Group { key, children, .. } => {
+                let at = out.len();
+                let mut shown = false;
+                for child in children {
+                    shown |= walk(child, window, keep, out);
+                }
+                if !shown {
+                    out.truncate(at);
+                    out.push(key.clone());
+                }
+                shown
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for node in rows {
+        walk(node, (start, end), keep, &mut out);
+    }
+    out
+}
+
+/// `rows` without the rows and groups `keys` names (what [`left_out`] answers): the rows a
+/// window shows.
+#[must_use]
+pub fn without(rows: &[Node], keys: &[String]) -> Vec<Node> {
+    rows.iter()
+        .filter(|node| !keys.iter().any(|key| key == node.key()))
+        .map(|node| match node {
+            Node::Group { key, name, children } => Node::Group { key: key.clone(), name: name.clone(), children: without(children, keys) },
+            leaf => leaf.clone(),
+        })
+        .collect()
 }
 
 fn collapsed(nodes: Vec<Node>) -> Vec<Node> {
@@ -600,7 +717,7 @@ mod tests {
         assert_eq!(merged[0].tooltip[3], "merged");
         assert_eq!(merged[0].label, "#170", "the top rows' spans are too short for titles");
         // Whatever the spec, a ticket's own bars carry its title: there is no option (#34).
-        for spec in [RowsSpec { grouping: Grouping::Workers, collapse: true }, RowsSpec { grouping: Grouping::Flat, collapse: true }] {
+        for spec in [RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Empty }, RowsSpec { grouping: Grouping::Flat, collapse: Collapse::Empty }] {
             let rows = rows_with(&activity, &merges(), spec, &issues);
             let labels: Vec<&str> = rows
                 .iter()
@@ -636,10 +753,27 @@ mod tests {
 
     #[test]
     fn rows_spec_reads_back_and_has_no_titles_option() {
-        let spec: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":true}"#).unwrap();
-        assert_eq!(spec, RowsSpec { grouping: Grouping::Workers, collapse: true });
+        let spec: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":"window"}"#).unwrap();
+        assert_eq!(spec, RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window });
         assert_eq!(serde_json::from_str::<RowsSpec>("{}").unwrap(), RowsSpec::default());
-        assert_eq!(serde_json::to_string(&RowsSpec::default()).unwrap(), r#"{"grouping":"flat","collapse":false}"#, "no titles field (#34)");
+        assert_eq!(serde_json::to_string(&RowsSpec::default()).unwrap(), r#"{"grouping":"flat","collapse":"off"}"#, "no titles field (#34)");
+        assert_eq!(serde_json::to_string(&spec).unwrap(), r#"{"grouping":"workers","collapse":"window"}"#);
+    }
+
+    #[test]
+    fn collapse_reads_its_names_and_the_bool_it_was() {
+        let read = |text: &str| serde_json::from_str::<RowsSpec>(text).map(|spec| spec.collapse).map_err(|e| e.to_string());
+        assert_eq!(read(r#"{"collapse":true}"#), Ok(Collapse::Empty), "before #74, true left out the empty rows");
+        assert_eq!(read(r#"{"collapse":false}"#), Ok(Collapse::Off));
+        for (name, mode) in [("off", Collapse::Off), ("empty", Collapse::Empty), ("window", Collapse::Window)] {
+            assert_eq!(read(&format!(r#"{{"collapse":"{name}"}}"#)), Ok(mode));
+            assert_eq!(serde_json::to_value(mode).unwrap(), serde_json::json!(name));
+        }
+        assert!(read(r#"{"collapse":"sometimes"}"#).is_err());
+        assert!(read(r#"{"collapse":1}"#).is_err());
+        let schema = serde_json::to_string(&schemars::schema_for!(RowsSpec)).unwrap();
+        assert!(schema.contains("window") && schema.contains("boolean"), "{schema}");
+        assert!(!Collapse::Off.is_on() && Collapse::Empty.is_on() && Collapse::Window.is_on());
     }
 
     #[test]
@@ -682,8 +816,46 @@ mod tests {
     #[test]
     fn collapse_leaves_out_empty_rows() {
         let activity = Activity::of(&sample());
-        let rows = rows(&activity, &[], RowsSpec { collapse: true, ..RowsSpec::default() });
+        let rows = rows(&activity, &[], RowsSpec { collapse: Collapse::Empty, ..RowsSpec::default() });
         assert_eq!(shape(&rows), ["Tickets merged", "Tickets 1", "Tickets 2"], "no merges onto main read");
+        let window = super::rows(&activity, &[], RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
+        assert_eq!(window, rows, "to the window, the rows are those with events: the window leaves out more of them");
+    }
+
+    /// 01:mm on the day `worker`'s events are.
+    fn at(minutes: i64) -> Timestamp {
+        Timestamp(Timestamp::parse("2026-10-31T01:00:00Z").unwrap().0 + minutes * 60)
+    }
+
+    #[test]
+    fn a_window_leaves_out_the_rows_with_nothing_in_it() {
+        // tickets/1 holds #1 (0-10) then #3 (10-30); tickets/2 #2 (5-20) then #4 (20-25);
+        // tickets/3 #5 (12-15).
+        let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30), (4, 20, 25), (5, 12, 15)])];
+        let rows = rows(&Activity::of(&files), &[], RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
+        let keys = |nodes: &[Node]| nodes.iter().flat_map(Node::leaves).map(|n| n.key().to_owned()).collect::<Vec<_>>();
+        assert_eq!(keys(&rows), ["tickets/1", "tickets/2", "tickets/3"], "no merges: the top rows are empty");
+        assert_eq!(left_out(&rows, at(0), at(60), &[]), Vec::<String>::new(), "the whole run shows every row");
+        assert_eq!(left_out(&rows, at(26), at(40), &[]), ["tickets/2", "tickets/3"], "only #3 runs on past 25");
+        assert_eq!(keys(&without(&rows, &left_out(&rows, at(26), at(40), &[]))), ["tickets/1"]);
+        assert_eq!(left_out(&rows, at(16), at(19), &[]), ["tickets/3"], "#5 ended at 15");
+        assert_eq!(left_out(&rows, at(15), at(19), &[]), Vec::<String>::new(), "a bar ending at the window's start is in it");
+        assert_eq!(left_out(&rows, at(26), at(40), &["tickets/3"]), ["tickets/2"], "a row kept (it holds the selection) stays");
+        assert_eq!(left_out(&rows, at(31), at(40), &[]), ["tickets/1", "tickets/2", "tickets/3"], "after the last event, nothing");
+    }
+
+    #[test]
+    fn by_worker_a_group_with_nothing_in_the_window_folds_away_whole() {
+        let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20)]), worker("m-2", "mini", "worker-2", &[(3, 30, 40)])];
+        let rows = rows(&Activity::of(&files), &[], RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window });
+        assert_eq!(shape(&rows), ["mini", "  worker-1", "    Tickets 1", "    Tickets 2", "  worker-2", "    Tickets 1"]);
+        let out = left_out(&rows, at(12), at(25), &[]);
+        assert_eq!(out, ["w/mini/worker-1/1", "w/mini/worker-2"], "worker-2's group goes whole, not row by row");
+        assert_eq!(shape(&without(&rows, &out)), ["mini", "  worker-1", "    Tickets 2"]);
+        let out = left_out(&rows, at(50), at(60), &[]);
+        assert_eq!(out, ["w/mini"], "the machine's group folds away with its workers");
+        assert!(without(&rows, &out).is_empty());
+        assert_eq!(left_out(&rows, at(50), at(60), &["w/mini/worker-2/1"]), ["w/mini/worker-1"], "a kept row keeps its groups");
     }
 
     /// `worker`'s session on `machine`, then a `work` and a `release` of each ticket: its one

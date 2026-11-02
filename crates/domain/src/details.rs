@@ -1124,7 +1124,7 @@ mod tests {
     fn each_subject_names_its_bars_on_the_timeline() {
         let (activity, issues) = (Activity::of(&sample()), issues());
         for grouping in [crate::Grouping::Flat, crate::Grouping::Workers] {
-            let rows = crate::rows::rows(&activity, &merges(), crate::RowsSpec { grouping, collapse: false });
+            let rows = crate::rows::rows(&activity, &merges(), crate::RowsSpec { grouping, collapse: crate::Collapse::Off });
             let on = |subject: Subject| details_on(&activity, &merges(), &issues, &rows, &subject).unwrap().timeline;
             let of = |keep: &dyn Fn(&str, &Bar) -> bool| {
                 let mut bars: Vec<BarRef> = bars_where(&rows, keep).into_iter().map(|(at, _)| at).collect();

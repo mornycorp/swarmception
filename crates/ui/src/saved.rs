@@ -22,8 +22,10 @@ use crate::timeline::TimelineView;
 use crate::{DetailsView, FactoryView, PaneSizes, Panes, UI_STATE_VERSION, UiState, WorkersView};
 
 /// [`AppState`]'s shape. A file of another version still reads: an older one has fewer
-/// sections, a newer one's sections this build doesn't know are skipped.
-pub const APP_STATE_VERSION: u32 = 1;
+/// sections, a newer one's sections this build doesn't know are skipped. 2: the rows' collapse
+/// a mode's name (`off`, `empty`, `window`, #74), where 1 wrote `true` or `false`, which still
+/// read as `empty` and `off`.
+pub const APP_STATE_VERSION: u32 = 2;
 
 /// The environment variable that names the directory the state is kept in, over the
 /// platform's (an agent's or a test's scratch directory, so the owner's state is left alone).
@@ -47,7 +49,7 @@ pub struct AppState {
     /// The panes shown and their sizes, the factory's settings and what the details are of.
     /// The factory's *t* is kept only when it is not following the timeline, and play is off.
     pub ui: UiState,
-    /// The tickets flat or by worker, collapsed or not.
+    /// The tickets flat or by worker, collapsed how (#74: to the window too).
     pub rows: RowsSpec,
     /// The window's size and place on screen.
     pub window: Option<WindowPlace>,
@@ -640,7 +642,12 @@ mod tests {
         // An older file (no sizes, no window, no timeline) reads with their defaults, silently.
         let older = load(r#"{"version": 0, "repo": "/r/swarm", "ui": {"version": 3, "panes": {"factory": false}}, "rows": {"collapse": true}}"#);
         let state = older.state.unwrap();
-        assert_eq!((state.ui.panes.factory, state.ui.panes.timeline, state.rows.collapse), (false, true, true));
+        assert_eq!((state.ui.panes.factory, state.ui.panes.timeline, state.rows.collapse), (false, true, swarmception_domain::Collapse::Empty));
+        // Version 1's collapse was a bool (#74): it keeps the choice it was.
+        let one = load(r#"{"version": 1, "repo": "/r/swarm", "rows": {"grouping": "workers", "collapse": false}}"#);
+        assert_eq!((one.state.unwrap().rows.collapse, one.note), (swarmception_domain::Collapse::Off, None));
+        let two = load(r#"{"version": 2, "repo": "/r/swarm", "rows": {"collapse": "window"}}"#);
+        assert_eq!(two.state.unwrap().rows.collapse, swarmception_domain::Collapse::Window);
         assert_eq!((state.ui.sizes, state.window, older.note), (PaneSizes::default(), None, None));
 
         // A newer one: its new sections skipped, a section that changed shape left out, the rest kept.
