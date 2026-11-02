@@ -139,3 +139,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #81 (#77, a failed ready check says why; swarm-core 86ca3f0); capacity=3 free=11.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-81","t":"2026-11-02T17:57:32Z"}
 {"event":"merge","issue":77,"mr":81,"sub":"gate-81","t":"2026-11-02T17:57:52Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #81","sub":"gate-81","t":"2026-11-02T17:57:58Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #82 (batch 8 fold); capacity=3 free=13.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-82","t":"2026-11-02T17:59:57Z"}
