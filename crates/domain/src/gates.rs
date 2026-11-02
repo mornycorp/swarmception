@@ -2,29 +2,35 @@
 //! own `ready` checks kept apart, with what it carried, what it did and how it ended, and the
 //! figures over a window. What the Gates pane draws, and `gates.list` returns.
 //!
-//! - **A run** is a coordinator's gate ([`Sub::is_gate`]: its `sub.start` to its `sub.stop`, or,
-//!   when it logged neither, read from the merges and send backs that name it, `inferred`) or a
-//!   worker's `ready` check. Its **result**: *passed* (`rc=0`, or no `rc` but it merged a
-//!   ticket), *failed* (another `rc`, its cause the stop note's `cause=…`; a run read from its
-//!   events that only sent tickets back failed too), *no result* (it ended without saying, or never
-//!   finished: a gate at its coordinator's session's end or the next gate's start, #42; a `ready`
-//!   at its worker's session's end) or *running* (nothing ended it and its session goes on).
-//!   Its **duration**: start to end; a running one's, to the last event.
+//! **The one definition of a gate run** (#75): [`runs`] reads them, and both `gates.list`
+//! ([`gates`]) and `stats.get` (`Stats::gates` and `ready`) count them with [`figures`], so the
+//! same window gives the same counts from both.
+//!
+//! - **A run** is a coordinator's gate ([`Sub::is_gate`]: its `sub.start` to its `sub.stop`) or a
+//!   worker's `ready` check (the same). A gate that logged neither, but whose id a `merge` or
+//!   `sendback` names, is a run too, read from those events (its first to its last): it is
+//!   **inferred**, counted, and the figures say how many were (`inferred`), so an inferred figure
+//!   is never mixed in silently. Its **result**: *passed* (`rc=0`, or no `rc` but a merge naming
+//!   it while it ran), *failed* (another `rc`, its cause the stop note's `cause=…`; an inferred
+//!   run that only sent tickets back failed too, its cause the send back's), *no result* (it ended
+//!   without saying, or never finished: a gate at its coordinator's session's end or the next
+//!   gate's start, #42; a `ready` at its worker's session's end) or *running* (nothing ended it
+//!   and its session goes on). Its **duration**: start to end; a running one's, to the last event.
 //! - **What it carried**: the pull requests and tickets its start note and its events name (and
 //!   for a `ready`, the ticket its worker was on and that ticket's PR); **its merges**: the
 //!   tickets its events merged, each with its commit onto main; its **send backs**.
 //! - **A rerun**: `gate-43b` of `gate-43` (and `gate-43c` of `gate-43b`), `gate-43-rerun` of
 //!   `gate-43`, and a run whose id an earlier run of its lane had: each of the latest earlier run
 //!   of that id. None when there is no such run.
-//! - **The figures**, per lane, over the runs that *started* in the window (as `stats.get`
-//!   counts them, so the pass rates agree where no run is inferred): runs, passed, failed, no
-//!   result, running, the **pass rate** (passed ÷ (passed + failed)), the **median** and the
-//!   longest duration of the runs with a result, the time it was **busy** (the union of its runs'
-//!   spans within the window, a running one to the last event) and that ÷ the window's span, the
-//!   reruns, and the failures by cause (`unstated` without one), most first.
+//! - **The figures**, per lane, over the runs that *started* in the window: runs, passed,
+//!   failed, no result, running, inferred, the **pass rate** (passed ÷ (passed + failed)), the
+//!   **median** and the longest duration of the runs with a result, the time it was **busy** (the
+//!   union of its runs' spans within the window, a running one to the last event) and that ÷ the
+//!   window's span, the reruns, and the failures by cause (`unstated` without one), most first.
 //! - **Per hour** (clock hours, UTC, from the first run's hour in the window to the last's): each
-//!   lane's runs started in it, passed, failed, no result, its pass rate and median duration, and
-//!   its busy seconds in the hour.
+//!   lane's runs started in it, passed, failed, no result (running ones among them), its pass
+//!   rate and median duration, and its busy seconds in the hour. The Gates band draws both
+//!   lanes' (#75).
 //! - **The longest queue**: the most tickets *waiting for merge* at once (submitted, not yet
 //!   merged or sent back) within the window, the first time it was reached, and which.
 //!
@@ -157,6 +163,8 @@ pub struct Figures {
     pub failed: usize,
     pub no_result: usize,
     pub running: usize,
+    /// Of the runs, those read from merges and send backs: no `sub.start` logged.
+    pub inferred: usize,
     /// Passed ÷ (passed + failed); none when neither.
     pub pass_rate: Option<f64>,
     /// Over the runs with a result.
@@ -231,32 +239,66 @@ pub struct GatesList {
 /// events), from the activity, its tickets and `main`'s merges.
 #[must_use]
 pub fn gates(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge], window: Window) -> GatesList {
-    let (first, last) = activity.extent.unwrap_or_default();
-    let start = window.start.unwrap_or(first);
-    let end = window.end.unwrap_or(last).max(start);
-    let mut all = coordinator_runs(activity, tickets, merges, last);
-    all.extend(ready_runs(activity, tickets, last));
-    all.sort_by(|a, b| (a.start, a.lane, &a.sub).cmp(&(b.start, b.lane, &b.sub)));
-    mark_reruns(&mut all);
-    for run in &mut all {
+    let bounds = Bounds::of(activity, window);
+    let Bounds { start, end, last } = bounds;
+    let reach = |run: &Run| run.end.unwrap_or(last).max(run.start);
+    let mut runs: Vec<Run> = runs(activity, tickets, merges).into_iter().filter(|r| r.start <= end && reach(r) >= start).collect();
+    for run in &mut runs {
         run.tooltip = tooltip(activity, run);
     }
-    let reach = |run: &Run| run.end.unwrap_or(last).max(run.start);
-    let runs: Vec<Run> = all.into_iter().filter(|r| r.start <= end && reach(r) >= start).collect();
-    let span = Intervals::span(start.0, end.0);
-    let figures = |lane: Lane| figures(runs.iter().filter(|r| r.lane == lane), &span, last, start, end);
     let (hours, hours_cut) = hourly(&runs, start, end, last);
     GatesList {
         start,
         end,
         span_seconds: end.0.saturating_sub(start.0),
-        gate: figures(Lane::Gate),
-        ready: figures(Lane::Ready),
+        gate: lane_figures(&runs, Lane::Gate, bounds),
+        ready: lane_figures(&runs, Lane::Ready, bounds),
         hours,
         hours_cut,
         longest_queue: longest_queue(tickets, start, end),
         runs,
     }
+}
+
+/// A window's ends, and the run's last event (where a running run's span stops).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bounds {
+    pub(crate) start: Timestamp,
+    pub(crate) end: Timestamp,
+    pub(crate) last: Timestamp,
+}
+
+impl Bounds {
+    /// `window`'s ends, each the run's own when left out; an end before the start is the start.
+    pub(crate) fn of(activity: &Activity, window: Window) -> Self {
+        let (first, last) = activity.extent.unwrap_or_default();
+        let start = window.start.unwrap_or(first);
+        Self { start, end: window.end.unwrap_or(last).max(start), last }
+    }
+
+    /// The window as a set of seconds.
+    pub(crate) fn span(self) -> Intervals {
+        Intervals::span(self.start.0, self.end.0)
+    }
+}
+
+/// Every gate run of both lanes, by start (the lane, then the id, at a tie), each with its
+/// result and what it reran: the module's one definition of a gate run, which `gates.list` and
+/// `stats.get` both count (#75). Their tooltips are left empty: [`gates`] adds them to the runs
+/// it returns.
+pub(crate) fn runs(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge]) -> Vec<Run> {
+    let (_, last) = activity.extent.unwrap_or_default();
+    let mut all = coordinator_runs(activity, tickets, merges, last);
+    all.extend(ready_runs(activity, tickets, last));
+    all.sort_by(|a, b| (a.start, a.lane, &a.sub).cmp(&(b.start, b.lane, &b.sub)));
+    mark_reruns(&mut all);
+    all
+}
+
+/// One lane's figures over `bounds`, from every run: the counts `gates.list` and `stats.get`
+/// both give.
+pub(crate) fn lane_figures(runs: &[Run], lane: Lane, bounds: Bounds) -> Figures {
+    figures(runs.iter().filter(|r| r.lane == lane), &bounds.span(), bounds.last, bounds.start, bounds.end)
 }
 
 /// The instance and name of `instance`.
@@ -555,6 +597,7 @@ fn figures<'a>(runs: impl Iterator<Item = &'a Run>, span: &Intervals, last: Time
         failed,
         no_result: count(GateResult::NoResult),
         running: count(GateResult::Running),
+        inferred: started.iter().filter(|r| r.inferred).count(),
         pass_rate: ratio(passed, passed + failed),
         longest_seconds: with_result.iter().copied().max(),
         median_seconds: median(with_result),
@@ -636,7 +679,7 @@ fn longest_queue(tickets: &[Ticket], start: Timestamp, end: Timestamp) -> Queue 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::stats::stats;
+    use crate::stats::{Gates, stats};
     use crate::tickets::tickets;
     use swarmception_model::{AgentFile, parse_file};
 
@@ -776,8 +819,51 @@ mod tests {
         assert_eq!(ready.causes, [Cause { cause: "test".into(), count: 1 }]);
         let activity = Activity::of(&files);
         let stats = stats(&activity, &tickets(&activity), &[], Window::default());
-        assert_eq!((gate.pass_rate, ready.pass_rate), (stats.gates.pass_rate, stats.ready.pass_rate), "as stats.get counts them");
-        assert_eq!((gate.runs, ready.runs), (stats.gates.runs, stats.ready.runs));
+        assert_eq!((Gates::from(gate), Gates::from(ready)), (stats.gates, stats.ready), "as stats.get counts them");
+    }
+
+    /// [`swarm`], and a second coordinator's two gates that logged no `sub.start`: gate-pr21
+    /// merges #4 at 04:10, gate-pr22 sends #5 back on a conflict at 04:20.
+    fn with_inferred() -> Vec<AgentFile> {
+        let mut files = swarm();
+        files.push(file(
+            "mini-dd",
+            vec![
+                line(4, 0, r#""event":"session.start","machine":"mini","name":"coordinator-2","role":"coordinator""#),
+                line(4, 10, r#""event":"merge","issue":4,"mr":21,"sub":"gate-pr21""#),
+                line(4, 20, r#""event":"sendback","issue":5,"mr":22,"note":"cause=conflict","sub":"gate-pr22""#),
+            ],
+        ));
+        files
+    }
+
+    #[test]
+    fn gates_list_and_stats_get_count_one_definition_inferred_runs_said() {
+        let files = with_inferred();
+        let activity = Activity::of(&files);
+        let tickets = tickets(&activity);
+        let windows = [
+            Window::default(),
+            Window { start: Some(at(2, 0)), end: Some(at(4, 15)) },
+            Window { start: Some(at(4, 15)), end: None },
+            Window { start: Some(at(0, 30)), end: Some(at(1, 0)) },
+            Window { start: Some(at(9, 0)), end: None },
+        ];
+        for window in windows {
+            let list = gates(&activity, &tickets, &[], window);
+            let stats = stats(&activity, &tickets, &[], window);
+            assert_eq!((Gates::from(&list.gate), Gates::from(&list.ready)), (stats.gates.clone(), stats.ready.clone()), "{window:?}");
+            let started = |lane: Lane| list.runs.iter().filter(|r| r.lane == lane && list.start <= r.start && r.start <= list.end).count();
+            assert_eq!((stats.gates.runs, stats.ready.runs), (started(Lane::Gate), started(Lane::Ready)), "{window:?}: the runs it lists that started in it");
+        }
+        let whole = gates(&activity, &tickets, &[], Window::default());
+        let gate = &whole.gate;
+        assert_eq!((gate.runs, gate.inferred, gate.passed, gate.failed, gate.no_result), (6, 2, 3, 2, 1));
+        assert_eq!(gate.causes, [Cause { cause: "clippy".into(), count: 1 }, Cause { cause: "conflict".into(), count: 1 }]);
+        let inferred: Vec<(&str, GateResult)> = whole.runs.iter().filter(|r| r.inferred).map(|r| (r.sub.as_str(), r.result)).collect();
+        assert_eq!(inferred, [("gate-pr21", GateResult::Passed), ("gate-pr22", GateResult::Failed)]);
+        let late = stats(&activity, &tickets, &[], Window { start: Some(at(4, 15)), end: None });
+        assert_eq!((late.gates.runs, late.gates.inferred, late.gates.failed, late.gates.pass_rate), (1, 1, 1, Some(0.0)));
     }
 
     #[test]

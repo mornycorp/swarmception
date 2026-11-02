@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use swarmception_domain::Stats;
 use swarmception_domain::details::{Details, Subject};
 use swarmception_domain::gates::{GateResult, GatesList, Lane};
+use swarmception_domain::stats::Gates;
 use swarmception_engine::Session;
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_source::Github;
@@ -28,11 +29,28 @@ fn git_at(dir: &Path, at: &str, args: &[&str]) {
 /// #7 (PR #8): worked on with a failed `ready` check and its rerun, submitted, sent back by
 /// gate-8 on a conflict, submitted again and merged by gate-8b; main merges PR #8.
 fn repo() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("swarmception-gates-{}-{n}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let files = [
+    make(files())
+}
+
+/// [`repo`]'s, and a second coordinator's two gates that logged no `sub.start`: gate-pr21 merges
+/// #11 at 04:20, gate-pr22 sends #12 back on a conflict at 04:30.
+fn repo_inferred() -> PathBuf {
+    let mut files = files();
+    files.push((
+        "mini-dd4444",
+        vec![
+            r#"{"event":"session.start","machine":"mini","name":"coordinator-2","role":"coordinator","t":"2026-10-31T04:15:00Z"}"#,
+            r#"{"event":"merge","issue":11,"mr":21,"sub":"gate-pr21","t":"2026-10-31T04:20:00Z"}"#,
+            r#"{"event":"sendback","issue":12,"mr":22,"note":"cause=conflict","sub":"gate-pr22","t":"2026-10-31T04:30:00Z"}"#,
+        ],
+    ));
+    make(files)
+}
+
+type Files = Vec<(&'static str, Vec<&'static str>)>;
+
+fn files() -> Files {
+    vec![
         (
             "mini-aa1111",
             vec![
@@ -60,7 +78,14 @@ fn repo() -> PathBuf {
                 r#"{"event":"sub.stop","note":"rc=0; merged #8","sub":"gate-8b","t":"2026-10-31T04:11:00Z"}"#,
             ],
         ),
-    ];
+    ]
+}
+
+fn make(files: Files) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("swarmception-gates-{}-{n}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
     for (instance, lines) in files {
         std::fs::create_dir_all(dir.join("tracking").join(instance)).unwrap();
         std::fs::write(dir.join("tracking").join(instance).join("work.jsonl"), lines.join("\n") + "\n").unwrap();
@@ -139,6 +164,37 @@ fn every_run_its_result_and_the_figures() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// `gates.list` and `stats.get` over the same window give the same gate-run counts (#75), the
+/// runs read from merges and send backs among them and said to be.
+#[test]
+fn gates_list_and_stats_get_agree_on_every_window() {
+    let dir = repo_inferred();
+    let mut session = Session::new();
+    open(&mut session, &dir);
+    let windows = [
+        "{}",
+        r#"{"start":"2026-10-31T03:00:00Z","end":"2026-10-31T04:00:00Z"}"#,
+        r#"{"start":"2026-10-31T04:00:00Z","end":"2026-10-31T04:25:00Z"}"#,
+        r#"{"start":"2026-10-31T04:25:00Z"}"#,
+        r#"{"end":"2026-10-31T03:35:00Z"}"#,
+        r#"{"start":"2026-11-30T00:00:00Z"}"#,
+    ];
+    for window in windows {
+        let list: GatesList = call(&mut session, "gates.list", window);
+        let stats: Stats = call(&mut session, "stats.get", window);
+        assert_eq!((Gates::from(&list.gate), Gates::from(&list.ready)), (stats.gates.clone(), stats.ready.clone()), "{window}");
+        assert_eq!((list.start, list.end), (stats.start, stats.end), "{window}: the same window");
+    }
+    let whole: Stats = call(&mut session, "stats.get", "{}");
+    assert_eq!((whole.gates.runs, whole.gates.inferred, whole.gates.passed, whole.gates.failed), (4, 2, 2, 2), "gate-8, gate-8b, gate-pr21, gate-pr22");
+    assert_eq!(whole.gates.pass_rate, Some(0.5));
+    let late: GatesList = call(&mut session, "gates.list", r#"{"start":"2026-10-31T04:25:00Z"}"#);
+    assert_eq!((late.gate.runs, late.gate.inferred, late.gate.failed), (1, 1, 1));
+    assert_eq!(late.runs.iter().map(|r| (r.sub.as_str(), r.inferred)).collect::<Vec<_>>(), [("gate-pr22", true)]);
+    check_swarm(&dir);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A swarm's gate as `gates.list` reads it: consistent with itself and with `stats.get`.
 fn check_swarm(dir: &Path) -> (GatesList, Stats) {
     let mut session = Session::new();
@@ -154,12 +210,9 @@ fn check_swarm(dir: &Path) -> (GatesList, Stats) {
         let hours: usize = list.hours.iter().map(|h| if lane == Lane::Gate { h.gate.runs } else { h.ready.runs }).sum();
         assert_eq!(hours, figures.runs, "{lane:?}: each run in one hour");
     }
-    let inferred = list.runs.iter().filter(|r| r.inferred).count();
-    assert_eq!((list.gate.runs - inferred, list.ready.runs), (stats.gates.runs, stats.ready.runs), "stats.get counts no inferred runs");
-    assert_eq!(list.ready.pass_rate, stats.ready.pass_rate);
-    if inferred == 0 {
-        assert_eq!(list.gate.pass_rate, stats.gates.pass_rate);
-    }
+    // One definition of a gate run (#75): the same counts from both, inferred runs said.
+    assert_eq!((Gates::from(&list.gate), Gates::from(&list.ready)), (stats.gates.clone(), stats.ready.clone()), "{}", dir.display());
+    assert_eq!(list.gate.inferred, list.runs.iter().filter(|r| r.inferred).count());
     for run in &list.runs {
         assert!(run.duration_seconds >= 0 && run.end.is_none_or(|end| end >= run.start), "{}", run.sub);
         assert!(!run.tooltip.is_empty());

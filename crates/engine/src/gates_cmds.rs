@@ -14,7 +14,8 @@ use crate::stats_cmds::GetParams;
 /// (passed, failed with its cause, no result, running), the PRs and tickets it carried, its merges
 /// and send backs, what it reran, its tooltip and its details' subject; each lane's figures over
 /// the runs that started in it (pass rate, median and longest duration, busy, reruns, failures by
-/// cause), per-hour figures, and the longest queue at the dock.
+/// cause), per-hour figures, and the longest queue at the dock. Its lanes' counts are
+/// `stats.get`'s `gates` and `ready` over the same window: one definition of a gate run (#75).
 pub struct List;
 
 impl Command for List {

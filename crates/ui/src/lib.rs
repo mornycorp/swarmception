@@ -53,7 +53,7 @@ pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
-pub use gates::{GatesDrawn, GatesPane, RunDrawn, lane_text};
+pub use gates::{GatesDrawn, GatesPane, HourDrawn, RunDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Refused};
 pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};

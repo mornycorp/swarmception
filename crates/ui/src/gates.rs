@@ -7,8 +7,9 @@
 //! workers' `ready` checks' pass rate and median. Under them, the runs along time, lined up under
 //! the timeline's rows (its window, across the same columns): a lane of the coordinator's gate
 //! runs and one of the workers' `ready` checks, each run a bar as long as it took, in its result's
-//! colour (passed green, failed red, no result grey, running blue); under the lanes, the gate's
-//! runs per clock hour, stacked by result. In the left column, beside them, the lanes' names and
+//! colour (passed green, failed red, no result grey, running blue); under the lanes, both lanes'
+//! runs per clock hour (#75), stacked by result and mirrored about one baseline, the gate's up and
+//! the `ready` checks' down, each on its own scale. In the left column, beside them, the lanes' names and
 //! a short table of the failures by cause. Hovering a run shows its story in brief and lights
 //! its tickets' bars on the timeline (the shell hands [`GatesPane::hovered`] to
 //! `TimelinePane::light_hover`); clicking it makes it the Details pane's subject.
@@ -40,6 +41,20 @@ pub struct RunDrawn {
     pub rect: Rect,
 }
 
+/// One lane's column of an hour as the pane drew it: the counts it stacked, and where.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HourDrawn {
+    pub start: Timestamp,
+    pub lane: Lane,
+    pub runs: usize,
+    pub passed: usize,
+    pub failed: usize,
+    pub no_result: usize,
+    /// The stacked column, from the baseline: as tall as its runs on its lane's scale; none tall
+    /// with none.
+    pub rect: Rect,
+}
+
 /// What the pane drew last frame, for a test to check against `gates.list`.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct GatesDrawn {
@@ -53,6 +68,9 @@ pub struct GatesDrawn {
     pub runs: Vec<RunDrawn>,
     /// The hours' columns drawn.
     pub hours: usize,
+    /// Each hour's two columns as drawn (#75): the gate's runs, then the `ready` checks', an hour
+    /// after another, in `gates.list`'s order.
+    pub hour_columns: Vec<HourDrawn>,
     /// Where the window's start and end were across.
     pub axis: Option<(f32, f32)>,
     /// The run under the pointer, and the subject a click on one chose.
@@ -81,8 +99,10 @@ pub struct GatesPane {
 const GATE_LANE: f32 = 20.0;
 const READY_LANE: f32 = 14.0;
 const LANE_GAP: f32 = 5.0;
-/// The tallest the hours' chart grows.
-const CHART: f32 = 60.0;
+/// The tallest the hours' chart grows: both lanes', mirrored.
+const CHART: f32 = 84.0;
+/// The chart from which each column's count is written at its end.
+const COUNTED_CHART: f32 = 64.0;
 /// The left column's width when there is no timeline to line up with.
 const OWN_COLUMN: f32 = 190.0;
 /// The narrowest left column: the lanes' names and the causes table need it.
@@ -201,7 +221,7 @@ impl GatesPane {
         self.lane((&painter, &visuals), &list, &scale, (Lane::Gate, gate_top, GATE_LANE, 2), selected);
         self.lane((&painter, &visuals), &list, &scale, (Lane::Ready, ready_top, READY_LANE, 3), selected);
         let chart = Rect::from_min_max(pos2(x0, hours_top), pos2(x1, (body.bottom() - 2.0).min(hours_top + CHART)));
-        let hour = if chart.height() >= 14.0 { self.hours((&painter, &visuals), &list, &scale, chart, response.hover_pos()) } else { None };
+        let hour = if chart.height() >= 20.0 { self.hours((&painter, &visuals), &list, &scale, chart, response.hover_pos()) } else { None };
         if list.runs.is_empty() {
             painter.text(lanes.center(), Align2::CENTER_CENTER, "No gate runs in this window", FontId::proportional(11.0), visuals.weak_text_color());
         }
@@ -247,13 +267,14 @@ fn headline(list: &GatesList) -> [Figure; 6] {
             percent(gate.pass_rate),
             pass_colour,
             format!(
-                "The coordinator's gate runs that started in the window: {} passed of {} with a result ({} runs: {} failed, {} with no result, {} running).\nPassed: rc=0, or it merged a ticket. Failed: another rc, or it only sent tickets back.",
+                "The coordinator's gate runs that started in the window: {} passed of {} with a result ({} runs: {} failed, {} with no result, {} running; {} read from merges and send backs, no sub.start logged).\nPassed: rc=0, or it merged a ticket. Failed: another rc, or it only sent tickets back.\nThe same runs stats.get counts.",
                 gate.passed,
                 gate.passed + gate.failed,
                 gate.runs,
                 gate.failed,
                 gate.no_result,
-                gate.running
+                gate.running,
+                gate.inferred
             ),
         ),
         (
@@ -382,8 +403,10 @@ impl GatesPane {
         }
     }
 
-    /// The gate's runs per clock hour, stacked by result: passed, failed, no result. The hour
-    /// under the pointer, if any.
+    /// Both lanes' runs per clock hour (#75), mirrored about one baseline as the lanes above are
+    /// ordered: the gate's growing up from it, the `ready` checks' down, each stacked by result
+    /// (passed, failed, no result) on its own scale, each hour's column under its hour on the
+    /// timeline. The hour under the pointer, if any.
     fn hours(
         &mut self,
         (painter, visuals): (&egui::Painter, &egui::Visuals),
@@ -392,51 +415,41 @@ impl GatesPane {
         chart: Rect,
         pointer: Option<egui::Pos2>,
     ) -> Option<GateHour> {
-        let most = list.hours.iter().map(|h| h.gate.runs).max().unwrap_or(0).max(1);
-        painter.hline(chart.x_range(), chart.bottom(), Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
-        painter.text(
-            pos2(chart.left() + 2.0, chart.top()),
-            Align2::LEFT_TOP,
-            format!("gate runs / h (most {most})"),
-            FontId::proportional(9.5),
-            visuals.weak_text_color(),
-        );
+        let most = |lane: Lane| list.hours.iter().map(|h| hour_of(h, lane).runs).max().unwrap_or(0).max(1);
+        let (most_gate, most_ready) = (most(Lane::Gate), most(Lane::Ready));
+        let mid = chart.center().y.round();
+        // Room for each column's count at its end, when the chart is tall enough to spare it.
+        let room = if chart.height() >= COUNTED_CHART { 10.0 } else { 0.0 };
+        let halves = [(Lane::Gate, chart.top() + room, mid - 1.0, most_gate), (Lane::Ready, mid + 1.0, chart.bottom() - room, most_ready)];
+        painter.hline(chart.x_range(), mid, Stroke::new(1.0, visuals.widgets.noninteractive.bg_stroke.color));
         let mut under = None;
         for hour in &list.hours {
             let Some((a, b)) = scale.across(hour.start, Timestamp(hour.start.0.saturating_add(3_600))) else { continue };
             let inset = ((b - a) * 0.12).clamp(0.5, 6.0);
-            let column = Rect::from_min_max(pos2(a + inset, chart.top() + 12.0), pos2((b - inset).max(a + inset + 1.0), chart.bottom() - 1.0));
-            let unit = column.height() / most as f32;
-            if hour.gate.runs > 0 && column.width() >= 16.0 {
-                let top = column.bottom() - unit * hour.gate.runs as f32;
-                painter.text(
-                    pos2(column.center().x, top - 1.0),
-                    Align2::CENTER_BOTTOM,
-                    hour.gate.runs.to_string(),
-                    FontId::proportional(9.5),
-                    visuals.weak_text_color(),
-                );
+            let (left, right) = (a + inset, (b - inset).max(a + inset + 1.0));
+            for (lane, top, bottom, most) in halves {
+                let figures = hour_of(hour, lane);
+                let unit = (bottom - top).max(0.0) / most as f32;
+                let edge = if lane == Lane::Gate { mid - 1.0 } else { mid + 1.0 };
+                let rect = stack((painter, visuals), figures, lane, (left, right, edge), unit, room > 0.0);
+                self.drawn.hour_columns.push(HourDrawn {
+                    start: hour.start,
+                    lane,
+                    runs: figures.runs,
+                    passed: figures.passed,
+                    failed: figures.failed,
+                    no_result: figures.no_result,
+                    rect,
+                });
             }
-            let mut bottom = column.bottom();
-            let colours = [
-                (hour.gate.passed, swarmception_domain::tooltip::PASSED),
-                (hour.gate.failed, swarmception_domain::tooltip::FAILED),
-                (hour.gate.no_result, swarmception_domain::gates::NO_RESULT),
-            ];
-            for (count, colour) in colours {
-                if count == 0 {
-                    continue;
-                }
-                let top = bottom - unit * count as f32;
-                painter.rect_filled(Rect::from_min_max(pos2(column.left(), top), pos2(column.right(), bottom)), 1.0, rgb(colour).gamma_multiply(0.7));
-                bottom = top;
-            }
+            let column = Rect::from_min_max(pos2(left, chart.top()), pos2(right, chart.bottom()));
             if pointer.is_some_and(|p| column.x_range().contains(p.x) && chart.y_range().contains(p.y)) {
                 painter.rect_stroke(column.expand(0.5), 1.0, Stroke::new(1.0, visuals.strong_text_color()), StrokeKind::Inside);
                 under = Some(hour.clone());
             }
             self.drawn.hours += 1;
         }
+        scales((painter, visuals), chart, most_gate, most_ready);
         under
     }
 
@@ -518,6 +531,61 @@ fn packed_rows(runs: &[&Run], last: Timestamp, rows: usize) -> Vec<usize> {
             row
         })
         .collect()
+}
+
+/// One lane's column of an hour from the baseline at `edge`, between `left` and `right`: up for
+/// the gate, down for the `ready` checks, stacked by result, `unit` tall a run; its count at its
+/// end when `counted` and the column is wide enough. The column drawn.
+fn stack(
+    (painter, visuals): (&egui::Painter, &egui::Visuals),
+    figures: &swarmception_domain::gates::HourFigures,
+    lane: Lane,
+    (left, right, edge): (f32, f32, f32),
+    unit: f32,
+    counted: bool,
+) -> Rect {
+    let up = lane == Lane::Gate;
+    let mut from = edge;
+    let colours = [
+        (figures.passed, swarmception_domain::tooltip::PASSED),
+        (figures.failed, swarmception_domain::tooltip::FAILED),
+        (figures.no_result, swarmception_domain::gates::NO_RESULT),
+    ];
+    for (count, colour) in colours.into_iter().filter(|(count, _)| *count > 0) {
+        let height = unit * count as f32;
+        let to = if up { from - height } else { from + height };
+        let rect = Rect::from_min_max(pos2(left, from.min(to)), pos2(right, from.max(to)));
+        painter.rect_filled(rect, 1.0, rgb(colour).gamma_multiply(if up { 0.7 } else { 0.55 }));
+        from = to;
+    }
+    if figures.runs > 0 && counted && right - left >= 16.0 {
+        let (at, align) = if up { (from - 1.0, Align2::CENTER_BOTTOM) } else { (from + 1.0, Align2::CENTER_TOP) };
+        painter.text(pos2((left + right) / 2.0, at), align, figures.runs.to_string(), FontId::proportional(9.5), visuals.weak_text_color());
+    }
+    Rect::from_min_max(pos2(left, edge.min(from)), pos2(right, edge.max(from)))
+}
+
+/// The hours' scales, over the chart's left corners: the gate's at the top, the `ready` checks'
+/// at the bottom, each on a backing so the columns under them don't hide them.
+fn scales((painter, visuals): (&egui::Painter, &egui::Visuals), chart: Rect, most_gate: usize, most_ready: usize) {
+    let font = FontId::proportional(9.5);
+    for (text, at, align) in [
+        (format!("▲ gate / h  ≤ {most_gate}"), pos2(chart.left() + 2.0, chart.top()), Align2::LEFT_TOP),
+        (format!("▼ ready / h  ≤ {most_ready}"), pos2(chart.left() + 2.0, chart.bottom()), Align2::LEFT_BOTTOM),
+    ] {
+        let galley = painter.layout_no_wrap(text, font.clone(), visuals.weak_text_color());
+        let rect = align.anchor_size(at, galley.size());
+        painter.rect_filled(rect.expand2(vec2(2.0, 0.0)), 2.0, visuals.panel_fill);
+        painter.galley(rect.min, galley, visuals.weak_text_color());
+    }
+}
+
+/// One lane's figures of an hour.
+const fn hour_of(hour: &GateHour, lane: Lane) -> &swarmception_domain::gates::HourFigures {
+    match lane {
+        Lane::Gate => &hour.gate,
+        Lane::Ready => &hour.ready,
+    }
 }
 
 /// An hour's figures, both lanes, for its tooltip.
