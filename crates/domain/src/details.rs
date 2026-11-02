@@ -29,6 +29,7 @@ use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
 use crate::colours::{self, Rgb, phase_colour, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
 use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration, groups_holding};
+use crate::stats::{cause_of, failure_label, step_of};
 use crate::tickets::{Merged, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine};
@@ -490,7 +491,8 @@ fn ready_checks(ctx: &Ctx<'_>, ticket: &Ticket) -> Vec<Entry> {
     entries
 }
 
-/// A helper sub-agent's run: `ready check passed`, its duration, its notes.
+/// A helper sub-agent's run: `ready check passed`, its duration, why it failed when its stop says
+/// (`cause build/clippy`, its `cause=` and `step=`, #77: an older one's is unknown), its notes.
 fn helper_entry(ctx: &Ctx<'_>, agent: &Agent, sub: &Sub) -> Entry {
     let name = sub.name.clone().unwrap_or_else(|| sub.sub.clone());
     let (colour, verb) = match sub.rc {
@@ -502,8 +504,11 @@ fn helper_entry(ctx: &Ctx<'_>, agent: &Agent, sub: &Sub) -> Entry {
     let what = if name == "ready" { format!("ready check {verb}") } else { format!("{name} {verb}") };
     let entry = Entry::span(sub.span.start, sub.span.end, sub.span.open, colour, what).by(Some(ctx.who(&agent.instance)));
     let detail = (sub.sub != name).then(|| TipLine::plain(sub.sub.clone()));
+    let failed = sub.stop_note.as_deref().filter(|_| matches!(sub.rc, Some(rc) if rc != 0));
+    let why = failed.map(|note| (cause_of(note), step_of(note))).filter(|(cause, step)| cause.is_some() || step.is_some());
+    let why = why.map(|(cause, step)| TipLine::coloured(format!("cause {}", failure_label(cause.as_deref(), step.as_deref())), FAILED));
     let notes = sub.start_note.iter().chain(&sub.stop_note).map(TipLine::plain);
-    let mut entry = entry.detail(detail.unwrap_or_default());
+    let mut entry = entry.detail(detail.unwrap_or_default()).note(why);
     entry.notes.extend(notes);
     entry
 }
@@ -998,7 +1003,7 @@ mod tests {
     use super::*;
     use crate::activity::tests::sample;
     use crate::titles::tests::issues;
-    use swarmception_model::parse_merge;
+    use swarmception_model::{parse_file, parse_merge};
 
     fn merges() -> Vec<MainMerge> {
         ["be043bc0aa\u{1f}1793420970\u{1f}Merge pull request #173 from mornycorp/170-spec"].into_iter().filter_map(parse_merge).collect()
@@ -1010,6 +1015,35 @@ mod tests {
 
     fn whats(details: &Details) -> Vec<&str> {
         details.entries.iter().map(|e| e.what.as_str()).collect()
+    }
+
+    /// #77: a failed `ready` check in a ticket's story says why: its stop's cause and the `ci`
+    /// step it failed at; an older stop, `rc=1` alone, has no cause line, as before.
+    #[test]
+    fn a_failed_ready_check_says_its_cause_and_step() {
+        let worker = r#"{"event":"session.start","format":3,"machine":"mini","name":"worker-2","role":"worker","t":"2026-10-31T03:53:06Z"}
+{"event":"claim","issue":170,"mr":173,"t":"2026-10-31T03:53:22Z"}
+{"event":"work","issue":170,"t":"2026-10-31T03:53:25Z"}
+{"event":"sub.start","name":"ready","sub":"ready-aaa","t":"2026-10-31T04:00:00Z"}
+{"event":"sub.stop","note":"rc=101; cause=build; step=clippy","sub":"ready-aaa","t":"2026-10-31T04:01:00Z"}
+{"event":"sub.start","name":"ready","sub":"ready-bbb","t":"2026-10-31T04:02:00Z"}
+{"event":"sub.stop","note":"rc=1","sub":"ready-bbb","t":"2026-10-31T04:03:00Z"}
+{"event":"sub.start","name":"ready","sub":"ready-ccc","t":"2026-10-31T04:04:00Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-ccc","t":"2026-10-31T04:05:00Z"}"#;
+        let files = [parse_file("mini-w2", worker)];
+        let d = details(&Activity::of(&files), &[], &issues(), &Subject::Ticket { issue: 170 }).unwrap();
+        let checks: Vec<(&str, Vec<String>)> =
+            d.entries.iter().filter(|e| e.what.starts_with("ready check")).map(|e| (e.what.as_str(), crate::tooltip::texts(&e.notes))).collect();
+        assert_eq!(
+            checks,
+            [
+                ("ready check failed", vec!["cause build/clippy".to_owned(), "rc=101; cause=build; step=clippy".to_owned()]),
+                ("ready check failed", vec!["rc=1".to_owned()]),
+                ("ready check passed", vec!["rc=0".to_owned()]),
+            ]
+        );
+        let cause = d.entries.iter().find_map(|e| e.notes.first().filter(|n| n.text().starts_with("cause"))).unwrap();
+        assert_eq!(cause, &TipLine::coloured("cause build/clippy", FAILED), "in the failed colour");
     }
 
     #[test]

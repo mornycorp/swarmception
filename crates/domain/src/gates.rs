@@ -11,7 +11,8 @@
 //!   `sendback` names, is a run too, read from those events (its first to its last): it is
 //!   **inferred**, counted, and the figures say how many were (`inferred`), so an inferred figure
 //!   is never mixed in silently. Its **result**: *passed* (`rc=0`, or no `rc` but a merge naming
-//!   it while it ran), *failed* (another `rc`, its cause the stop note's `cause=…`; an inferred
+//!   it while it ran), *failed* (another `rc`, its cause the stop note's `cause=…`, and a `ready`
+//!   check's the `ci` step it failed at, `step=…`, #77; an older note's cause is unknown; an inferred
 //!   run that only sent tickets back failed too, its cause the send back's), *no result* (it ended
 //!   without saying, or never finished: a gate at its coordinator's session's end or the next
 //!   gate's start, #42; a `ready` at its worker's session's end) or *running* (nothing ended it
@@ -26,7 +27,8 @@
 //!   failed, no result, running, inferred, the **pass rate** (passed ÷ (passed + failed)), the
 //!   **median** and the longest duration of the runs with a result, the time it was **busy** (the
 //!   union of its runs' spans within the window, a running one to the last event) and that ÷ the
-//!   window's span, the reruns, and the failures by cause (`unstated` without one), most first.
+//!   window's span, the reruns, and the failures by cause (`unstated` without one; with a `ready`
+//!   check's step when it says more, `build/clippy`: [`failure_label`]), most first.
 //! - **Per hour** (clock hours, UTC, from the first run's hour in the window to the last's): each
 //!   lane's runs started in it, passed, failed, no result (running ones among them), its pass
 //!   rate and median duration, and its busy seconds in the hour. The Gates band draws both
@@ -47,7 +49,7 @@ use crate::colours::{self, Rgb};
 use crate::details::Subject;
 use crate::factory::{GateRun, NEVER_FINISHED, Outcome, gate_runs};
 use crate::rows::duration;
-use crate::stats::{Cause, Intervals, MAX_HOURS, Window, cause_of, fraction, is_ready, median, ratio};
+use crate::stats::{Cause, Intervals, MAX_HOURS, Window, cause_of, failure_label, fraction, is_ready, median, ratio, step_of};
 use crate::tickets::{Phase, Ticket};
 use crate::tooltip::{FAILED, PASSED, TipLine};
 
@@ -134,6 +136,9 @@ pub struct Run {
     pub result: GateResult,
     /// Why it failed (its stop note's `cause=`, a send back's note), or `never finished`.
     pub cause: Option<String>,
+    /// The `ci` step a failed `ready` check failed at: its stop note's `step=` (#77). None for a
+    /// gate run, a pass, and a note from before swarm-core wrote it.
+    pub step: Option<String>,
     /// The pull requests and the tickets it carried.
     pub prs: Vec<u64>,
     pub tickets: Vec<u64>,
@@ -403,6 +408,7 @@ fn coordinator_run(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge]
         kind: run.kind,
         result,
         cause,
+        step: None,
         prs,
         tickets: carried_tickets,
         merges: run_merges,
@@ -424,14 +430,13 @@ fn ready_run(activity: &Activity, tickets: &[Ticket], agent: &Agent, sub: &Sub, 
     let left = sub.span.open.then(|| agent.session_ended_after(start)).flatten();
     let (result, end, cause) = match (sub.rc, sub.span.open, left) {
         (Some(0), ..) => (GateResult::Passed, Some(sub.span.end), None),
-        (Some(_), ..) => {
-            let cause = sub.stop_note.as_deref().and_then(cause_of);
-            (GateResult::Failed, Some(sub.span.end), cause)
-        }
+        (Some(_), ..) => (GateResult::Failed, Some(sub.span.end), sub.stop_note.as_deref().and_then(cause_of)),
         (None, true, Some(session)) => (GateResult::NoResult, Some(session.span.end.max(start)), Some(NEVER_FINISHED.to_owned())),
         (None, true, None) => (GateResult::Running, None, None),
         (None, false, _) => (GateResult::NoResult, Some(sub.span.end), None),
     };
+    // The `ci` step it failed at (#77): an older note names none, its cause unknown as before.
+    let step = if result == GateResult::Failed { sub.stop_note.as_deref().and_then(step_of) } else { None };
     let on = agent.work.iter().filter(|w| w.span.start <= start && start <= w.span.end).map(|w| (w.issue, w.mr)).next_back();
     let mut issues = sub.issues.clone();
     let mut prs = sub.prs.clone();
@@ -455,6 +460,7 @@ fn ready_run(activity: &Activity, tickets: &[Ticket], agent: &Agent, sub: &Sub, 
         kind: kind.and_then(|k| k.split_whitespace().next().map(str::to_owned)),
         result,
         cause,
+        step,
         prs,
         tickets: carried_tickets,
         merges: Vec::new(),
@@ -536,7 +542,10 @@ fn head_lines(run: &Run) -> Vec<TipLine> {
     };
     let kind = run.kind.as_ref().map(|k| format!(" · {k}")).unwrap_or_default();
     let head = TipLine::strong(format!("{what}{}", run.sub)).then(kind).then(format!(" · {}", run.name));
-    let cause = run.cause.as_ref().map(|c| format!(": {c}")).unwrap_or_default();
+    let cause = match (&run.cause, &run.step) {
+        (None, None) => String::new(),
+        (cause, step) => format!(": {}", failure_label(cause.as_deref(), step.as_deref())),
+    };
     let so_far = if run.end.is_none() { " so far" } else { "" };
     let result = TipLine::coloured(run.result.name(), run.result.colour())
         .then_coloured(cause, run.result.colour())
@@ -587,7 +596,7 @@ fn figures<'a>(runs: impl Iterator<Item = &'a Run>, span: &Intervals, last: Time
     let with_result: Vec<i64> = started.iter().filter(|r| matches!(r.result, GateResult::Passed | GateResult::Failed)).map(|r| r.duration_seconds).collect();
     let mut causes: BTreeMap<String, usize> = BTreeMap::new();
     for run in started.iter().filter(|r| r.result == GateResult::Failed) {
-        *causes.entry(run.cause.clone().unwrap_or_else(|| "unstated".into())).or_default() += 1;
+        *causes.entry(failure_label(run.cause.as_deref(), run.step.as_deref())).or_default() += 1;
     }
     let mut causes: Vec<Cause> = causes.into_iter().map(|(cause, count)| Cause { cause, count }).collect();
     causes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.cause.cmp(&b.cause)));
@@ -820,6 +829,45 @@ mod tests {
         let activity = Activity::of(&files);
         let stats = stats(&activity, &tickets(&activity), &[], Window::default());
         assert_eq!((Gates::from(gate), Gates::from(ready)), (stats.gates, stats.ready), "as stats.get counts them");
+    }
+
+    /// #77: a failed `ready` check's stop names its cause and the `ci` step it failed at
+    /// (swarm-core's `rc=<n>; cause=<cause>; step=<step>`); an older one, `rc=1` alone, reads as
+    /// before: cause unknown, `unstated` in the figures.
+    #[test]
+    fn a_ready_stop_with_a_cause_and_step_and_one_without() {
+        let worker = vec![
+            line(0, 0, r#""event":"session.start","machine":"mini","name":"worker-1","role":"worker""#),
+            line(0, 1, r#""event":"claim","issue":1,"mr":11"#),
+            line(0, 2, r#""event":"work","issue":1"#),
+            line(0, 10, r#""event":"sub.start","name":"ready","sub":"ready-aaa""#),
+            line(0, 15, r#""event":"sub.stop","note":"rc=101; cause=build; step=clippy","sub":"ready-aaa""#),
+            line(0, 20, r#""event":"sub.start","name":"ready","sub":"ready-bbb""#),
+            line(0, 25, r#""event":"sub.stop","note":"rc=1","sub":"ready-bbb""#),
+            line(0, 30, r#""event":"sub.start","name":"ready","sub":"ready-ccc""#),
+            line(0, 35, r#""event":"sub.stop","note":"rc=100; cause=test; step=test","sub":"ready-ccc""#),
+            line(0, 40, r#""event":"sub.start","name":"ready","sub":"ready-ddd""#),
+            line(0, 45, r#""event":"sub.stop","note":"rc=0","sub":"ready-ddd""#),
+        ];
+        let files = [file("mini-aa", worker)];
+        let list = list(&files, Window::default());
+        let read = |sub: &str| {
+            let run = sub_of(&list, sub);
+            (run.result, run.cause, run.step)
+        };
+        let failed = |cause: Option<&str>, step: Option<&str>| (GateResult::Failed, cause.map(str::to_owned), step.map(str::to_owned));
+        assert_eq!(read("ready-aaa"), failed(Some("build"), Some("clippy")));
+        assert_eq!(read("ready-bbb"), failed(None, None), "an older note: cause unknown");
+        assert_eq!(read("ready-ccc"), failed(Some("test"), Some("test")));
+        assert_eq!(read("ready-ddd"), (GateResult::Passed, None, None));
+        let causes: Vec<(&str, usize)> = list.ready.causes.iter().map(|c| (c.cause.as_str(), c.count)).collect();
+        assert_eq!(causes, [("build/clippy", 1), ("test", 1), ("unstated", 1)], "the step where it says more");
+        let tip = |sub: &str| sub_of(&list, sub).tooltip.get(1).map(TipLine::text).unwrap_or_default();
+        assert_eq!(tip("ready-aaa"), "failed: build/clippy · 5 min 00 s");
+        assert_eq!(tip("ready-bbb"), "failed · 5 min 00 s");
+        let activity = Activity::of(&files);
+        let stats = stats(&activity, &tickets(&activity), &[], Window::default());
+        assert_eq!(Gates::from(&list.ready), stats.ready, "stats.get counts the same causes");
     }
 
     /// [`swarm`], and a second coordinator's two gates that logged no `sub.start`: gate-pr21
