@@ -150,3 +150,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #89 (#85, the Factory follows the timeline); capacity=2 free=12.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-89","t":"2026-11-02T19:58:59Z"}
 {"event":"merge","issue":85,"mr":89,"sub":"gate-89","t":"2026-11-02T19:59:22Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #89","sub":"gate-89","t":"2026-11-02T19:59:28Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #90 (#86, fold quiet time; swarm-timeline efdf212); capacity=2 free=16.7; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-90","t":"2026-11-02T20:30:28Z"}
