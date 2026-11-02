@@ -36,14 +36,15 @@ The crates and their layers, generated from the layers table in `xtask/` (`Hooks
 
 <!-- crate-map:start (cargo xtask layers --write) -->
 ```text
- app  swarmception         the desktop app: `--repo <path>` opens a swarm's tracking branch
- app  swarmception-cli     the headless CLI: list and run the engine's commands, JSON out
- tool xtask                cargo xtask: ci, layers, and the swarm's commands from swarm-core
- L4   swarmception-ui      the UI shell: menus, toolbar, panes (the timeline), UI state as data
- L3   swarmception-engine  the session and the typed command registry: every action is a command
- L2   swarmception-source  reads a repo's tracking branch through git, with deadlines
- L1   swarmception-domain  the swarm's activity from its events, and the timeline's rows from it
- L0   swarmception-model   the tracking format's events, parsed from hostile JSON lines
+ app  swarmception             the desktop app: `--repo <path>` opens a swarm's tracking branch
+ app  swarmception-cli         the headless CLI: run the engine's commands, JSON out; `serve`, `mcp`
+ tool xtask                    cargo xtask: ci, layers, and the swarm's commands from swarm-core
+ L4   swarmception-ui          the UI shell: menus, toolbar, panes (the timeline), UI state as data
+ L4   swarmception-automation  the control protocol (JSON lines, loopback, a token), the headless server, MCP
+ L3   swarmception-engine      the session and the typed command registry: every action is a command
+ L2   swarmception-source      reads a repo's tracking branch through git, with deadlines
+ L1   swarmception-domain      the swarm's activity from its events, and the timeline's rows from it
+ L0   swarmception-model       the tracking format's events, parsed from hostile JSON lines
 ```
 <!-- crate-map:end -->
 

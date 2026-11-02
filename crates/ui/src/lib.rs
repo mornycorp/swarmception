@@ -10,6 +10,7 @@
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+pub mod control;
 mod factory;
 mod factory_chip;
 mod factory_paint;

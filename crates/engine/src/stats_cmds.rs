@@ -19,7 +19,12 @@ pub enum At {
 }
 
 impl At {
-    pub(crate) fn time(&self) -> Result<Timestamp, EngineError> {
+    /// The time it names.
+    ///
+    /// # Errors
+    ///
+    /// [`Refusal::BadTime`] for text that isn't a UTC time.
+    pub fn time(&self) -> Result<Timestamp, EngineError> {
         match self {
             Self::Seconds(seconds) => Ok(Timestamp(*seconds)),
             Self::Text(text) => Timestamp::parse(text).ok_or_else(|| Refusal::BadTime { text: text.chars().take(64).collect() }.into()),

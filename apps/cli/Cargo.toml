@@ -8,7 +8,11 @@ publish.workspace = true
 
 [dependencies]
 swarmception-engine = { workspace = true }
+swarmception-automation = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true }
 
 [lints]
 workspace = true

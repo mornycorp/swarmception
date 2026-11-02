@@ -12,6 +12,8 @@ swarmception-ui = { workspace = true }
 swarmception-engine = { workspace = true }
 swarmception-domain = { workspace = true }
 swarmception-model = { workspace = true }
+swarmception-automation = { workspace = true }
+serde_json = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }

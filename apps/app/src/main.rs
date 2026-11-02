@@ -11,13 +11,16 @@
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
-//! agents can check the drawing by eye. On macOS the menus are in the system menu bar
+//! agents can check the drawing by eye. `--control [<port>]` serves the control channel on
+//! loopback (any free port when none is given; [`control`]): it prints where and its token as one
+//! JSON line, and `--control-file <path>` writes that line to a file too. On macOS the menus are in the system menu bar
 //! ([`mac_menu`]); elsewhere the window draws its own.
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+mod control;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 
@@ -50,7 +53,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -69,12 +72,15 @@ struct Options {
     theme: Option<egui::Theme>,
     size: Option<(f32, f32)>,
     screenshot: Option<PathBuf>,
+    /// `--control`: the port to serve the control channel on, 0 for any free one.
+    control: Option<u16>,
+    control_file: Option<PathBuf>,
 }
 
 impl Options {
     fn parse(args: &[String]) -> Result<Self, String> {
         let mut options = Self::default();
-        let mut args = args.iter();
+        let mut args = args.iter().peekable();
         while let Some(arg) = args.next() {
             let mut value = || args.next().cloned().ok_or_else(|| format!("{arg} needs a value"));
             match arg.as_str() {
@@ -121,6 +127,13 @@ impl Options {
                     options.size = Some((w, h));
                 }
                 "--screenshot" => options.screenshot = Some(value()?.into()),
+                "--control" => {
+                    // The port is optional: the next argument when it is a number.
+                    let port = args.next_if(|next| !next.starts_with("--"));
+                    let port = port.map(|text| text.parse::<u16>().map_err(|_| format!("--control takes a port (0 to 65535), not {text}"))).transpose()?;
+                    options.control = Some(port.unwrap_or(0));
+                }
+                "--control-file" => options.control_file = Some(value()?.into()),
                 "-h" | "--help" => return Err(String::new()),
                 other => return Err(format!("unknown argument `{other}`")),
             }
@@ -158,6 +171,10 @@ fn main() -> ExitCode {
         }
         let mut shell = swarmception_ui::Shell::new(&cc.egui_ctx, repo.as_deref());
         set_up(&mut shell, &options)?;
+        let control = match options.control {
+            Some(port) => Some(control::start(port, options.control_file.as_deref(), &cc.egui_ctx)?.0),
+            None => None,
+        };
         #[cfg(target_os = "macos")]
         let menu = match mac_menu::NativeMenu::install(&cc.egui_ctx, &shell.menu_state()) {
             Ok(menu) => {
@@ -176,6 +193,7 @@ fn main() -> ExitCode {
             hover: options.hover,
             hover_bar: options.hover_bar,
             pointer: None,
+            control,
             #[cfg(target_os = "macos")]
             menu,
         }))
@@ -224,6 +242,8 @@ struct App {
     hover_bar: Option<u64>,
     /// Where `--hover` or `--hover-bar` put the pointer last.
     pointer: Option<egui::Pos2>,
+    /// `--control`: the control channel's requests.
+    control: Option<control::Control>,
     #[cfg(target_os = "macos")]
     menu: Option<mac_menu::NativeMenu>,
 }
@@ -243,6 +263,9 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         if let Some(menu) = &mut self.menu {
             menu.run_clicks(&mut self.shell, ui.ctx());
+        }
+        if let Some(control) = &mut self.control {
+            control.answer(&mut self.shell, ui.ctx());
         }
         self.shell.ui(ui);
         #[cfg(target_os = "macos")]
@@ -337,6 +360,12 @@ mod tests {
         assert_eq!((options.step, options.steps), (Some(Direction::Previous), Some(swarmception_ui::Steps::SendBacks)));
         assert!(parse(&["--step", "sideways"]).is_err());
         assert!(parse(&["--steps", "lunches"]).is_err());
+        assert_eq!(parse(&["--control"]).unwrap().control, Some(0));
+        let options = parse(&["--control", "7070", "--control-file", "c.json", "--dark"]).unwrap();
+        assert_eq!((options.control, options.control_file, options.theme), (Some(7070), Some(PathBuf::from("c.json")), Some(egui::Theme::Dark)));
+        assert_eq!(parse(&["--control", "--dark"]).unwrap().control, Some(0));
+        assert!(parse(&["--control", "port"]).is_err());
+        assert!(parse(&["--control", "70000"]).is_err());
 
         assert_eq!(parse(&["--help"]), Err(String::new()));
     }

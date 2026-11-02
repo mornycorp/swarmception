@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (the timeline's toolbar trimmed to what Swarmception needs, its view fixed by command; the bars' tooltips in colour) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (automation: the control channel, the headless server and MCP, #46) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -152,10 +152,18 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   the status bar says how many issues came and from where,
   or warns why none did.
   `UiState` (the panes shown, the factory's follow, play, speed, *t* and the moments it steps by)
-  is serde data.
+  is serde data. `control` (#46) is the window's side of the control channel: `Shell::answer`
+  runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
+  the widget and every other command to the engine ([Automation](#automation)).
+- **L4 `swarmception-automation`** (#46): the control protocol as types (`protocol`: `Request`,
+  `Reply`, `ProtocolError`, version 1), the loopback server (`tcp`), the UI thread's handler
+  (`channel`), the headless handler (`session`), MCP over stdio (`mcp`) and a typed client
+  (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
+  never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`) and `swarmception-cli` (the engine
-  headless: `commands`, `run`).
+  `--panes`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`, `--control`,
+  `--control-file`) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
+  `mcp`).
 
 Two sessions meet in the timeline pane: Swarmception's own (what the swarm did, the rows) and the
 widget's (the view: zoom, pan, scale, selection). Nothing reaches across: the UI moves data from
@@ -216,12 +224,40 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
 - **The CLI** (`swarmception-cli`) runs the engine headless: list the commands, run one or a script of them
   (`swarmception-cli run …`), serve the control protocol, serve MCP. It is how an agent checks a change
   without a window, and the smoke gate's headless run.
-- **The control channel**: the desktop app, started with `--control`, listens on loopback with a
-  token, JSON lines in and out: every engine command, plus `ui.inspect` and `ui.set`.
-- **MCP**: the same registry as tools.
+- **The control channel** (#46, L4 `swarmception-automation`, after swarm-timeline's
+  `timeline-automation`, whose line reader, token, loopback bind and limits it reuses):
+  `swarmception --repo <r> --control [<port>] [--control-file <path>]` listens on 127.0.0.1 (any
+  free port by default) with a fresh 128-bit token, and prints `{"address":"127.0.0.1:<port>",
+  "token":"<hex>"}` as one line on stdout (and writes it, owner-only, to the file). JSON lines in
+  and out, a line at most 1 MiB:
 
-There is no control channel or MCP yet ([G2](gaps.md#g2-automation-the-control-channel-and-mcp)):
-the CLI and the engine's tests are the headless way in today.
+  ```text
+  → {"v":1,"token":"<hex>","id":7,"command":"ui.set","params":{"at":"2026-11-01T10:56:34Z","ticket":172}}
+  ← {"id":7,"result":{…}}
+  ← {"id":7,"result":null,"error":{"problem":"engine","error":{"code":"invalid","refusal":{"reason":"badTime","text":"teatime"}}}}
+  ```
+
+  `command` is an engine command's id (`engine.commands` lists them with their schemas); the
+  window's own `ui.commands`, `ui.inspect` (`swarmception_ui::control::Inspect`: the shell's
+  `UiState`, and what the panes show: the factory's *t*, where it came from, the key moment, what
+  each station drew last frame, the timeline's scale, window, playhead and selected ranges),
+  `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
+  selected, a step, the window) and `ui.screenshot` (`{"path": "<file>.ppm"}`, taken a few frames
+  later so a `ui.set` has settled, answered with its size once saved); or `timeline.<id>`, the
+  timeline widget's own command forwarded (`timeline.view.fit`, `timeline.state.get`,
+  `timeline.ui.inspect`; `timeline.engine.commands` lists them: the engine's own `timeline.*` ids
+  have one dot). The errors are `ProtocolError`, tagged `problem`: `bad_request`, `too_long`,
+  `wrong_version`, `bad_token`, `no_ui`, `unavailable`, `busy`, `engine` (the engine's
+  `EngineError`), `widget` (the widget's), `ui`. A connection whose first line lacks the token is
+  answered and closed; at most eight connections, ten seconds for the first line. Requests reach
+  the UI thread through a channel (`channel::ChannelHandler`), which `Shell::answer` answers
+  between frames. `client::Client` is the typed client tests use.
+- **Headless:** `swarmception-cli [--repo <r>] serve [--port <p>] [--control-file <path>]` speaks
+  the same protocol on its own session; `ui.*` and `timeline.<id>` are `no_ui` there.
+- **MCP:** `swarmception-cli [--repo <r>] mcp` serves every engine command as an MCP tool over
+  stdio (newline-delimited JSON-RPC 2.0: `initialize`, `tools/list`, `tools/call`, `ping`), named
+  with `_` for `.` (`factory_at`); a command's error is the tool's `isError` with the engine's
+  error as its text.
 
 ## Never crash
 
@@ -248,6 +284,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Automation (#46): `swarmception-automation`, the app's `--control`, `ui.inspect` / `ui.set` / `ui.screenshot`, the widget's commands as `timeline.<id>`, `swarmception-cli serve` and `mcp` |
 | 2026-11-01 | minor | A gate that never logged its stop ends at its coordinator's session's end or the next gate's start, with no result (#42); the factory's working border a warm white and in-the-gate a magenta, apart from scheme B |
 | 2026-11-01 | minor | The factory steps by key moment, back and forth (#33): the domain's `moments`, `factory.moments` and `factory.step`; ⏮ / ⏭ and ← / →, the moment named beside the clock |
 | 2026-11-01 | minor | The timeline's toolbar shows only what Swarmception needs; the scale, origin, minimap and click fixed by command; the bars' tooltips in colour from the domain (#35) |

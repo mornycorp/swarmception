@@ -175,7 +175,8 @@ struct Landed {
 }
 
 /// Where this frame's *t* came from.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
 pub enum Source {
     /// The pointer over the timeline.
     Pointer,
@@ -278,6 +279,12 @@ impl FactoryPane {
     #[must_use]
     pub const fn hovered(&self) -> Option<u64> {
         self.hovered
+    }
+
+    /// Why there is no scene: `factory.at`'s error.
+    #[must_use]
+    pub fn error(&self) -> Option<&str> {
+        self.error.as_deref()
     }
 
     /// Where this frame's *t* came from.

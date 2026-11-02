@@ -14,10 +14,8 @@ swarmception-engine = { workspace = true }
 swarmception-domain = { workspace = true }
 swarmception-model = { workspace = true }
 serde = { workspace = true }
-schemars = { workspace = true }
-
-[dev-dependencies]
 serde_json = { workspace = true }
+schemars = { workspace = true }
 
 [lints]
 workspace = true

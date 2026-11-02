@@ -1,0 +1,24 @@
+[package]
+name = "swarmception-automation"
+description = "Swarmception's control protocol: JSON lines over loopback with a token, the headless server and MCP, over the engine's commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+swarmception-engine = { workspace = true }
+# The line reader, the token and the loopback bind; its protocol types carry the widget's errors,
+# so this crate's are its own.
+timeline-automation = { workspace = true }
+# The widget's errors, for its commands forwarded as `timeline.<id>`.
+timeline-engine = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+
+[dev-dependencies]
+swarmception-domain = { workspace = true }
+
+[lints]
+workspace = true

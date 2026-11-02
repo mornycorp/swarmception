@@ -5,10 +5,10 @@
 use std::fmt;
 
 use schemars::JsonSchema;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Why a command can't run now.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "reason", rename_all = "camelCase")]
 pub enum Unavailable {
     /// No repository is open.
@@ -33,7 +33,7 @@ impl fmt::Display for Unavailable {
 }
 
 /// Why a value was refused.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "reason", rename_all = "camelCase")]
 pub enum Refusal {
     /// The path is not a directory.
@@ -60,7 +60,7 @@ impl fmt::Display for Refusal {
 }
 
 /// What went wrong running a command.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "code", rename_all = "camelCase")]
 pub enum EngineError {
     UnknownCommand { command: String },
