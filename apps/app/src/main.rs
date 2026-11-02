@@ -15,7 +15,9 @@
 //! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
 //! `--menu file|file.recent` draws the window's own menu bar and clicks File open (and puts the
 //! pointer on Open Recent), for a screenshot of it (#69); File ▸ Open… (⌘O) is AppKit's open
-//! panel on macOS ([`folder`]);
+//! panel on macOS ([`folder`]), elsewhere the desktop's own picker (zenity, kdialog, PowerShell's
+//! folder browser) as a child process with a deadline, else a path typed into the window
+//! ([`picker`], #76);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
 //! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,
@@ -43,6 +45,9 @@ mod control;
 mod folder;
 #[cfg(target_os = "macos")]
 mod mac_menu;
+// Built and tested everywhere; run off macOS only.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+mod picker;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -264,6 +269,9 @@ fn main() -> ExitCode {
         let control = options.control.map(|port| control::start(port, options.control_file.as_deref(), &cc.egui_ctx)).transpose()?.map(|c| c.0);
         #[cfg(target_os = "macos")]
         let menu = mac_menus(&cc.egui_ctx, &mut shell, options.menu);
+        // Elsewhere the desktop's own folder picker, as a child process (#76).
+        #[cfg(not(target_os = "macos"))]
+        shell.set_folder_picker(Box::new(picker::pick));
         Ok(Box::new(App {
             menu_open: options.menu.map(MenuDrive::new),
             shell,

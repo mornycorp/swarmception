@@ -12,7 +12,7 @@ use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::live_cmds::{Get as GetLive, SetParams as SetLiveParams};
 use swarmception_ui::control::{Answer, Inspect};
 use swarmception_ui::saved::{self, StateStore};
-use swarmception_ui::{MenuAction, Shell};
+use swarmception_ui::{MenuAction, Picked, Shell};
 
 fn scratch(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -111,7 +111,7 @@ fn open_switches_repositories_each_with_its_own_state() {
     let answer = b.clone();
     shell.set_folder_picker(Box::new(move |start| {
         *seen.borrow_mut() = start.map(Path::to_path_buf);
-        Some(answer.clone())
+        Picked::Folder(answer.clone())
     }));
     shell.run_menu(&ctx, MenuAction::Open);
     assert_eq!(asked.borrow().as_deref(), a.parent());
@@ -181,11 +181,11 @@ fn a_refused_folder_is_said_in_the_window_and_the_open_repository_stays() {
     assert_eq!(store.load_recent(), std::slice::from_ref(&a), "a refused folder isn't remembered");
 
     // A missing folder from Open Recent, through the picker: refused the same way.
-    shell.set_folder_picker(Box::new(|_| Some(PathBuf::from("/no/such/swarm"))));
+    shell.set_folder_picker(Box::new(|_| Picked::Folder(PathBuf::from("/no/such/swarm"))));
     shell.run_menu(&ctx, MenuAction::Open);
     assert!(shell.refused().is_some_and(|r| r.why.contains("no such folder")), "{:?}", shell.refused());
     // Cancelled: nothing more is said or changed.
-    shell.set_folder_picker(Box::new(|_| None));
+    shell.set_folder_picker(Box::new(|_| Picked::Cancelled));
     shell.run_menu(&ctx, MenuAction::Open);
     assert_eq!(inspect(&mut shell).repo.as_deref(), Some(a.display().to_string().as_str()));
     for dir in [a, plain, state] {

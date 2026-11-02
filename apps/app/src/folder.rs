@@ -7,14 +7,20 @@ use std::path::{Path, PathBuf};
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSModalResponseOK, NSOpenPanel};
 use objc2_foundation::{NSString, NSURL};
+use swarmception_ui::Picked;
 
-/// Shows the open panel, modal, from `start`: the folder chosen, or none when cancelled (or off
-/// the main thread, where AppKit can't show it).
-pub fn pick(start: Option<&Path>) -> Option<PathBuf> {
+/// Shows the open panel, modal, from `start`: the folder chosen, or cancelled; off the main
+/// thread, where AppKit can't show it, no picker (the window asks for a path).
+pub fn pick(start: Option<&Path>) -> Picked {
     let Some(mtm) = MainThreadMarker::new() else {
         eprintln!("swarmception: not on the main thread; no folder panel");
-        return None;
+        return Picked::NoPicker;
     };
+    shown(mtm, start).map_or(Picked::Cancelled, Picked::Folder)
+}
+
+/// The panel shown on the main thread: the folder chosen, or none when cancelled.
+fn shown(mtm: MainThreadMarker, start: Option<&Path>) -> Option<PathBuf> {
     let panel = NSOpenPanel::openPanel(mtm);
     panel.setCanChooseDirectories(true);
     panel.setCanChooseFiles(false);

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (`ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -287,11 +287,17 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   header sorts by its column (again: the other way; none last either way; the first column: the
   command's order). Hovering a row lights its tickets' bars on the timeline (`Hover::Worker`,
   `Lit::HoveredWorker`, after a factory or gates hover); clicking a worker makes its session the
-  details' subject. `--hover-worker <name>` puts the pointer on a worker's row.
+  details' subject. `--hover-worker <name>` puts the pointer on a worker's row. Its window's
+  place (#76: `WorkersView::place`, its top-left corner in whole points; none, its default up
+  from the bottom) is set by `ui.set`'s `workers.place` and moved there once (egui's kept area
+  state moved first, since a window dragged by its title bar puts `current_pos` back), and a
+  drag by the person is kept once they let go (moved, its size the same); `ui.set`'s `workers`
+  also opens or closes it and sets its sort (as a header's first click, `WorkersView::sort_by`)
+  and its window of time; `ui.inspect`'s `workers.rect` is where it was drawn.
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
   moments it steps by, what the details are of; version 5: the gates pane, #61; version 6: the
   folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run and
-  sort, #67) is serde data. `saved` (#53) keeps the
+  sort, #67; version 8: its window's place, #76) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -310,7 +316,14 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `ui.inspect`'s `saved` says where it is kept and was read from.
   `open` (#69) opens repositories from the window: File ▸ Open… asks the host's `FolderPicker`
   (on macOS the app's AppKit open panel, `apps/app/src/folder.rs`, through the objc2 crates
-  already locked; without one the window asks for a path) and runs `Shell::open_repo`, the open
+  already locked; elsewhere, #76, `apps/app/src/picker.rs`: the desktop's own as a child process
+  with a deadline (ten minutes, then stopped and taken as cancelled), on Linux and the BSDs
+  `zenity --file-selection --directory` or `kdialog --getexistingdirectory`, the one of the
+  desktop `XDG_CURRENT_DESKTOP` names first, on Windows PowerShell's `FolderBrowserDialog`
+  (`powershell`, else `pwsh`, the start folder handed over in the environment), the choice
+  (`picker::candidates`) and the reading of its exit and output (`picker::outcome`) pure
+  functions; the picker answers `Picked::Folder`, `Cancelled` or `NoPicker`, and without one, or
+  when none runs, the window asks for a path) and runs `Shell::open_repo`, the open
   repository's state written first, then `repo.open`; a refusal is a window saying why, the
   repository open staying. File ▸ Open Recent lists `repo.recent` (each name and its folder,
   `menu::recent_label`; `MenuAction::OpenRecent(n)`) with Clear Menu (`repo.clearRecent`); the
@@ -319,8 +332,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (the menus, the control channel's `repo.open`, which the shell takes itself), the shell sees
   `Session::opens` move and switches: the panes afresh (the panes shown, their sizes and folds
   kept), then the new repository's own saved state restored and kept, Live as chosen for it.
-  `ui.inspect` (version 6) reports it as `open`: the refusal shown, the path being typed, Open
-  Recent's items and where the list is kept.
+  `ui.inspect` (version 6; 8 since #76's `workers.rect`) reports it as `open`: the refusal
+  shown, the path being typed, Open Recent's items and where the list is kept.
   `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).
@@ -419,8 +432,9 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   each station drew last frame, the timeline's scale, window, playhead, selected ranges and
   highlighted ones),
   `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
-  selected, a step, the details' subject or none (#55), the window; `ui.inspect`'s `details`
-  report its subject, title, error and bars), `ui.loaded` (`{"within": <s>}`, at most 19:
+  selected, a step, the details' subject or none (#55), the window; `workers` (#76: `open`,
+  `sort`, `ascending`, `wholeRun`, `place` within ±16384 points, `defaultPlace`); `ui.inspect`'s
+  `details` report its subject, title, error and bars), `ui.loaded` (`{"within": <s>}`, at most 19:
   answered with `ui.inspect`'s answer once nothing is loading, the issues are in and the
   timeline has its data, or the read failed, or there is no repository; a `ui` error after
   `within`) and `ui.screenshot` (`{"path": "<file>.png"}`, PNG, or a binary PPM for `.ppm`;
@@ -430,7 +444,8 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   `timeline.ui.inspect`; `timeline.engine.commands` lists them: the engine's own `timeline.*` ids
   have one dot). The errors are `ProtocolError`, tagged `problem`: `bad_request`, `too_long`,
   `wrong_version`, `bad_token`, `no_ui`, `unavailable`, `busy`, `engine` (the engine's
-  `EngineError`), `widget` (the widget's), `ui`. A connection whose first line lacks the token is
+  `EngineError`), `widget` (the widget's), `ui`; and MCP's own two, `image_too_large` and
+  `image_unreadable` (#76). A connection whose first line lacks the token is
   answered and closed; at most eight connections, ten seconds for the first line. Requests reach
   the UI thread through a channel (`channel::ChannelHandler`), which `Shell::answer` answers
   between frames. `client::Client` is the typed client tests use.
@@ -448,7 +463,13 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   (`client::Remote`): `ui_set`, `ui_inspect`, `ui_loaded`, `ui_screenshot` (which writes the PNG
   itself), `timeline_view_fit`, `factory_at` on the window's session. A relative screenshot path
   is the MCP server's directory, not the window's. A connection the window closed (ten idle
-  minutes) is opened again; a window gone is the tool's `unavailable` error.
+  minutes) is opened again; a window gone is the tool's `unavailable` error. A screenshot saved
+  as PNG is answered as MCP's image too (#76): its text (`{path, width, height}`), then
+  `{"type":"image","data":<base64>,"mimeType":"image/png"}` (`mcp::Content`; the base64 is
+  `mcp::base64`, the standard library's), read back by the MCP server up to `mcp::IMAGE_MOST`
+  (3 MiB, 4 MiB as base64, under the 5 MB a model takes an image at); a bigger one is the tool's
+  `image_too_large` error with its path and size, the file saved all the same, and one that
+  isn't a PNG `image_unreadable`. A PPM is answered as text alone.
 - **The CLI client** (#60): `swarmception-cli send --control <file> <id> [<params JSON>]` sends one
   request and prints its result; `send --control <file> --script <file.jsonl>` sends a script
   (`script::Step` a line, `{"command": <id>, "params": {…}}`; blank lines and `#` lines skipped),
@@ -484,6 +505,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | `ui.set` reaches the Workers window (#76: `workers`, its place in `WorkersView` and `UiState` version 8, `ui.inspect` version 8 with `workers.rect`); MCP answers a screenshot's PNG as an image up to `IMAGE_MOST` (`mcp::Content`, `image_too_large`, `image_unreadable`); Open… off macOS through the desktop's picker as a child process (`picker`, `Picked`) |
 | 2026-11-02 | minor | One definition of a gate run (#75): `gates::runs` and `gates::figures`, counted by `gates.list` and `stats.get` alike (`Stats::gates` gains `running` and `inferred`, its `noResult` no longer counting running runs; `Figures::inferred`); the Gates band draws both lanes' hours, mirrored (`GatesDrawn::hour_columns`), `ui.inspect` version 7 with `gates.hours` |
 | 2026-11-02 | minor | Opening a repository from the app (#69): the source's `probe`, `repo.open`'s refusals before anything changes, `repo.recent` / `repo.clearRecent`, `Session::opens`; File ▸ Open… (AppKit's open panel, ⌘O) and Open Recent, the shell switching state per repository, `recent.json`, `ui.inspect` version 6 with `open`, `--menu`; every live check that reads again refreshes the issues |
 | 2026-11-02 | minor | Model and effort compared per worker (#67): the domain's `workers`, `workers.compare`, the Workers pane as a window (View ▸ Workers, `--panes …,workers`, `--hover-worker`), `Hover::Worker`, `UiState` version 7, `ui.inspect` version 5 with `workers` |

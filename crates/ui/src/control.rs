@@ -34,8 +34,8 @@ use crate::{Panes, Shell, UiState};
 /// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
 /// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
 /// workers pane (#67); 6: opening a repository (`open`, #69); 7: the gates pane's hours, both
-/// lanes (`gates.hours`, #75).
-pub const INSPECT_VERSION: u32 = 7;
+/// lanes (`gates.hours`, #75); 8: where the workers' window was drawn (`workers.rect`, #76).
+pub const INSPECT_VERSION: u32 = 8;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -174,6 +174,50 @@ pub struct WorkersInspect {
     pub hovered: Option<String>,
     /// Why there is nothing to draw: `workers.compare`'s refusal.
     pub error: Option<String>,
+    /// Where its window was drawn (#76), in whole points from the app window's top-left: none
+    /// when closed. Its sort and its place as asked are the state's `workers`.
+    #[serde(default)]
+    pub rect: Option<RectDrawn>,
+}
+
+/// A rectangle as drawn, in whole points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RectDrawn {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl RectDrawn {
+    /// `rect`, each side to the nearest point.
+    #[must_use]
+    pub fn of(rect: egui::Rect) -> Self {
+        let round = |v: f32| v.round() as i32;
+        Self { x: round(rect.left()), y: round(rect.top()), width: round(rect.width()), height: round(rect.height()) }
+    }
+}
+
+/// What `ui.set` sets of the Workers pane (#76), as its window does: each part left out stays as
+/// it is.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkersSet {
+    /// Its window shown or closed, as View ▸ Workers and its × do (after `panes`).
+    pub open: Option<bool>,
+    /// The column it sorts by, as a first click on its header (`name`: as `workers.compare` lists
+    /// them), the direction that click gives unless `ascending` says.
+    pub sort: Option<crate::WorkersColumn>,
+    /// Smallest first, not largest.
+    pub ascending: Option<bool>,
+    /// The whole run, not the timeline's window.
+    pub whole_run: Option<bool>,
+    /// Its window's top-left corner, in points from the app window's top-left, each within
+    /// ±16384; moved there on the next frame, kept on screen.
+    pub place: Option<crate::WorkersPlace>,
+    /// Back to its default place, up from the bottom over the bands.
+    #[serde(default)]
+    pub default_place: bool,
 }
 
 /// The gates pane, as `ui.inspect` reads it (#61): what it drew last frame from `gates.list`.
@@ -228,8 +272,8 @@ pub enum StepTo {
 }
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the panes,
-/// their folds, speed and steps; `at`; follow and play; the ticket; the step; the details; the
-/// window.
+/// their folds, the workers pane, speed and steps; `at`; follow and play; the ticket; the step;
+/// the details; the window.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -238,6 +282,8 @@ pub struct UiSet {
     /// true}` folds the Gates band to its header, `{"details": false}` opens the Details; the
     /// panes left out stay as they are.
     pub folded: Option<crate::layout::Folded>,
+    /// The Workers pane (#76): its window open or not and where, its sort, its window of time.
+    pub workers: Option<WorkersSet>,
     pub speed: Option<Speed>,
     /// The key moments a step goes through.
     pub steps: Option<Steps>,
@@ -496,6 +542,7 @@ impl Shell {
             rows: drawn.rows.iter().map(|r| std::iter::once(r.key.clone()).chain(r.cells.iter().cloned()).collect::<Vec<_>>().join(" | ")).collect(),
             hovered: drawn.hovered.clone(),
             error: self.workers.error().map(str::to_owned),
+            rect: drawn.rect.map(RectDrawn::of),
         }
     }
 
@@ -535,6 +582,11 @@ impl Shell {
     fn apply(&mut self, set: &UiSet) -> Result<(), EngineError> {
         let at = set.at.as_ref().map(At::time).transpose()?;
         let window = set.window.as_ref().map(|span| self.window(span)).transpose()?;
+        if let Some(place) = set.workers.and_then(|w| w.place).filter(|p| !p.sane()) {
+            return Err(EngineError::BadParams {
+                message: format!("workers.place: ({}, {}) is over {} points from the window's corner", place.x, place.y, crate::WorkersPlace::MOST),
+            });
+        }
         self.sync();
         self.apply_view(set, at);
         self.apply_selection(set);
@@ -571,6 +623,9 @@ impl Shell {
         if let Some(folded) = set.folded {
             self.ui.folded = self.ui.folded.with(folded);
         }
+        if let Some(workers) = set.workers {
+            self.set_workers(workers);
+        }
         if let Some(speed) = set.speed {
             self.ui.factory.speed = speed;
         }
@@ -585,6 +640,29 @@ impl Shell {
         }
         if let Some(playing) = set.playing {
             self.ui.factory.playing = playing;
+        }
+    }
+
+    /// The Workers pane (#76): open or not, its sort, its window of time, its place.
+    const fn set_workers(&mut self, set: WorkersSet) {
+        if let Some(open) = set.open {
+            self.ui.panes.workers = open;
+        }
+        let view = &mut self.ui.workers;
+        if let Some(column) = set.sort {
+            view.sort_by(column);
+        }
+        if let Some(ascending) = set.ascending {
+            view.ascending = ascending;
+        }
+        if let Some(whole_run) = set.whole_run {
+            view.whole_run = whole_run;
+        }
+        if set.default_place {
+            view.place = None;
+        }
+        if let Some(place) = set.place {
+            view.place = Some(place);
         }
     }
 
@@ -715,6 +793,39 @@ mod tests {
         assert_eq!(inspect, shell.inspect());
         let cleared: Inspect = serde_json::from_str(&now(shell.answer("ui.set", r#"{"clearTicket": true, "follow": true}"#)).unwrap()).unwrap();
         assert_eq!((cleared.state.factory.ticket, cleared.state.factory.follow), (None, true));
+        // The Workers pane (#76): opened, sorted as a header's first click sorts, placed; then the
+        // other way, and back to its default place, closed.
+        let set = r#"{"workers": {"open": true, "sort": "claimToMerge", "wholeRun": true, "place": {"x": 30, "y": 40}}}"#;
+        let workers: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
+        assert!(workers.state.panes.workers);
+        assert_eq!(
+            workers.state.workers,
+            crate::WorkersView {
+                whole_run: true,
+                sort: Some(crate::WorkersColumn::ClaimToMerge),
+                ascending: true,
+                place: Some(crate::WorkersPlace { x: 30, y: 40 })
+            }
+        );
+        let set = r#"{"workers": {"sort": "rate"}}"#;
+        let rate: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
+        assert_eq!((rate.state.workers.sort, rate.state.workers.ascending), (Some(crate::WorkersColumn::Rate), false), "more is better: largest first");
+        let set = r#"{"workers": {"ascending": true, "defaultPlace": true, "open": false}}"#;
+        let back: Inspect = serde_json::from_str(&now(shell.answer("ui.set", set)).unwrap()).unwrap();
+        assert_eq!((back.state.workers.ascending, back.state.workers.place, back.state.panes.workers), (true, None, false));
+        let named: Inspect = serde_json::from_str(&now(shell.answer("ui.set", r#"{"workers": {"sort": "name"}}"#)).unwrap()).unwrap();
+        assert_eq!(named.state.workers.sort, None, "name: as workers.compare lists them");
+        // A place past the bound, or a part it doesn't know, changes nothing.
+        let before = shell.inspect().state;
+        for bad in [
+            r#"{"workers": {"place": {"x": 99999, "y": 0}}, "follow": false}"#,
+            r#"{"workers": {"sorted": "rate"}}"#,
+            r#"{"workers": {"place": {"x": 1.5, "y": 0}}}"#,
+        ] {
+            assert!(matches!(now(shell.answer("ui.set", bad)), Err(ShellError::Engine(EngineError::BadParams { .. }))), "{bad}");
+        }
+        assert_eq!(shell.inspect().state, before);
+
         // The engine's commands and the widget's go through too.
         assert!(now(shell.answer("engine.commands", "")).unwrap().contains("factory.at"));
         assert!(now(shell.answer("timeline.engine.commands", "")).unwrap().contains("view.fit"));

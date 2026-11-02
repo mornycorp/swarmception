@@ -55,16 +55,18 @@ pub use factory_paint::{Drawn, Marks};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use gates::{GatesDrawn, GatesPane, HourDrawn, RunDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
-pub use open::{FolderPicker, MenuDrawn, OpenInspect, Refused};
+pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
 pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
 pub use workers::{
-    Column as WorkersColumn, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView, cells as worker_cells,
+    Column as WorkersColumn, Place as WorkersPlace, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView,
+    cells as worker_cells,
 };
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
 /// details pane and what it is about; 4: the panes' sizes (#53); 5: the gates pane and its
-/// height (#61); 6: the folded panes (#68); 7: the workers pane, its window and its sort (#67).
-pub const UI_STATE_VERSION: u32 = 7;
+/// height (#61); 6: the folded panes (#68); 7: the workers pane, its window and its sort (#67);
+/// 8: where the workers' window is (#76).
+pub const UI_STATE_VERSION: u32 = 8;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -112,7 +114,7 @@ pub struct UiState {
     pub sizes: PaneSizes,
     /// Which panes are folded (#68): the person's choice, else the window's size decides.
     pub folded: layout::Folded,
-    /// What the workers pane compares over, and its sort (#67).
+    /// What the workers pane compares over, and its sort (#67); where its window is (#76).
     pub workers: WorkersView,
 }
 
@@ -1262,10 +1264,13 @@ mod tests {
         assert_eq!((five.panes.workers, five.workers), (false, WorkersView::default()));
         let sorted = UiState {
             panes: Panes { workers: true, ..Panes::default() },
-            workers: WorkersView { whole_run: true, sort: Some(WorkersColumn::Rate), ascending: false },
+            workers: WorkersView { whole_run: true, sort: Some(WorkersColumn::Rate), ascending: false, place: Some(WorkersPlace { x: 40, y: -12 }) },
             ..UiState::default()
         };
         assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&sorted).unwrap()).unwrap(), sorted);
+        // Version 7, before the window's place (#76): at its default place, its sort kept.
+        let seven: UiState = serde_json::from_str(r#"{"version":7,"workers":{"whole_run":true,"sort":"landed","ascending":true}}"#).unwrap();
+        assert_eq!(seven.workers, WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: true, place: None });
         let hidden =
             UiState { panes: Panes { gates: false, ..Panes::default() }, sizes: PaneSizes { gates: Some(180), ..PaneSizes::default() }, ..UiState::default() };
         assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&hidden).unwrap()).unwrap(), hidden);

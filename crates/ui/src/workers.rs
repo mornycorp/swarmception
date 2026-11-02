@@ -56,6 +56,50 @@ pub struct WorkersView {
     pub sort: Option<Column>,
     /// Smallest first, not largest.
     pub ascending: bool,
+    /// Where its window is (#76): put there by `ui.set`, or where the person dragged it; none:
+    /// its default, up from the bottom over the bands.
+    pub place: Option<Place>,
+}
+
+impl WorkersView {
+    /// Sorted by `column` as a first click on its header sorts it: the columns where less is
+    /// better (claim → merge, working, send backs, abandoned) smallest first, the others largest
+    /// first; `name` as `workers.compare` lists them.
+    pub const fn sort_by(&mut self, column: Column) {
+        self.sort = if matches!(column, Column::Name) { None } else { Some(column) };
+        self.ascending = matches!(column, Column::ClaimToMerge | Column::Working | Column::Sendbacks | Column::Abandoned);
+    }
+}
+
+/// Where the Workers window is (#76): its top-left corner, in whole points from the app window's
+/// top-left. egui keeps a window placed off screen on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Place {
+    pub x: i32,
+    pub y: i32,
+}
+
+impl Place {
+    /// The farthest a place may be from the app window's corner, either way, in points.
+    pub const MOST: i32 = 16_384;
+
+    /// `pos`, to the nearest point.
+    #[must_use]
+    pub fn of(pos: egui::Pos2) -> Self {
+        Self { x: pos.x.round() as i32, y: pos.y.round() as i32 }
+    }
+
+    #[must_use]
+    pub fn pos(self) -> egui::Pos2 {
+        pos2(self.x as f32, self.y as f32)
+    }
+
+    /// Whether it is within [`Self::MOST`] of the corner.
+    #[must_use]
+    pub const fn sane(self) -> bool {
+        self.x.abs() <= Self::MOST && self.y.abs() <= Self::MOST
+    }
 }
 
 /// A row as the pane drew it.
@@ -90,6 +134,8 @@ pub struct WorkersDrawn {
     pub sorted: Option<Column>,
     /// Each column's header, where it was drawn.
     pub headers: Vec<(Column, Rect)>,
+    /// The window, where it was drawn (#76): none when closed.
+    pub rect: Option<Rect>,
 }
 
 /// What the pane was asked for: the window, and the engine's revision.
@@ -104,6 +150,12 @@ pub struct WorkersPane {
     asks: u64,
     hovered: Hover,
     drawn: WorkersDrawn,
+    /// The place last handed to egui (#76): a new one moves the window there once, and then the
+    /// person can drag it.
+    placed: Option<Option<Place>>,
+    /// The window's rect the last frame no button was down: one moved since, its size the same,
+    /// was dragged, and its new place is kept.
+    rest: Option<Rect>,
 }
 
 /// Each column: what it is, its header, its width and how it is computed.
@@ -173,6 +225,18 @@ fn shown(measure: Measure, text: impl Fn(f64) -> String) -> String {
         Some(v) => text(v),
         None => "–".to_owned(),
     }
+}
+
+/// `window` (its id `id`) put at `pos` by its `pivot` corner on this frame. A window dragged by
+/// its title bar puts back where egui last kept it after `current_pos` (egui 0.37), so where it
+/// has been shown, its kept place moves first.
+fn place_window<'a>(ctx: &egui::Context, window: egui::Window<'a>, id: egui::Id, pivot: Align2, pos: egui::Pos2) -> egui::Window<'a> {
+    if let Some(mut state) = egui::AreaState::load(ctx, id) {
+        state.pivot = pivot;
+        state.pivot_pos = Some(pos);
+        ctx.memory_mut(|memory| memory.areas_mut().set_state(egui::LayerId::new(egui::Order::Middle, id), state));
+    }
+    window.current_pos(pos)
 }
 
 /// The value of `column` for `figures`, as it sorts and as its bar is long.
@@ -349,25 +413,53 @@ impl WorkersPane {
         self.hovered = Hover::Nothing;
         let screen = ctx.content_rect();
         let width: f32 = COLUMNS.iter().map(|c| c.2).sum::<f32>() + 28.0;
-        egui::Window::new(format!("{}  Workers: model × effort", icons::WORKERS))
-            .id(egui::Id::unique("workers-pane"))
+        // Up from the bottom, over the bands under the timeline: the timeline's rows stay in
+        // sight, where a hovered worker's tickets light up.
+        let default = pos2(screen.left() + ((screen.width() - width).max(32.0) / 2.0), screen.bottom() - 36.0);
+        let id = egui::Id::unique("workers-pane");
+        let window = egui::Window::new(format!("{}  Workers: model × effort", icons::WORKERS))
+            .id(id)
             .open(open)
             .resizable(true)
             .collapsible(true)
-            .default_size(vec2(width.min(screen.width() - 32.0), (screen.height() * 0.55).clamp(220.0, 620.0)))
-            // Up from the bottom, over the bands under the timeline: the timeline's rows stay in
-            // sight, where a hovered worker's tickets light up.
-            .pivot(Align2::LEFT_BOTTOM)
-            .default_pos(pos2(screen.left() + ((screen.width() - width).max(32.0) / 2.0), screen.bottom() - 36.0))
-            .show(ctx, |ui| self.contents(ui, view, windowed, selected));
+            .default_size(vec2(width.min(screen.width() - 32.0), (screen.height() * 0.55).clamp(220.0, 620.0)));
+        // A place is its top-left corner; the default its bottom-left.
+        let pivot = if view.place.is_some() { Align2::LEFT_TOP } else { Align2::LEFT_BOTTOM };
+        let window = window.pivot(pivot).default_pos(default);
+        // A new place (or the default again) moves it there once: egui keeps it after.
+        let placing = self.placed != Some(view.place);
+        let window = if placing { place_window(ctx, window, id, pivot, view.place.map_or(default, Place::pos)) } else { window };
+        self.placed = Some(view.place);
+        let shown = window.show(ctx, |ui| self.contents(ui, view, windowed, selected));
+        self.drawn.rect = shown.map(|shown| shown.response.rect);
+        self.keep_place(ctx, view, placing);
         if let Some(column) = self.drawn.sorted {
             if view.sort == Some(column) && column != Column::Name {
                 view.ascending = !view.ascending;
             } else {
-                view.sort = (column != Column::Name).then_some(column);
-                view.ascending = matches!(column, Column::ClaimToMerge | Column::Working | Column::Sendbacks | Column::Abandoned);
+                view.sort_by(column);
             }
         }
+    }
+
+    /// Keeps where the person dragged the window, once they let go: a window that moved since the
+    /// last frame no button was down, its size the same (a resize from its top or left edge
+    /// moves its corner too, and isn't a move).
+    fn keep_place(&mut self, ctx: &egui::Context, view: &mut WorkersView, placing: bool) {
+        let Some(rect) = self.drawn.rect else { return };
+        if ctx.input(|i| i.pointer.any_down()) {
+            return;
+        }
+        if let Some(before) = self.rest.filter(|_| !placing)
+            && before.min.distance(rect.min) >= 0.5
+            && (before.size() - rect.size()).length() < 0.5
+        {
+            view.place = Some(Place::of(rect.min));
+            // Handed to egui on the next frame as it is: the pivot turns to the corner, the
+            // window staying put.
+            self.placed = None;
+        }
+        self.rest = Some(rect);
     }
 
     fn contents(&mut self, ui: &mut egui::Ui, view: &mut WorkersView, windowed: bool, selected: Option<&Subject>) {

@@ -23,10 +23,21 @@ use swarmception_engine::repo_cmds::{ClearRecent, Open, OpenParams, Recent, Rece
 use crate::menu::{MenuAction, MenuState, recent_label};
 use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, GatesPane, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
 
-/// The host's folder picker: shown starting in a folder (the open repository's parent), the
-/// folder chosen, or none when cancelled. The app's is AppKit's open panel; a test's answers at
-/// once.
-pub type FolderPicker = Box<dyn FnMut(Option<&Path>) -> Option<PathBuf>>;
+/// The host's folder picker: shown starting in a folder (the open repository's parent), what it
+/// did. The app's is AppKit's open panel on macOS, elsewhere the desktop's own picker as a child
+/// process (#76: zenity, kdialog, PowerShell's folder browser); a test's answers at once.
+pub type FolderPicker = Box<dyn FnMut(Option<&Path>) -> Picked>;
+
+/// What the host's folder picker did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Picked {
+    /// The folder chosen.
+    Folder(PathBuf),
+    /// The person cancelled it: nothing opens, nothing is said.
+    Cancelled,
+    /// No picker could be shown (none installed, no display): the window asks for a path itself.
+    NoPicker,
+}
 
 /// A folder `repo.open` refused, as the window says it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -146,17 +157,17 @@ impl Shell {
         result
     }
 
-    /// File ▸ Open…: the host's picker, from the open repository's parent; else the window's
-    /// path field.
+    /// File ▸ Open…: the host's picker, from the open repository's parent; else, or when it
+    /// couldn't show one, the window's path field.
     pub(crate) fn ask_open(&mut self) {
         let start = self.engine.repo().and_then(Path::parent).map(Path::to_path_buf);
-        match self.opening.picker.as_mut() {
-            Some(pick) => {
-                if let Some(folder) = pick(start.as_deref()) {
-                    let _ = self.open_repo(&folder.display().to_string());
-                }
+        let picked = self.opening.picker.as_mut().map_or(Picked::NoPicker, |pick| pick(start.as_deref()));
+        match picked {
+            Picked::Folder(folder) => {
+                let _ = self.open_repo(&folder.display().to_string());
             }
-            None => self.opening.prompt = Some(start.map(|s| format!("{}/", s.display())).unwrap_or_default()),
+            Picked::Cancelled => {}
+            Picked::NoPicker => self.opening.prompt = Some(start.map(|s| format!("{}/", s.display())).unwrap_or_default()),
         }
     }
 
@@ -336,8 +347,12 @@ mod tests {
         assert_eq!(shell.open_inspect().prompt.as_deref(), Some(""), "no repository: an empty path to type");
         shell.opening.prompt = None;
         // A picker cancelled: nothing opens, nothing is said.
-        shell.set_folder_picker(Box::new(|_| None));
+        shell.set_folder_picker(Box::new(|_| Picked::Cancelled));
         shell.run_menu(&ctx, MenuAction::Open);
         assert_eq!(shell.open_inspect(), OpenInspect::default());
+        // A picker that couldn't show (none installed, no display): the window asks (#76).
+        shell.set_folder_picker(Box::new(|_| Picked::NoPicker));
+        shell.run_menu(&ctx, MenuAction::Open);
+        assert_eq!(shell.open_inspect().prompt.as_deref(), Some(""));
     }
 }

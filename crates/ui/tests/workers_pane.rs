@@ -271,3 +271,59 @@ fn hovering_a_worker_lights_its_tickets_and_a_click_tells_its_session() {
     assert!(!shell.ui_state().panes.workers && shell.workers().drawn().rows.is_empty());
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn ui_set_places_the_window_and_a_drag_moves_where_it_is_kept() {
+    use swarmception_ui::control::{Answer, Inspect};
+    use swarmception_ui::{WorkersPlace, WorkersView};
+
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let set = |shell: &mut Shell, params: &str| -> Inspect {
+        let Answer::Now(Ok(text)) = shell.answer("ui.set", params) else { panic!("ui.set {params}") };
+        serde_json::from_str(&text).unwrap()
+    };
+    let rect = |shell: &Shell| shell.workers().drawn().rect.expect("the window drawn");
+    // By default up from the bottom: its foot near the window's.
+    let default = rect(&shell);
+    assert!(default.bottom() > 800.0, "{default:?}");
+    assert_eq!(shell.ui_state().workers.place, None);
+
+    // Placed and sorted by `ui.set`: drawn there, its corner as asked.
+    set(&mut shell, r#"{"workers": {"place": {"x": 60, "y": 90}, "sort": "landed"}}"#);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(rect(&shell).min, egui::pos2(60.0, 90.0));
+    let inspect = shell.inspect();
+    let drawn = inspect.workers.rect.unwrap();
+    assert_eq!((drawn.x, drawn.y, drawn.width, drawn.height), (60, 90, rect(&shell).width().round() as i32, rect(&shell).height().round() as i32));
+    assert_eq!(inspect.state.workers, WorkersView { sort: Some(WorkersColumn::Landed), place: Some(WorkersPlace { x: 60, y: 90 }), ..WorkersView::default() });
+
+    // The person drags it by its title: once let go, where it went is the state's place.
+    let title = egui::pos2(rect(&shell).left() + 120.0, rect(&shell).top() + 10.0);
+    let to = title + egui::vec2(150.0, 70.0);
+    let press = |at, pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(title), press(title, true)]);
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(title + egui::vec2(75.0, 35.0))]);
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(to)]);
+    assert_eq!(shell.ui_state().workers.place, Some(WorkersPlace { x: 60, y: 90 }), "not while the button is down");
+    frame_with(&mut shell, &ctx, vec![press(to, false)]);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(rect(&shell).min, egui::pos2(210.0, 160.0), "it stays where it was let go");
+    assert_eq!(shell.ui_state().workers.place, Some(WorkersPlace { x: 210, y: 160 }));
+
+    // Its default place again, then closed: nothing drawn.
+    set(&mut shell, r#"{"workers": {"defaultPlace": true}}"#);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert!((rect(&shell).bottom() - default.bottom()).abs() < 1.0, "{:?} back at {default:?}", rect(&shell));
+    assert_eq!(shell.ui_state().workers.place, None, "the default isn't kept as a place");
+    set(&mut shell, r#"{"workers": {"open": false}}"#);
+    frame(&mut shell, &ctx);
+    assert_eq!((shell.workers().drawn().rect, shell.inspect().workers.rect), (None, None));
+    std::fs::remove_dir_all(dir).ok();
+}

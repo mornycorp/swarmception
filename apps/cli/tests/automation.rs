@@ -118,7 +118,7 @@ impl Mcp {
 fn tool_error(result: Rpc<CallResult>) -> ProtocolError {
     let result = result.result.unwrap();
     assert!(result.is_error, "{result:?}");
-    serde_json::from_str(&result.content[0].text).unwrap()
+    serde_json::from_str(result.text()).unwrap()
 }
 
 #[test]
@@ -145,9 +145,9 @@ fn mcp_serves_the_engines_commands_as_tools() {
 
     let set: Rpc<CallResult> = mcp.send(r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"rows_set","arguments":{"grouping":"workers"}}}"#);
     let set = set.result.unwrap();
-    assert!(!set.is_error && set.content[0].text.contains("workers"), "{set:?}");
+    assert!(!set.is_error && set.text().contains("workers"), "{set:?}");
     let get: Rpc<CallResult> = mcp.send(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"rows_get"}}"#);
-    assert!(get.result.unwrap().content[0].text.contains("\"workers\""), "one session across calls");
+    assert!(get.result.unwrap().text().contains("\"workers\""), "one session across calls");
     // A command's error is the tool's error, typed as the protocol's: here the engine's.
     let bad = tool_error(mcp.send(r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rows_set","arguments":{"grouping":"tree"}}}"#));
     assert!(matches!(bad, ProtocolError::Engine { error: EngineError::BadParams { .. } }));
@@ -251,4 +251,71 @@ fn mcp_with_control_runs_its_tools_on_the_server() {
     let ping: Rpc<serde_json::Value> = mcp.send(r#"{"jsonrpc":"2.0","id":4,"method":"ping"}"#);
     assert!(ping.result.is_some());
     std::fs::remove_file(file).ok();
+}
+
+/// A window's control channel as far as screenshots go: `ui.screenshot` writes a PNG to the path
+/// asked for (one past MCP's image cap when its name says `big`), as the app saves its frame.
+struct Camera;
+
+impl swarmception_automation::protocol::Handler for Camera {
+    fn handle(&mut self, command: &str, params: &str) -> Result<String, ProtocolError> {
+        #[derive(Deserialize)]
+        struct Shot {
+            path: String,
+        }
+        match command {
+            "engine.commands" | "ui.commands" => Ok(serde_json::to_string(&CommandsResult { commands: Vec::new() }).unwrap()),
+            "ui.screenshot" => {
+                let shot: Shot = serde_json::from_str(params).unwrap();
+                std::fs::write(&shot.path, png_of(&shot.path)).unwrap();
+                Ok(serde_json::json!({ "path": shot.path, "width": 3, "height": 2 }).to_string())
+            }
+            other => Err(ProtocolError::Ui { message: format!("no {other} here") }),
+        }
+    }
+}
+
+/// The bytes the camera writes to `path`: a PNG's signature and some, past the cap for `big`.
+fn png_of(path: &str) -> Vec<u8> {
+    let signature = [0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n'];
+    let size = if path.contains("big") { swarmception_automation::mcp::IMAGE_MOST + 1 } else { 300 };
+    signature.into_iter().chain((0..).map(|i: u32| (i % 251) as u8)).take(usize::try_from(size).unwrap()).collect()
+}
+
+#[test]
+fn mcp_with_control_answers_a_screenshot_with_its_png_up_to_the_cap() {
+    use swarmception_automation::tcp::{Shared, bind, serve, write_listening};
+
+    let dir = std::env::temp_dir().join(format!("worker32-mcp-image-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (listener, listening) = bind(0, None).unwrap();
+    let file = dir.join("control.json");
+    write_listening(&file, &listening).unwrap();
+    let token = listening.token.clone();
+    std::thread::spawn(move || serve(&listener, &token, &Shared::new(Camera)));
+
+    // MCP as a child, in `dir`: a relative path is its own, the window writes it, MCP reads it
+    // back and answers it as MCP's image.
+    let mut child = cli().current_dir(&dir).args(["mcp", "--control"]).arg(&file).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let input = child.stdin.take().unwrap();
+    let output = BufReader::new(child.stdout.take().unwrap());
+    let mut mcp = Mcp { _child: Killed(child), input, output };
+    let shot: Rpc<CallResult> = mcp.send(r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ui_screenshot","arguments":{"path":"w32.png"}}}"#);
+    let shot = shot.result.unwrap();
+    assert!(!shot.is_error, "{shot:?}");
+    let saved = dir.join("w32.png");
+    assert!(shot.text().contains("w32.png"), "the window's answer first: {}", shot.text());
+    let written = std::fs::read(&saved).unwrap();
+    assert_eq!(written, png_of("w32.png"));
+    assert_eq!(shot.image(), Some((swarmception_automation::mcp::base64(&written).as_str(), "image/png")), "then the PNG, base64");
+
+    // Past the cap: a typed error saying where the file is and how big it is; MCP goes on.
+    let big = tool_error(mcp.send(r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"ui_screenshot","arguments":{"path":"w32-big.png"}}}"#));
+    let ProtocolError::ImageTooLarge { path: big_path, bytes, most } = big else { panic!("{big:?}") };
+    assert_eq!((bytes, most), (swarmception_automation::mcp::IMAGE_MOST + 1, swarmception_automation::mcp::IMAGE_MOST));
+    assert!(big_path.ends_with("w32-big.png") && Path::new(&big_path).is_absolute(), "{big_path}");
+    assert!(dir.join("w32-big.png").exists(), "saved all the same");
+    let ping: Rpc<serde_json::Value> = mcp.send(r#"{"jsonrpc":"2.0","id":3,"method":"ping"}"#);
+    assert!(ping.result.is_some());
+    std::fs::remove_dir_all(dir).ok();
 }
