@@ -99,3 +99,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #57","sub":"gate-57","t":"2026-11-02T11:24:20Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #58 (#54, live watching); capacity=3 free=14.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-58","t":"2026-11-02T11:30:50Z"}
 {"event":"merge","issue":54,"mr":58,"sub":"gate-58","t":"2026-11-02T11:31:11Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #58","sub":"gate-58","t":"2026-11-02T11:31:19Z"}
