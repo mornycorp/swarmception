@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 8: collapse to the window, the loose ends of M2 and M3) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 9: the owner's review: colours, gate rows, the Factory follows, folding quiet time) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,13 +29,13 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-Nothing ranked: every gap is closed. M1, M2 and M3 wait on the owner's pass; new work comes
-from the owner's review.
+1. **Loose ends from the owner's review** ([G24](gaps.md#g24-loose-ends-from-the-owners-review))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 9: the owner's review done (G20–G23); focus G24 |
 | 2026-11-02 | minor | Batch 8: G6, G19 done; no gaps open, no focus, M1–M3 with the owner |
 | 2026-11-02 | minor | Batch 7: M3 built (G9 done), with the owner to pass M1–M3; focus G6, G19 |
 | 2026-11-02 | minor | Batch 6: G13, G15 done, G9 grew (a gates pane); focus moved to G9, G18, G17 |
