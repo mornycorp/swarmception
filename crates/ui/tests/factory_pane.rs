@@ -425,7 +425,12 @@ fn a_hover_wins_the_highlight_and_its_leave_gives_it_back_to_the_details() {
         gate_bars.entry(bar.track.clone()).or_default().push(bar.range);
     }
     let mut want = ticket_bars(&mut shell, 7);
-    want.entry("main".into()).or_default().push(0);
+    let on_main = gate_bars.get("main").cloned().unwrap_or_default();
+    assert_eq!(on_main.len(), 1, "one merge onto main: {gate_bars:?}");
+    let params = swarmception_engine::details_cmds::DetailsParams { track: Some("main".into()), range: Some(on_main[0]), ..Default::default() };
+    let merge = shell.engine().call::<swarmception_engine::details_cmds::Get>(params).unwrap();
+    assert!(merge.title.starts_with("PR #8"), "the merge onto main of PR #8: {}", merge.title);
+    want.insert("main".into(), on_main);
     assert_eq!(gate_bars, want);
     assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (gate_bars.clone(), Lit::Details));
     let before = shell.timeline().selection().unwrap();
