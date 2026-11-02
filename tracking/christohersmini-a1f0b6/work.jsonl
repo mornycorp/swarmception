@@ -5,3 +5,4 @@
 {"event":"sub.stop","note":"rc=1; cause=test; step=test","sub":"ready-afaecc6","t":"2026-11-02T20:27:29Z"}
 {"event":"sub.start","name":"ready","note":"rerun of ready-afaecc6: its failed tests alone (1), then the steps it skipped","sub":"ready-afaecc6-rerun","t":"2026-11-02T20:27:31Z"}
 {"event":"sub.stop","note":"rc=1; cause=test","sub":"ready-afaecc6-rerun","t":"2026-11-02T20:28:14Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-afaecc6","t":"2026-11-02T20:29:18Z"}
