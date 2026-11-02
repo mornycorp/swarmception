@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 5: the state kept, live watching, the Details highlight) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 6: automation through the window, incremental issues, a gates pane) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -17,8 +17,8 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | Area | Done | Partial | Missing |
 |---|---|---|---|
 | Timeline (M1) | 8 | 0 | 0 |
-| Read and drive (M2) | 3 | 1 | 0 |
-| Understand (M3) | 4 | 1 | 0 |
+| Read and drive (M2) | 4 | 0 | 0 |
+| Understand (M3) | 5 | 0 | 1 |
 
 ## Measured
 
@@ -27,8 +27,8 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | What | Number | Source |
 |---|---|---|
-| Tests | 234 passed | `cargo nextest run --workspace`, 2026-11-02 |
-| Landed per active hour | mc-engine 7.1, swarm-timeline 10.6 | `stats.get`, 2026-11-02 |
+| Tests | 275 passed | `cargo nextest run --workspace`, 2026-11-02 |
+| Landed per active hour | mc-engine 6.9, swarm-timeline 10.6 | `stats.get`, 2026-11-02 |
 | Rows for swarm-timeline's tickets | 12 flat | `rows.list`, 2026-10-31 |
 
 ## Timeline (M1)
@@ -50,7 +50,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 |---|---|---|---|
 | RD-1 | A details pane: the story of a ticket, gate run, session or merge, following the selection | done | `details.get`; `crates/engine/tests/details.rs`, `crates/ui/tests/details_pane.rs`; screenshots checked 2026-11-02 (#47); its subject's bars highlighted on the timeline (#55) |
 | RD-2 | The control channel: drive the window as a person does | done | `--control`; `crates/automation/tests/tcp.rs`, `apps/app` control tests; the app driven on mc-engine 2026-11-02 (#46) |
-| RD-3 | MCP and a headless server | partial | `swarmception-cli serve`, `mcp`; `apps/cli/tests/automation.rs`; MCP reaches the headless engine only ([G15](gaps.md#g15-automation-reaches-the-window)) |
+| RD-3 | MCP and a headless server | done | `swarmception-cli serve`, `mcp`, `mcp --control` through the window, `send`; `apps/cli/tests/automation.rs`, the app's control tests; PNGs checked 2026-11-02 (#46, #60) |
 | RD-4 | The state kept across runs | done | `crates/ui/src/saved.rs`; `crates/ui/tests/saved_state.rs` (a headless restart; corrupt and newer files); screenshots checked 2026-11-02 (#53) |
 
 ## Understand (M3)
@@ -60,13 +60,15 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18); a hovered chip highlights its bars, leaving the selection alone (#48) |
 | UN-5 | The Factory steps back and forth by key moment | done | `factory.moments`, `factory.step`; `crates/domain/src/moments.rs` tests; UI test by clicks and keys (#33) |
 | UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
-| UN-3 | Gates analytics: runs, causes, durations | partial | gate pass rate and causes in `stats.get`; no pane ([G9](gaps.md#g9-swarm-analytics-panes)) |
+| UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61) |
+| UN-6 | Model and effort compared per worker | missing | [G9](gaps.md#g9-swarm-analytics-panes) |
 | UN-4 | Live watching | done | `live.set`, `live.get`; `crates/engine/tests/live.rs` (a remote that gains events), `crates/ui/tests/live_reload.rs`; mc-engine watched 2026-11-02 (#54) |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 6: RD-3, UN-3 done; UN-6 added; measured numbers |
 | 2026-11-02 | minor | Batch 5: RD-1 widened, RD-4 and UN-4 done; measured numbers |
 | 2026-11-02 | minor | Batch 4: the Read and drive area (RD-1–RD-4); TL-6, TL-7, UN-1 widened; measured numbers |
 | 2026-11-01 | minor | Batch 3: TL-6, TL-7 widened; UN-5; measured numbers |
