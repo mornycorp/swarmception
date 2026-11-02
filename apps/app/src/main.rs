@@ -13,6 +13,9 @@
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
 //! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61), `--hover-worker <name>`
 //! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
+//! `--menu file|file.recent` draws the window's own menu bar and clicks File open (and puts the
+//! pointer on Open Recent), for a screenshot of it (#69); File ▸ Open… (⌘O) is AppKit's open
+//! panel on macOS ([`folder`]);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
 //! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,
@@ -36,6 +39,8 @@
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
 mod control;
+#[cfg(target_os = "macos")]
+mod folder;
 #[cfg(target_os = "macos")]
 mod mac_menu;
 
@@ -118,7 +123,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -135,6 +140,9 @@ struct Options {
     hover_bar: Option<u64>,
     hover_gate: Option<String>,
     hover_worker: Option<String>,
+    /// `--menu`: the window draws its own menu bar and opens File (and Open Recent), for a
+    /// screenshot of it (#69).
+    menu: Option<MenuOpen>,
     step: Option<Direction>,
     steps: Option<swarmception_ui::Steps>,
     theme: Option<egui::Theme>,
@@ -155,7 +163,11 @@ impl Options {
     /// Frames to draw once ready before a screenshot: a hover waits a little longer, for its
     /// tooltip.
     fn settle(&self) -> u32 {
-        if self.hover.or(self.hover_bar).is_some() || self.hover_gate.is_some() || self.hover_worker.is_some() { 45 } else { SETTLE_FRAMES }
+        if self.hover.or(self.hover_bar).is_some() || self.hover_gate.is_some() || self.hover_worker.is_some() || self.menu.is_some() {
+            45
+        } else {
+            SETTLE_FRAMES
+        }
     }
 
     fn parse(args: &[String]) -> Result<Self, String> {
@@ -184,6 +196,7 @@ impl Options {
                 "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
                 "--hover-gate" => options.hover_gate = Some(value()?),
                 "--hover-worker" => options.hover_worker = Some(value()?),
+                "--menu" => options.menu = Some(MenuOpen::parse(&value()?)?),
                 "--step" => options.step = Some(direction(&value()?)?),
                 "--steps" => options.steps = Some(steps(&value()?)?),
                 "--dark" => options.theme = Some(egui::Theme::Dark),
@@ -250,17 +263,9 @@ fn main() -> ExitCode {
         set_up(&mut shell, &options)?;
         let control = options.control.map(|port| control::start(port, options.control_file.as_deref(), &cc.egui_ctx)).transpose()?.map(|c| c.0);
         #[cfg(target_os = "macos")]
-        let menu = match mac_menu::NativeMenu::install(&cc.egui_ctx, &shell.menu_state()) {
-            Ok(menu) => {
-                shell.set_native_menu(true);
-                Some(menu)
-            }
-            Err(e) => {
-                eprintln!("swarmception: no system menu bar ({e}); the window shows its own");
-                None
-            }
-        };
+        let menu = mac_menus(&cc.egui_ctx, &mut shell, options.menu);
         Ok(Box::new(App {
+            menu_open: options.menu.map(MenuDrive::new),
             shell,
             screenshot: options.screenshot.clone().map(|path| Screenshot::new(path, options.settle())),
             hover: options.hover,
@@ -421,6 +426,8 @@ fn set_up(shell: &mut swarmception_ui::Shell, options: &Options) -> Result<(), S
 struct App {
     shell: swarmception_ui::Shell,
     screenshot: Option<Screenshot>,
+    /// `--menu`: File clicked open, then the pointer on Open Recent.
+    menu_open: Option<MenuDrive>,
     /// `--hover`: the ticket the pointer is put on.
     hover: Option<u64>,
     /// `--hover-bar`: the ticket whose bar on the timeline the pointer is put on.
@@ -456,6 +463,9 @@ impl eframe::App for App {
             raw_input.events.push(egui::Event::PointerMoved(point));
             self.pointer = Some(point);
         }
+        if let Some(drive) = &mut self.menu_open {
+            drive.step(self.shell.menu_drawn(), raw_input);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -481,6 +491,83 @@ impl eframe::App for App {
     fn on_exit(&mut self) {
         if let Err(e) = self.shell.save_state() {
             eprintln!("swarmception: {e}");
+        }
+    }
+}
+
+/// macOS: File ▸ Open…'s folder from AppKit's open panel (#69), and the menus in the system menu
+/// bar, unless `--menu` asks for the window's own (to open it in a screenshot).
+#[cfg(target_os = "macos")]
+fn mac_menus(ctx: &egui::Context, shell: &mut swarmception_ui::Shell, open: Option<MenuOpen>) -> Option<mac_menu::NativeMenu> {
+    shell.set_folder_picker(Box::new(folder::pick));
+    if open.is_some() {
+        return None;
+    }
+    match mac_menu::NativeMenu::install(ctx, &shell.menu_state()) {
+        Ok(menu) => {
+            shell.set_native_menu(true);
+            Some(menu)
+        }
+        Err(e) => {
+            eprintln!("swarmception: no system menu bar ({e}); the window shows its own");
+            None
+        }
+    }
+}
+
+/// `--menu`'s menu: File alone, or File with Open Recent open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuOpen {
+    File,
+    Recent,
+}
+
+impl MenuOpen {
+    fn parse(text: &str) -> Result<Self, String> {
+        match text {
+            "file" => Ok(Self::File),
+            "file.recent" => Ok(Self::Recent),
+            other => Err(format!("--menu takes file or file.recent, not {other}")),
+        }
+    }
+}
+
+/// Opens the window's own File menu with the pointer, as a person would (#69): a click on File
+/// once it is drawn, then, for [`MenuOpen::Recent`], the pointer onto Open Recent, which opens
+/// its submenu on hover.
+#[derive(Debug)]
+struct MenuDrive {
+    open: MenuOpen,
+    /// 0: File not clicked yet; 1: pressed; 2: released; 3: on Open Recent.
+    stage: u8,
+}
+
+impl MenuDrive {
+    const fn new(open: MenuOpen) -> Self {
+        Self { open, stage: 0 }
+    }
+
+    fn step(&mut self, drawn: swarmception_ui::MenuDrawn, raw_input: &mut egui::RawInput) {
+        let button = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        match (self.stage, drawn.file, drawn.recent) {
+            (0, Some(file), _) => {
+                raw_input.events.extend([egui::Event::PointerMoved(file.center()), button(file.center(), true)]);
+                self.stage = 1;
+            }
+            (1, Some(file), _) => {
+                raw_input.events.push(button(file.center(), false));
+                self.stage = 2;
+            }
+            (2, _, Some(recent)) if self.open == MenuOpen::Recent => {
+                raw_input.events.push(egui::Event::PointerMoved(recent.center()));
+                self.stage = 3;
+            }
+            _ => {}
         }
     }
 }
@@ -559,6 +646,9 @@ mod tests {
         assert_eq!(options.hover_worker.as_deref(), Some("alder"));
         assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: false, workers: true }));
         assert!(parse(&["--no-titles"]).is_err(), "titles are always on (#34)");
+        assert_eq!(parse(&["--menu", "file.recent"]).unwrap().menu, Some(MenuOpen::Recent));
+        assert_eq!(parse(&["--menu", "file"]).unwrap().menu, Some(MenuOpen::File));
+        assert!(parse(&["--menu", "view"]).is_err() && parse(&["--menu"]).is_err());
         let options = parse(&["--step", "previous", "--steps", "sendBacks"]).unwrap();
         assert_eq!((options.step, options.steps), (Some(Direction::Previous), Some(swarmception_ui::Steps::SendBacks)));
         assert!(parse(&["--step", "sideways"]).is_err());

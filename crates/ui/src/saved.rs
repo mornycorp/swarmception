@@ -254,19 +254,75 @@ impl StateStore {
     /// Why it couldn't be written, as text to show.
     pub fn save(&self, state: &AppState) -> Result<PathBuf, String> {
         let file = self.file(Path::new(&state.repo));
-        let failed = |e: std::io::Error| format!("can't save the state to {}: {e}", file.display());
         let text = serde_json::to_string_pretty(state).map_err(|e| format!("can't save the state: {e}"))?;
-        if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(failed)?;
-        }
-        let temporary = file.with_extension(format!("json.{}.tmp", std::process::id()));
-        std::fs::write(&temporary, text + "\n").map_err(failed)?;
-        std::fs::rename(&temporary, &file).map_err(|e| {
-            let _ = std::fs::remove_file(&temporary);
-            failed(e)
-        })?;
+        write_whole(&file, &text).map_err(|e| format!("can't save the state to {}: {e}", file.display()))?;
         Ok(file)
     }
+
+    /// The app-wide file of the repositories opened last (#69): `recent.json`, beside the
+    /// repositories' own states.
+    #[must_use]
+    pub fn recent_file(&self) -> PathBuf {
+        self.dir.join("recent.json")
+    }
+
+    /// The repositories opened last, newest first, as File ▸ Open Recent lists them; none when
+    /// there is no file, or it doesn't read (a corrupt one is written afresh on the next open).
+    /// Another version's reads as long as its `repos` is a list of paths.
+    #[must_use]
+    pub fn load_recent(&self) -> Vec<PathBuf> {
+        let file = self.recent_file();
+        let text = match std::fs::metadata(&file) {
+            Ok(meta) if meta.len() <= MAX_FILE => std::fs::read_to_string(&file).unwrap_or_default(),
+            _ => return Vec::new(),
+        };
+        let repos = serde_json::from_str::<RecentSections>(&text).ok().and_then(|s| s.repos).unwrap_or_default();
+        repos.into_iter().filter(|r| !r.is_empty()).take(swarmception_engine::repo_cmds::MAX_RECENT).map(PathBuf::from).collect()
+    }
+
+    /// Writes the repositories opened last, whole or not at all.
+    ///
+    /// # Errors
+    ///
+    /// Why it couldn't be written, as text to show.
+    pub fn save_recent(&self, repos: &[String]) -> Result<PathBuf, String> {
+        let file = self.recent_file();
+        let recent = RecentFile { version: RECENT_VERSION, repos: repos.to_vec() };
+        let text = serde_json::to_string_pretty(&recent).map_err(|e| format!("can't save the recent repositories: {e}"))?;
+        write_whole(&file, &text).map_err(|e| format!("can't save the recent repositories to {}: {e}", file.display()))?;
+        Ok(file)
+    }
+}
+
+/// [`RecentFile`]'s shape.
+pub const RECENT_VERSION: u32 = 1;
+
+/// The repositories opened last, app-wide (#69): what File ▸ Open Recent lists across runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RecentFile {
+    /// [`RECENT_VERSION`] when this build wrote it.
+    pub version: u32,
+    /// Their top levels, newest first.
+    pub repos: Vec<String>,
+}
+
+/// [`RecentFile`] as any version reads: its list, the rest skipped.
+#[derive(Deserialize)]
+struct RecentSections {
+    #[serde(default)]
+    repos: Option<Vec<String>>,
+}
+
+/// Writes `text` to `file`, whole or not at all: a temporary file beside it renamed over it.
+fn write_whole(file: &Path, text: &str) -> std::io::Result<()> {
+    if let Some(parent) = file.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let temporary = file.with_extension(format!("json.{}.tmp", std::process::id()));
+    std::fs::write(&temporary, format!("{text}\n"))?;
+    std::fs::rename(&temporary, file).inspect_err(|_| {
+        let _ = std::fs::remove_file(&temporary);
+    })
 }
 
 /// A saved state's sections, each read on its own so one that doesn't read loses only itself.
@@ -426,6 +482,12 @@ impl Keeper {
         &self.repo
     }
 
+    /// Where it keeps it.
+    #[must_use]
+    pub const fn store(&self) -> &StateStore {
+        &self.store
+    }
+
     /// What the status bar says, once: what was left out of the file, or why a write failed.
     #[must_use]
     pub fn note(&self) -> Option<&str> {
@@ -527,6 +589,32 @@ mod tests {
         // Another repository has its own file.
         assert_ne!(store.file(Path::new("/Volumes/Data/dev/swarmception")), file);
         assert_ne!(store.file(Path::new("/elsewhere/mc-engine")), file);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// #69: the recent list is app-wide, one file beside the repositories' states.
+    #[test]
+    fn the_recent_repositories_are_kept_app_wide() {
+        let dir = scratch("recent");
+        let store = StateStore::new(dir.clone());
+        assert!(store.load_recent().is_empty(), "no file: none");
+        let repos = vec!["/r/one".to_owned(), "/r/two".to_owned()];
+        let file = store.save_recent(&repos).unwrap();
+        assert_eq!(file, dir.join("recent.json"));
+        assert_eq!(store.load_recent(), [PathBuf::from("/r/one"), PathBuf::from("/r/two")]);
+        let read: RecentFile = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!((read.version, read.repos), (RECENT_VERSION, repos));
+        // A newer build's file reads its list; a corrupt one reads as none.
+        std::fs::write(&file, r#"{"version": 4, "repos": ["/r/three", ""], "pinned": ["/r/one"]}"#).unwrap();
+        assert_eq!(store.load_recent(), [PathBuf::from("/r/three")]);
+        for corrupt in ["", "{", r#"{"repos": "/r/one"}"#, "[1]"] {
+            std::fs::write(&file, corrupt).unwrap();
+            assert!(store.load_recent().is_empty(), "{corrupt:?}");
+        }
+        // At most ten.
+        let many: Vec<String> = (0..30).map(|n| format!("/r/{n}")).collect();
+        store.save_recent(&many).unwrap();
+        assert_eq!(store.load_recent().len(), 10);
         std::fs::remove_dir_all(dir).ok();
     }
 

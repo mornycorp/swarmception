@@ -129,6 +129,38 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     Ok(Tracking { repo: top, reference, commit, files, skipped, main, main_commit, merges })
 }
 
+/// How long [`probe`] may take: a few `rev-parse`s, before a repository is opened (#69).
+pub const PROBE_DEADLINE: Duration = Duration::from_secs(5);
+
+/// What [`probe`] found: a git repository with a tracking branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    /// The repository's top level.
+    pub top: PathBuf,
+    /// The tracking ref there, of [`REFS`].
+    pub reference: String,
+}
+
+/// Whether `repo` is a swarm's clone, before it is opened (#69): a git repository (its top
+/// level) with a tracking branch. A few `rev-parse`s, each within [`PROBE_DEADLINE`]; nothing
+/// is read or fetched.
+///
+/// # Errors
+///
+/// [`SourceError::NotARepo`] or [`SourceError::NoTrackingBranch`].
+pub fn probe(repo: &Path) -> Result<Probe, SourceError> {
+    let git = Git::new(repo, PROBE_DEADLINE, 64 * 1024);
+    let top = git.run(&["rev-parse", "--show-toplevel"], None).map_err(|e| SourceError::NotARepo { path: repo.to_path_buf(), message: e.to_string() })?;
+    let top = PathBuf::from(String::from_utf8_lossy(&top).trim());
+    if top.as_os_str().is_empty() {
+        // A bare repository has no top level: no clone to open.
+        return Err(SourceError::NotARepo { path: repo.to_path_buf(), message: "a bare repository has no working tree".into() });
+    }
+    let git = Git::new(&top, PROBE_DEADLINE, 64 * 1024);
+    let (reference, _) = first_ref(&git, &REFS).ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
+    Ok(Probe { top, reference })
+}
+
 /// The commits a read would take now: the tracking ref's and main's, the first of [`REFS`] and
 /// of [`MAIN_REFS`] there. A few `rev-parse`s, so a live watch (#54) reads the branch again only
 /// when one of them moved.
@@ -274,6 +306,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert!(matches!(read(&dir), Err(SourceError::NotARepo { .. })));
         assert!(matches!(heads(&dir), Err(SourceError::NotARepo { .. })));
+        assert!(matches!(probe(&dir), Err(SourceError::NotARepo { .. })));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// #69: a probe before opening says a clone's top level and tracking ref, or why it isn't one.
+    #[test]
+    fn a_probe_finds_the_top_level_and_the_tracking_branch() {
+        let dir = repo();
+        let found = probe(&dir.join("tracking/mini-1")).unwrap();
+        assert_eq!((found.top, found.reference.as_str()), (std::fs::canonicalize(&dir).unwrap(), "refs/heads/tracking"));
+        git(&dir, &["switch", "-q", "main"]);
+        git(&dir, &["branch", "-q", "-D", "tracking"]);
+        assert!(matches!(probe(&dir), Err(SourceError::NoTrackingBranch { .. })));
         std::fs::remove_dir_all(dir).ok();
     }
 

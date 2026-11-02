@@ -38,6 +38,12 @@ impl fmt::Display for Unavailable {
 pub enum Refusal {
     /// The path is not a directory.
     NotADirectory { path: String },
+    /// Nothing is at the path (#69: a folder since moved or deleted, from Open Recent).
+    NoSuchFolder { path: String },
+    /// The folder is not in a git repository (#69): the repository open stays open.
+    NotARepository { path: String, message: String },
+    /// The repository has no tracking branch, so no swarm's events (#69).
+    NoTrackingBranch { path: String },
     /// The source couldn't be read: not a repository, no tracking branch, git failing.
     Source { message: String },
     /// The timeline widget refused the data built from the rows.
@@ -58,6 +64,11 @@ impl fmt::Display for Refusal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotADirectory { path } => write!(f, "{path} is not a directory"),
+            Self::NoSuchFolder { path } => write!(f, "{path} isn't there: no such folder"),
+            Self::NotARepository { path, .. } => write!(f, "{path} is not in a git repository: open a swarm's clone"),
+            Self::NoTrackingBranch { path } => {
+                write!(f, "{path} has no tracking branch (origin/tracking or tracking): not a swarm's clone, or it hasn't fetched one")
+            }
             Self::Source { message } | Self::Timeline { message } => write!(f, "{message}"),
             Self::BadTime { text } => write!(f, "{text:?} is not a UTC time (YYYY-MM-DDTHH:MM:SSZ) or seconds since the epoch"),
             Self::BackwardWindow { start, end } => write!(f, "the window ends ({end}) before it starts ({start})"),

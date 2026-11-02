@@ -12,7 +12,9 @@ use crate::command::Command;
 use crate::engine_cmds::NoParams;
 use crate::error::{EngineError, Refusal, Unavailable};
 use crate::issues::IssuesStatus;
+use crate::live::LiveState;
 use crate::session::{Job, Session};
+use swarmception_source::SourceError;
 
 /// The most line errors a status lists.
 pub const MAX_LISTED_ERRORS: usize = 20;
@@ -101,7 +103,33 @@ fn status(session: &Session) -> StatusResult {
     status
 }
 
-/// `repo.open`: open a repository and read its tracking branch.
+/// Whether `path` is a swarm's clone to open (#69): a folder there, in a git repository with a
+/// tracking branch; its top level. A few `rev-parse`s with a deadline, nothing read.
+///
+/// # Errors
+///
+/// [`Refusal::NoSuchFolder`], [`Refusal::NotADirectory`], [`Refusal::NotARepository`],
+/// [`Refusal::NoTrackingBranch`], or [`Refusal::Source`] when git itself fails.
+pub fn check(path: &str) -> Result<PathBuf, Refusal> {
+    let folder = PathBuf::from(path);
+    if path.trim().is_empty() || !folder.exists() {
+        return Err(Refusal::NoSuchFolder { path: path.to_owned() });
+    }
+    if !folder.is_dir() {
+        return Err(Refusal::NotADirectory { path: path.to_owned() });
+    }
+    match swarmception_source::probe(&folder) {
+        Ok(probe) => Ok(probe.top),
+        Err(SourceError::NotARepo { message, .. }) => Err(Refusal::NotARepository { path: path.to_owned(), message }),
+        Err(SourceError::NoTrackingBranch { path: top }) => Err(Refusal::NoTrackingBranch { path: top.display().to_string() }),
+        Err(error @ SourceError::Git(_)) => Err(Refusal::Source { message: error.to_string() }),
+    }
+}
+
+/// `repo.open`: open a repository and read its tracking branch. A folder that isn't a swarm's
+/// clone ([`check`]) is refused before anything changes: the repository open stays open, its
+/// watch going on (#69). Opened, the live watch starts afresh at the new repository's default
+/// (#69: the old one's stops), and the repository goes first in `repo.recent`.
 pub struct Open;
 
 impl Command for Open {
@@ -111,18 +139,87 @@ impl Command for Open {
     type Result = StatusResult;
 
     fn run(session: &mut Session, params: OpenParams) -> Result<StatusResult, EngineError> {
-        let path = PathBuf::from(&params.path);
-        if !path.is_dir() {
-            return Err(Refusal::NotADirectory { path: params.path }.into());
-        }
-        session.repo = Some(path);
+        let top = check(&params.path)?;
+        session.remember(&top);
+        session.repo = Some(top);
         session.loaded = None;
-        session.live = session.live.reopened();
+        session.error = None;
+        // The old repository's read and watch stop: what they bring is dropped.
+        session.job = None;
+        session.live = LiveState::default();
+        session.opened();
         session.rebuild();
         let read = session.start(Job::Read);
         session.start_issues(true);
         read?;
         Ok(status(session))
+    }
+}
+
+/// The most repositories `repo.recent` lists.
+pub const MAX_RECENT: usize = 10;
+
+/// A repository opened before, as `repo.recent` lists it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RecentRepo {
+    /// Its top level, as opened.
+    pub path: String,
+    /// Its folder's name, as File ▸ Open Recent shows it.
+    pub name: String,
+    /// Nothing is there now (moved or deleted): opening it is refused.
+    pub missing: bool,
+}
+
+/// `repo.recent`'s answer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RecentResult {
+    /// The newest first, at most [`MAX_RECENT`].
+    pub repos: Vec<RecentRepo>,
+}
+
+fn recent(session: &Session) -> RecentResult {
+    let repos = session
+        .recent()
+        .iter()
+        .map(|path| RecentRepo {
+            path: path.display().to_string(),
+            name: path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned()),
+            missing: !path.is_dir(),
+        })
+        .collect();
+    RecentResult { repos }
+}
+
+/// `repo.recent`: the repositories opened last, newest first (#69): what File ▸ Open Recent
+/// lists. The app keeps the list across runs (app-wide, not per repository) and hands it back
+/// at the start (`Session::remember_all`).
+pub struct Recent;
+
+impl Command for Recent {
+    const ID: &'static str = "repo.recent";
+    const LABEL: &'static str = "Recent Repositories";
+    const READ_ONLY: bool = true;
+    type Params = NoParams;
+    type Result = RecentResult;
+
+    fn run(session: &mut Session, _params: NoParams) -> Result<RecentResult, EngineError> {
+        Ok(recent(session))
+    }
+}
+
+/// `repo.clearRecent`: empties the list of repositories opened (File ▸ Open Recent ▸ Clear
+/// Menu); the repository open stays open.
+pub struct ClearRecent;
+
+impl Command for ClearRecent {
+    const ID: &'static str = "repo.clearRecent";
+    const LABEL: &'static str = "Clear Recent Repositories";
+    type Params = NoParams;
+    type Result = RecentResult;
+
+    fn run(session: &mut Session, _params: NoParams) -> Result<RecentResult, EngineError> {
+        session.clear_recent();
+        Ok(recent(session))
     }
 }
 

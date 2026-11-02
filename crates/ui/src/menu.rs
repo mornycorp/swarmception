@@ -1,15 +1,26 @@
 //! The menus as data: every item is a [`MenuAction`] with a stable id, and [`MenuState`] says
 //! which are enabled and checked. The in-window menu bar and macOS's system menu bar draw the
 //! same items and run them through the same [`crate::Shell::run_menu`], so both reach the same
-//! engine commands (`repo.reload`, `repo.fetch`, `rows.set`, `live.set`) and widget commands
-//! (`view.fit`); View lists the panes, the timeline, the factory, the details, the gates and the
-//! workers, and Live.
+//! engine commands (`repo.open`, `repo.recent`, `repo.clearRecent`, `repo.reload`, `repo.fetch`,
+//! `rows.set`, `live.set`) and widget commands (`view.fit`); File opens a repository (Open…,
+//! Open Recent, #69), View lists the panes, the timeline, the factory, the details, the gates and
+//! the workers, and Live.
 
 use swarmception_domain::Grouping;
+use swarmception_engine::repo_cmds::{MAX_RECENT, RecentRepo};
 
 /// One menu item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuAction {
+    /// File ▸ Open…: a folder chosen (the host's dialog), then `repo.open` (#69).
+    Open,
+    /// File ▸ Open Recent: the submenu of [`MenuAction::OpenRecent`]s and
+    /// [`MenuAction::ClearRecent`] (#69); choosing it does nothing itself.
+    Recent,
+    /// File ▸ Open Recent ▸ the `n`th repository `repo.recent` lists, newest first: `repo.open`.
+    OpenRecent(u8),
+    /// File ▸ Open Recent ▸ Clear Menu: `repo.clearRecent`.
+    ClearRecent,
     /// File ▸ Reload: `repo.reload`.
     Reload,
     /// File ▸ Fetch and Reload: `repo.fetch`.
@@ -37,8 +48,11 @@ pub enum MenuAction {
 }
 
 impl MenuAction {
-    /// Every item, in menu order.
-    pub const ALL: [Self; 13] = [
+    /// Every item of the menus themselves, in menu order (Open Recent's own are
+    /// [`MenuAction::recent_items`]).
+    pub const ALL: [Self; 15] = [
+        Self::Open,
+        Self::Recent,
         Self::Reload,
         Self::Fetch,
         Self::Quit,
@@ -55,7 +69,14 @@ impl MenuAction {
     ];
 
     /// The File menu's items, separated where `None` is.
-    pub const FILE: [Option<Self>; 4] = [Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
+    pub const FILE: [Option<Self>; 7] = [Some(Self::Open), Some(Self::Recent), None, Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
+
+    /// Open Recent's items for `count` repositories: each, then (separated) Clear Menu.
+    #[must_use]
+    pub fn recent_items(count: usize) -> Vec<Option<Self>> {
+        let repos = (0..count.min(MAX_RECENT)).filter_map(|n| u8::try_from(n).ok()).map(|n| Some(Self::OpenRecent(n)));
+        repos.chain([None, Some(Self::ClearRecent)]).collect()
+    }
 
     /// The View menu's items, separated where `None` is.
     pub const VIEW: [Option<Self>; 13] = [
@@ -78,6 +99,10 @@ impl MenuAction {
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
+            Self::Open => "file.open",
+            Self::Recent => "file.recent",
+            Self::OpenRecent(n) => recent_id(n),
+            Self::ClearRecent => "file.recent.clear",
             Self::Reload => "file.reload",
             Self::Fetch => "file.fetch",
             Self::Quit => "file.quit",
@@ -97,13 +122,18 @@ impl MenuAction {
     /// The item with id `id`.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|a| a.id() == id)
+        Self::ALL.into_iter().chain(Self::recent_items(MAX_RECENT).into_iter().flatten()).find(|a| a.id() == id)
     }
 
     /// What the menu shows.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
+            Self::Open => "Open…",
+            Self::Recent => "Open Recent",
+            // Its repository's name and where it is: [`recent_label`].
+            Self::OpenRecent(_) => "Recent Repository",
+            Self::ClearRecent => "Clear Menu",
             Self::Reload => "Reload",
             Self::Fetch => "Fetch and Reload",
             Self::Quit => "Quit",
@@ -125,6 +155,9 @@ impl MenuAction {
     pub const fn icon(self) -> &'static str {
         use crate::icons;
         match self {
+            Self::Open | Self::OpenRecent(_) => icons::FOLDER,
+            Self::Recent => icons::RECENT,
+            Self::ClearRecent => icons::CLEAR,
             Self::Reload => icons::RELOAD,
             Self::Fetch => icons::FETCH,
             Self::Quit => icons::QUIT,
@@ -144,7 +177,44 @@ impl MenuAction {
     /// Whether choosing it closes the menu: a check item leaves it open.
     #[must_use]
     pub const fn closes_menu(self) -> bool {
-        matches!(self, Self::Reload | Self::Fetch | Self::Quit | Self::Fit)
+        matches!(self, Self::Open | Self::OpenRecent(_) | Self::ClearRecent | Self::Reload | Self::Fetch | Self::Quit | Self::Fit)
+    }
+}
+
+/// Open Recent's `n`th item's id; one past [`MAX_RECENT`] is never listed.
+const fn recent_id(n: u8) -> &'static str {
+    match n {
+        0 => "file.recent.0",
+        1 => "file.recent.1",
+        2 => "file.recent.2",
+        3 => "file.recent.3",
+        4 => "file.recent.4",
+        5 => "file.recent.5",
+        6 => "file.recent.6",
+        7 => "file.recent.7",
+        8 => "file.recent.8",
+        9 => "file.recent.9",
+        _ => "file.recent.none",
+    }
+}
+
+/// What Open Recent shows for `repo`: its name, then the folder it is in (the home directory as
+/// `~`), and that it is gone when it is.
+#[must_use]
+pub fn recent_label(repo: &RecentRepo, home: Option<&std::path::Path>) -> String {
+    let path = std::path::Path::new(&repo.path);
+    let parent = path.parent().map(|p| {
+        home.and_then(|h| p.strip_prefix(h).ok()).map_or_else(
+            || p.display().to_string(),
+            |rest| {
+                if rest.as_os_str().is_empty() { "~".to_owned() } else { format!("~/{}", rest.display()) }
+            },
+        )
+    });
+    let gone = if repo.missing { " (missing)" } else { "" };
+    match parent {
+        Some(parent) if !parent.is_empty() => format!("{} — {parent}{gone}", repo.name),
+        _ => format!("{}{gone}", repo.name),
     }
 }
 
@@ -164,6 +234,8 @@ pub struct MenuState {
     pub collapse: bool,
     /// The live watch is on (#54).
     pub live: bool,
+    /// How many repositories Open Recent lists (#69, `repo.recent`).
+    pub recent: u8,
 }
 
 impl MenuState {
@@ -173,7 +245,11 @@ impl MenuState {
         match action {
             MenuAction::Reload | MenuAction::Fetch => self.can_reload,
             MenuAction::Fit => self.can_fit,
-            MenuAction::Quit
+            MenuAction::OpenRecent(n) => n < self.recent,
+            MenuAction::ClearRecent => self.recent > 0,
+            MenuAction::Open
+            | MenuAction::Recent
+            | MenuAction::Quit
             | MenuAction::Timeline
             | MenuAction::Factory
             | MenuAction::Details
@@ -197,7 +273,14 @@ impl MenuState {
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse => Some(self.collapse),
             MenuAction::Live => Some(self.live),
-            MenuAction::Reload | MenuAction::Fetch | MenuAction::Quit | MenuAction::Fit => None,
+            MenuAction::Open
+            | MenuAction::Recent
+            | MenuAction::OpenRecent(_)
+            | MenuAction::ClearRecent
+            | MenuAction::Reload
+            | MenuAction::Fetch
+            | MenuAction::Quit
+            | MenuAction::Fit => None,
         }
     }
 }
@@ -213,6 +296,27 @@ mod tests {
             assert_eq!(MenuAction::ALL.iter().filter(|a| a.id() == action.id()).count(), 1);
         }
         assert_eq!(MenuAction::from_id("file.nope"), None);
+        // Open Recent's items too, each its own id.
+        let recent: Vec<MenuAction> = MenuAction::recent_items(MAX_RECENT).into_iter().flatten().collect();
+        assert_eq!(recent.len(), MAX_RECENT + 1);
+        for action in &recent {
+            assert_eq!(MenuAction::from_id(action.id()), Some(*action));
+            assert!(!MenuAction::ALL.iter().any(|a| a.id() == action.id()));
+        }
+        assert_eq!(MenuAction::from_id("file.recent.3"), Some(MenuAction::OpenRecent(3)));
+        assert_eq!(MenuAction::from_id("file.recent.10"), None);
+        assert_eq!(MenuAction::recent_items(30).len(), MAX_RECENT + 2, "ten at most, then Clear Menu");
+        assert_eq!(MenuAction::recent_items(0), [None, Some(MenuAction::ClearRecent)]);
+    }
+
+    #[test]
+    fn a_recent_repository_is_its_name_and_where_it_is() {
+        let repo = |path: &str, missing: bool| RecentRepo { path: path.into(), name: path.rsplit('/').next().unwrap().into(), missing };
+        let home = std::path::Path::new("/Users/me");
+        assert_eq!(recent_label(&repo("/Users/me/dev/mc-engine", false), Some(home)), "mc-engine — ~/dev");
+        assert_eq!(recent_label(&repo("/Users/me/swarm", false), Some(home)), "swarm — ~");
+        assert_eq!(recent_label(&repo("/Volumes/Data/dev/swarm", true), Some(home)), "swarm — /Volumes/Data/dev (missing)");
+        assert_eq!(recent_label(&repo("/Volumes/Data/dev/swarm", false), None), "swarm — /Volumes/Data/dev");
     }
 
     #[test]
@@ -241,7 +345,12 @@ mod tests {
             grouping: Grouping::Workers,
             collapse: false,
             live: true,
+            recent: 2,
         };
+        assert!(state.enabled(MenuAction::Open) && state.enabled(MenuAction::Recent));
+        assert!(state.enabled(MenuAction::OpenRecent(1)) && !state.enabled(MenuAction::OpenRecent(2)));
+        assert!(state.enabled(MenuAction::ClearRecent));
+        assert!(!MenuState { recent: 0, ..state }.enabled(MenuAction::ClearRecent), "nothing to clear");
         assert!(!state.enabled(MenuAction::Reload));
         assert!(!state.enabled(MenuAction::Fetch));
         assert!(state.enabled(MenuAction::Fit));

@@ -31,7 +31,10 @@ png = "0.18"
 muda = { version = "0.21.2", default-features = false }
 # AppKit from Rust, as winit and muda already lock it: window tabbing off (#9).
 objc2 = "0.6.5"
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSWindow"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std", "NSResponder", "NSWindow", "NSPanel", "NSSavePanel", "NSOpenPanel"] }
+# File ▸ Open…'s folder (#69): AppKit's own open panel, through the objc2 crates already locked
+# (no new crate; `rfd` would bring its own on every platform).
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSString", "NSURL"] }
 swarmception-model = { path = "crates/model" }
 swarmception-domain = { path = "crates/domain" }
 swarmception-source = { path = "crates/source" }

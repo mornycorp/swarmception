@@ -12,6 +12,8 @@ static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
         Entry::of::<repo_cmds::Reload>(),
         Entry::of::<repo_cmds::Fetch>(),
         Entry::of::<repo_cmds::Status>(),
+        Entry::of::<repo_cmds::Recent>(),
+        Entry::of::<repo_cmds::ClearRecent>(),
         Entry::of::<rows_cmds::Get>(),
         Entry::of::<rows_cmds::Set>(),
         Entry::of::<rows_cmds::List>(),
