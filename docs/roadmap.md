@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 4: the control channel and MCP, the Details pane, the widget's highlight and durations) · **Target:** M2
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 5: the state kept, live watching, the Details highlight) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,14 +29,15 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **The state survives a restart** ([G5](gaps.md#g5-the-state-survives-a-restart)): the last of M2
-2. **Watching a live swarm** ([G4](gaps.md#g4-watching-a-live-swarm))
-3. **The details pane and the timeline select together** ([G16](gaps.md#g16-the-details-pane-and-the-timeline-select-together))
+1. **Automation reaches the window** ([G15](gaps.md#g15-automation-reaches-the-window))
+2. **Swarm analytics panes** ([G9](gaps.md#g9-swarm-analytics-panes)): a gates pane first
+3. **Issues fetched incrementally** ([G13](gaps.md#g13-issues-fetched-incrementally))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 5: M2 built (G4, G5, G16 done), with the owner to pass it; focus moved to G15, G9, G13 |
 | 2026-11-02 | minor | Batch 4: M2 mostly built (G2, G3 done); focus moved to G5, G4, G16 |
 | 2026-11-01 | minor | Batch 3: focus moved to G2, G3, G12 (G10, G11 done) |
 | 2026-11-01 | minor | Batch 2: focus moved (G11 up); the Factory and statistics are M3 work done early |

@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 4: the control channel and MCP, the Details pane, the widget's highlight and durations) · **Target:** M2
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 5: the state kept, live watching, the Details highlight) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,14 +19,15 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | open | | 2–4 h |
-| 2 | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | open | | 2–4 h |
-| 3 | [G16 The details pane and the timeline select together](#g16-the-details-pane-and-the-timeline-select-together) | open | | 2–4 h |
-| 4 | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | open | | 2–4 h |
-| 5 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42 | 3–6 h |
-| 6 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
-| 7 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 8 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| 1 | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | open | | 2–4 h |
+| 2 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42 | 3–6 h |
+| 3 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
+| 4 | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | open | | 1–2 h |
+| 5 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
+| 6 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| — | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | done | #53 | |
+| — | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | done | #54 | |
+| — | [G16 The details pane and the timeline select together](#g16-the-details-pane-and-the-timeline-select-together) | done | #55 | |
 | — | [G2 Automation: the control channel and MCP](#g2-automation-the-control-channel-and-mcp) | done | #46 | |
 | — | [G3 A details pane for what is selected](#g3-a-details-pane-for-what-is-selected) | done | #47 | |
 | — | [G12 A highlight that leaves the selection alone](#g12-a-highlight-that-leaves-the-selection-alone) | done | #48, swarm-timeline#188 | |
@@ -106,14 +107,27 @@ marked **Human:** with what is needed.
 
 ## G16 The details pane and the timeline select together
 
-- **Missing:** after G3 (#47, PR #50) the Details pane follows the timeline, but not the other
-  way: selecting a subject in the pane (a line, a name, a chip, ←) doesn't select or highlight
-  its bars on the timeline; a session can't be chosen from the timeline (the widget has no
-  group-row selection); `ui.set` has no `details` field.
-- **Left:** the pane's subject highlights (or selects) its bars; a session from its worker's row
-  (a widget change); `ui.set {details}`.
-- **Evidence:** `crates/ui/src/details.rs`, `crates/ui/tests/details_pane.rs`.
-- **Estimate:** 2–4 agent-hours, part in swarm-timeline.
+- **Done** (#55, PR #57): `details.get` names its subject's bars on the rows shown, and the
+  timeline highlights them (one owner, `TimelinePane::light`: a Factory hover while it lasts,
+  else the Details subject), never the selection: a ticket's bars; a gate run's merges onto main
+  and its tickets; a session's stretches, merges and their merges onto main; a merge onto main
+  and its ticket. If none is in view the window centres on them (or widens to hold them);
+  `ui.set {details, clearDetails}`.
+- **Left:** choosing a session from its worker's row (a widget change: group-row selection);
+  [G17](#g17-the-restored-window-and-the-details-rows-are-always-in-view) (bars in a collapsed
+  group).
+- **Evidence:** `crates/ui/tests/details_pane.rs`, `factory_pane.rs`; screenshots checked
+  2026-11-02.
+
+## G17 The restored window and the Details' rows are always in view
+
+- **Missing:** a window restored (G5) onto a monitor since unplugged can open off screen: only
+  its size and corner are checked. In by-worker grouping, a Details subject's bars inside a
+  collapsed group are highlighted but hidden, and nothing opens the group (G16); the scroll to a
+  subject's rows isn't tested. In the widget, a selected range's outline in a row scrolled under
+  the ruler can draw over it (swarm-timeline).
+- **Evidence:** `crates/ui/src/saved.rs`, `apps/app/src/main.rs`, `crates/ui/src/lib.rs`.
+- **Estimate:** 1–2 agent-hours.
 
 ## G1 The ruler reads clock time
 
@@ -158,15 +172,34 @@ marked **Human:** with what is needed.
 
 ## G4 Watching a live swarm
 
-- **Missing:** the app reads the branch when asked (Reload, Fetch and Reload). Watching a swarm
-  at work wants a fetch on an interval, keeping the view (or following the latest time).
-- **Estimate:** 2–4 agent-hours.
+- **Done** (#54, PR #58): `live.set {on, intervalSeconds}`, `live.get`, `live.check`; a Live
+  toggle and interval in the toolbar, View ▸ Live (⌘L), a status-bar segment. A check is one
+  background `git fetch` of `tracking` and `main` (30 s deadline) and reads again only if either
+  moved; on by default only when the latest event is under 30 min old; failures back off to
+  10 min and leave the timeline alone; issues refetched only for new tickets. A reload follows
+  the end if the window was there (or shows all if it did), else stays put; the selection and
+  focus carry to the same bars (`timeline.carryBars`), and the playhead, highlight and Details
+  subject stay.
+- **Measured:** on mc-engine (990 events), a quiet check 0.8–0.9 s in the background; one that
+  brought an event 2.9 s fetch, 87 ms read, about 3 ms on the UI thread (2026-11-02).
+- **Left:** each reload reads the whole branch again (fine at 87 ms).
+- **Evidence:** `crates/engine/src/live.rs`, `crates/engine/tests/live.rs`,
+  `crates/ui/tests/live_reload.rs`; screenshots checked 2026-11-02.
 
 ## G5 The state survives a restart
 
-- **Missing:** the rows spec, the panes, the window and the widget's saved state
-  (`state.save`) start afresh each run.
-- **Estimate:** 2–4 agent-hours.
+- **Done** (#53, PR #56): one typed, versioned `AppState` per repository (keyed by its
+  canonical path) in `~/Library/Application Support/swarmception/state/` (`--state-dir`,
+  `SWARMCEPTION_STATE_DIR`; `--fresh`): the panes and their sizes, the rows spec, the window's
+  size and place, the Factory's settings, the Details subject, Live as the person chose it, and
+  the timeline's view (the widget's `state.save`, the window in clock times, following the end or
+  showing all). Written once the state holds still (1 s, at most every 5 s) and on quit; each
+  section read on its own, so a corrupt, foreign, older or newer file keeps what it can and says
+  so once. `--screenshot` and `--control` runs keep no state unless given a directory.
+- **Left:** [G17](#g17-the-restored-window-and-the-details-rows-are-always-in-view) (a window
+  restored onto a monitor since unplugged).
+- **Evidence:** `crates/ui/src/saved.rs`, `crates/ui/tests/saved_state.rs`; screenshots checked
+  2026-11-02.
 
 ## G6 Collapse to the window
 
@@ -218,6 +251,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 5: G4, G5, G16 done (#53–#55); G17 new; M2 built; focus G15, G9, G13 |
 | 2026-11-02 | minor | Batch 4: G2, G3, G12, G14 done (#46–#48, swarm-timeline#183, #188); G15, G16 new; focus G5, G4, G16 |
 | 2026-11-01 | minor | Batch 3: G10, G11 done (#9, #28); G9 grew (#31–#33, #40, #42); G14 new; focus G2, G3, G12 |
 | 2026-11-01 | minor | Batch 2: G7 done (#17); G9 partial (#18, #20, #22, #15); G12, G13 new; G11 up |
