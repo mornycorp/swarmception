@@ -2,15 +2,17 @@
 //! `repo.reload`, `repo.fetch`) beside the tracking branch, never in its way. The cache comes
 //! first, then `gh api`'s answer, which is cached in turn; in the background with a waker, else
 //! now. No GitHub remote, no `gh`, no network: an error the status shows, the timeline loaded all
-//! the same.
+//! the same. With a cache, only what changed since is asked for and merged in (#62:
+//! `github::refresh`); `repo.status` says how the last refresh went ([`IssuesRefresh`]).
 
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, TryRecvError};
+use std::time::Instant;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_model::{IssueCache, Issues, Timestamp};
-use swarmception_source::github::{self, Github, GithubError, Slug};
+use swarmception_source::github::{self, FullWhy, Github, GithubError, Refresh, Slug};
 
 /// Where the issues shown came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -20,6 +22,43 @@ pub enum IssuesSource {
     Cache,
     /// GitHub, this load.
     Github,
+}
+
+/// How a refresh of the issues went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum RefreshKind {
+    /// Every page.
+    Full,
+    /// Only what changed since the cache's newest change.
+    Incremental,
+    /// GitHub said nothing changed.
+    Unchanged,
+}
+
+/// The last refresh of the issues from GitHub.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IssuesRefresh {
+    pub kind: RefreshKind,
+    /// A full one's: why (no cache, another version's, a week old, too many changed).
+    pub why: Option<String>,
+    /// An incremental one's: how many came, and how many of them were new or different.
+    pub came: usize,
+    pub changed: usize,
+    /// How long it took, `gh` and all.
+    pub ms: u64,
+}
+
+impl IssuesRefresh {
+    fn of(refresh: Refresh, ms: u64) -> Self {
+        let (kind, why, came, changed) = match refresh {
+            Refresh::Full(why) => (RefreshKind::Full, Some(why), 0, 0),
+            Refresh::Incremental { came, changed } => (RefreshKind::Incremental, None, came, changed),
+            Refresh::Unchanged => (RefreshKind::Unchanged, None, 0, 0),
+        };
+        Self { kind, why: why.as_ref().map(FullWhy::to_string), came, changed, ms }
+    }
 }
 
 /// What the session knows of the repository's issues, for `repo.status`.
@@ -40,6 +79,9 @@ pub struct IssuesStatus {
     pub error: Option<String>,
     /// The cache file.
     pub cache: Option<String>,
+    /// How the last refresh from GitHub went.
+    #[serde(default)]
+    pub refresh: Option<IssuesRefresh>,
 }
 
 /// What the issues' reader says, as it goes.
@@ -47,7 +89,7 @@ pub struct IssuesStatus {
 pub(crate) enum News {
     Slug(Slug),
     Cached(IssueCache),
-    Fetched { cache: IssueCache, saved: Result<Option<PathBuf>, GithubError> },
+    Fetched { cache: IssueCache, saved: Result<Option<PathBuf>, GithubError>, refresh: IssuesRefresh },
     Failed(GithubError),
 }
 
@@ -60,6 +102,7 @@ pub(crate) struct IssuesState {
     pub(crate) fetched: Option<Timestamp>,
     pub(crate) error: Option<String>,
     pub(crate) cache: Option<PathBuf>,
+    pub(crate) refresh: Option<IssuesRefresh>,
     pub(crate) job: Option<Receiver<News>>,
 }
 
@@ -74,6 +117,7 @@ impl IssuesState {
             fetching: self.job.is_some(),
             error: self.error.clone(),
             cache: self.cache.as_ref().map(|p| p.display().to_string()),
+            refresh: self.refresh.clone(),
         }
     }
 
@@ -93,8 +137,9 @@ impl IssuesState {
                 self.source = Some(IssuesSource::Cache);
                 self.replace(Issues::new(cache.issues))
             }
-            News::Fetched { cache, saved } => {
+            News::Fetched { cache, saved, refresh } => {
                 self.fetched = cache.fetched;
+                self.refresh = Some(refresh);
                 self.source = Some(IssuesSource::Github);
                 match saved {
                     Ok(path) => {
@@ -139,26 +184,31 @@ impl IssuesState {
     }
 }
 
-/// Reads `repo`'s issues: its GitHub slug, the cache, then `gh api`, cached in turn; each piece
-/// of news `send` as it comes.
+/// Reads `repo`'s issues: its GitHub slug, the cache, then `gh api` (all of them, or what changed
+/// since the cache), cached in turn; each piece of news `send` as it comes. A failed fetch leaves
+/// the cache as it was.
 pub(crate) fn read(repo: &std::path::Path, from: &Github, mut send: impl FnMut(News)) {
     let slug = match github::origin(repo) {
         Ok(slug) => slug,
         Err(error) => return send(News::Failed(error)),
     };
     send(News::Slug(slug.clone()));
-    if let Some(dir) = &from.cache_dir {
-        match github::load_cache(dir, &slug) {
-            Ok(Some(cache)) => send(News::Cached(cache)),
-            Ok(None) => {}
-            Err(error) => send(News::Failed(error)),
+    let cached = from.cache_dir.as_ref().and_then(|dir| match github::load_cache(dir, &slug) {
+        Ok(cache) => cache,
+        Err(error) => {
+            send(News::Failed(error));
+            None
         }
+    });
+    if let Some(cache) = &cached {
+        send(News::Cached(cache.clone()));
     }
-    match github::fetch_issues(&from.gh, repo, &slug) {
-        Ok(parsed) => {
-            let cache = IssueCache::new(&slug.to_string(), Some(github::now()), parsed.issues);
+    let started = Instant::now();
+    match github::refresh(&from.gh, repo, &slug, cached, github::now()) {
+        Ok((cache, how)) => {
+            let refresh = IssuesRefresh::of(how, u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX));
             let saved = from.cache_dir.as_ref().map(|dir| github::save_cache(dir, &slug, &cache)).transpose();
-            send(News::Fetched { cache, saved });
+            send(News::Fetched { cache, saved, refresh });
         }
         Err(error) => send(News::Failed(error)),
     }

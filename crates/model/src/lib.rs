@@ -14,7 +14,7 @@ pub mod time;
 
 use serde::{Deserialize, Serialize};
 
-pub use issues::{Issue, IssueCache, IssueKind, IssueState, Issues, PrRef, parse_issues};
+pub use issues::{Issue, IssueCache, IssueKind, IssueState, Issues, PrRef, Validator, parse_issues, parse_pulls};
 pub use merges::{MainMerge, parse_merge};
 pub use time::Timestamp;
 
