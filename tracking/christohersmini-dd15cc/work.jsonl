@@ -142,3 +142,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #82 (batch 8 fold); capacity=3 free=13.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-82","t":"2026-11-02T17:59:57Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #82","sub":"gate-82","t":"2026-11-02T18:00:13Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #87 (#83, a ticket's rework after a send-back keeps its colour); capacity=1 free=7.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-87","t":"2026-11-02T19:40:48Z"}
+{"event":"merge","issue":83,"mr":87,"sub":"gate-87","t":"2026-11-02T19:41:23Z"}
