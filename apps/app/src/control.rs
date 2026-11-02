@@ -299,6 +299,40 @@ mod tests {
     }
 
     #[test]
+    fn ui_set_opens_sorts_and_places_the_workers_window_over_the_socket() {
+        use swarmception_ui::{WorkersColumn, WorkersPlace, WorkersView};
+
+        let dir = repo();
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, Some(&dir));
+        let (set, inspect, wrong, closed) = drive(&mut shell, &ctx, |client| {
+            let _: Inspect = client.call("ui.loaded", &serde_json::json!({"within": 15})).unwrap();
+            let set: Inspect = client
+                .call("ui.set", &serde_json::json!({"workers": {"open": true, "sort": "landed", "wholeRun": true, "place": {"x": 80, "y": 120}}}))
+                .unwrap();
+            // Drawn on the frames after.
+            std::thread::sleep(Duration::from_millis(300));
+            let inspect: Inspect = client.call("ui.inspect", &()).unwrap();
+            let wrong: Result<Inspect, ClientError> = client.call("ui.set", &serde_json::json!({"workers": {"place": {"x": 80, "y": 1_000_000}}}));
+            let closed: Inspect = client.call("ui.set", &serde_json::json!({"workers": {"open": false}})).unwrap();
+            (set, inspect, wrong, closed)
+        });
+        let asked = WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: false, place: Some(WorkersPlace { x: 80, y: 120 }) };
+        assert_eq!((set.state.panes.workers, set.state.workers), (true, asked));
+        // Read back: the state as set, and the window drawn where it was put, its rows what the
+        // pane drew.
+        assert_eq!(inspect.state.workers, asked);
+        let rect = inspect.workers.rect.expect("the window drawn");
+        assert_eq!((rect.x, rect.y), (80, 120));
+        assert!(rect.width > 200 && rect.height > 100, "{rect:?}");
+        assert!(inspect.workers.rows.iter().any(|row| row.starts_with("mini-aa1111 | worker-1")), "{:?}", inspect.workers.rows);
+        assert!(matches!(wrong, Err(ClientError::Protocol(ProtocolError::Engine { .. }))), "{wrong:?}");
+        assert!(!closed.state.panes.workers);
+        assert_eq!(closed.state.workers, asked, "closed, its sort and place kept");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn the_widgets_commands_and_the_engines_go_through_the_window() {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
@@ -375,13 +409,13 @@ mod tests {
         let ui_set = tools.tools.iter().find(|t| t.name == "ui_set").unwrap();
         assert_eq!(ui_set.input_schema, serde_json::to_value(schemars::schema_for!(swarmception_ui::control::UiSet)).unwrap());
 
-        let loaded: Inspect = serde_json::from_str(&result(2).content[0].text).unwrap();
+        let loaded: Inspect = serde_json::from_str(result(2).text()).unwrap();
         assert!(!loaded.loading && loaded.timeline.has_data, "ui.loaded answers once the timeline has its data");
-        let set: Inspect = serde_json::from_str(&result(3).content[0].text).unwrap();
+        let set: Inspect = serde_json::from_str(result(3).text()).unwrap();
         assert_eq!((set.state.factory.t, set.state.factory.ticket), (Timestamp::parse("2026-10-31T03:42:00Z"), Some(7)));
 
         // The screenshot, saved by the window as PNG: it reads back as the frame it was handed.
-        let saved: Saved = serde_json::from_str(&result(4).content[0].text).unwrap();
+        let saved: Saved = serde_json::from_str(result(4).text()).unwrap();
         assert_eq!((saved.path.as_str(), saved.width, saved.height), (png.to_str().unwrap(), SCREEN[0], SCREEN[1]));
         let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(&png).unwrap())).read_info().unwrap();
         let mut pixels = vec![0; reader.output_buffer_size().unwrap()];
@@ -389,12 +423,15 @@ mod tests {
         assert_eq!((info.width as usize, info.height as usize, info.color_type), (SCREEN[0], SCREEN[1], png::ColorType::Rgb));
         let expected: Vec<u8> = drawn_image().pixels.iter().flat_map(|p| [p.r(), p.g(), p.b()]).collect();
         assert!(pixels[..info.buffer_size()] == expected[..], "the PNG's pixels are the frame's");
+        // And it came back as MCP's image too (#76), the file's bytes.
+        let file = std::fs::read(&png).unwrap();
+        assert_eq!(result(4).image(), Some((swarmception_automation::mcp::base64(&file).as_str(), "image/png")));
 
         assert!(!result(5).is_error, "the widget's command, through the window: {:?}", result(5));
-        assert!(!result(6).is_error && result(6).content[0].text.contains("\"gate\""), "the engine's, on the window's session: {:?}", result(6));
+        assert!(!result(6).is_error && result(6).text().contains("\"gate\""), "the engine's, on the window's session: {:?}", result(6));
         let refused = result(7);
         assert!(refused.is_error);
-        let error: ProtocolError = serde_json::from_str(&refused.content[0].text).unwrap();
+        let error: ProtocolError = serde_json::from_str(refused.text()).unwrap();
         assert!(matches!(error, ProtocolError::Engine { .. }), "{error:?}");
         std::fs::remove_dir_all(dir).ok();
     }

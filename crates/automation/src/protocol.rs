@@ -64,6 +64,11 @@ pub enum ProtocolError {
     Widget { error: timeline_engine::EngineError },
     /// The window couldn't do it: a screenshot that couldn't be saved, say.
     Ui { message: String },
+    /// MCP (#76): the PNG a `ui_screenshot` saved at `path` is `bytes` long, over the `most` an
+    /// answer carries as an image; the file is there to read.
+    ImageTooLarge { path: String, bytes: u64, most: u64 },
+    /// MCP (#76): the file a `ui_screenshot` saved couldn't be read back as a PNG.
+    ImageUnreadable { path: String, message: String },
 }
 
 impl ProtocolError {
@@ -81,6 +86,8 @@ impl ProtocolError {
             Self::Engine { .. } => "engine",
             Self::Widget { .. } => "widget",
             Self::Ui { .. } => "ui",
+            Self::ImageTooLarge { .. } => "image_too_large",
+            Self::ImageUnreadable { .. } => "image_unreadable",
         }
     }
 }
@@ -97,6 +104,8 @@ impl std::fmt::Display for ProtocolError {
             Self::Busy { most } => write!(f, "busy: {most} connections already"),
             Self::Engine { error } => write!(f, "{}: {error}", error.code()),
             Self::Widget { error } => write!(f, "the timeline widget: {}: {error}", error.code()),
+            Self::ImageTooLarge { path, bytes, most } => write!(f, "{path} is {bytes} bytes, over the {most} an image answer carries: read the file"),
+            Self::ImageUnreadable { path, message } => write!(f, "can't read {path} back as a PNG: {message}"),
         }
     }
 }
@@ -225,6 +234,8 @@ mod tests {
             ProtocolError::Ui { message: "m".into() },
             ProtocolError::Widget { error: timeline_engine::EngineError::UnknownCommand { id: "a.b".into() } },
             ProtocolError::Engine { error: EngineError::BadParams { message: "m".into() } },
+            ProtocolError::ImageTooLarge { path: "/a.png".into(), bytes: 9, most: 8 },
+            ProtocolError::ImageUnreadable { path: "/a.png".into(), message: "not a PNG".into() },
         ];
         for error in errors {
             let text = serde_json::to_string(&error).unwrap();
