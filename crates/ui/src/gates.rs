@@ -28,6 +28,7 @@ use crate::factory_chip::rgb;
 use crate::factory_stats::percent;
 use crate::factory_tip::legible;
 use crate::icons;
+use crate::layout::{Chevron, fold_title};
 use crate::timeline::Hover;
 
 /// A run as the pane drew it.
@@ -57,6 +58,8 @@ pub struct GatesDrawn {
     /// The run under the pointer, and the subject a click on one chose.
     pub hovered: Option<(String, Timestamp)>,
     pub chosen: Option<Subject>,
+    /// Its title was clicked this frame: fold it (#68).
+    pub fold: bool,
 }
 
 /// What the pane was asked for: the window, and the engine's revision.
@@ -162,7 +165,7 @@ impl GatesPane {
         self.hovered = Hover::Nothing;
         let Some(list) = self.list.clone() else {
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(format!("{}  Gates", icons::GATES)).strong());
+                self.drawn.fold = fold_title(ui, icons::GATES, "Gates", Chevron::Open).clicked();
                 match &self.error {
                     Some(error) => ui.colored_label(ui.visuals().warn_fg_color, format!("{}  {error}", icons::WARNING)),
                     None => ui.weak("No gate runs to show yet."),
@@ -210,7 +213,7 @@ impl GatesPane {
         let figures = headline(list);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
-            ui.label(egui::RichText::new(format!("{}  Gates", icons::GATES)).strong());
+            self.drawn.fold = fold_title(ui, icons::GATES, "Gates", Chevron::Open).clicked();
             ui.weak(egui::RichText::new(format!("{} → {} UTC", clock(list.start), clock(list.end))).small())
                 .on_hover_text(format!("The timeline's visible window: {} → {}", list.start, list.end));
             for (label, value, colour, how) in figures {

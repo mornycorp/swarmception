@@ -247,8 +247,10 @@ fn view_gates_shows_and_hides_the_pane() {
     frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
     assert!(!shell.gates().drawn().runs.is_empty());
-    let height = shell.ui_state().sizes.gates;
-    assert!(height.is_some_and(|h| h >= 90), "its height kept: {height:?}");
+    // Its height the window's default (#68): no drag, so none of the person's.
+    assert_eq!(shell.ui_state().sizes.gates, None);
+    let gates = shell.layout().bands.iter().find(|b| b.name == "gates").cloned().unwrap();
+    assert!(gates.size >= 90 && !gates.folded, "{gates:?}");
 
     // Alone, without the timeline: the whole run, on its own axis.
     let mut state = shell.ui_state();

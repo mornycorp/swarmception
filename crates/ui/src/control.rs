@@ -31,8 +31,9 @@ use crate::factory::{Jump, Source, Speed, Steps};
 use crate::timeline::Lit;
 use crate::{Panes, Shell, UiState};
 
-/// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61).
-pub const INSPECT_VERSION: u32 = 3;
+/// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
+/// how the panes share the window (`layout`) and the timeline's rows in view (#68).
+pub const INSPECT_VERSION: u32 = 4;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -117,6 +118,9 @@ pub struct TimelineInspect {
     /// How long the last load into the widget took, its view put back, in milliseconds (#54).
     #[serde(default)]
     pub load_ms: Option<u64>,
+    /// The rows at least partly on screen last frame, top to bottom, by key (#68).
+    #[serde(default)]
+    pub in_view: Vec<String>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -142,6 +146,10 @@ pub struct Inspect {
     /// The gates pane (#61).
     #[serde(default)]
     pub gates: GatesInspect,
+    /// How the panes shared the window last frame (#68): the timeline's height and least, each
+    /// band's height, what it asked for and whether it is folded, the details' width.
+    #[serde(default)]
+    pub layout: crate::layout::LayoutDrawn,
 }
 
 /// The gates pane, as `ui.inspect` reads it (#61): what it drew last frame from `gates.list`.
@@ -193,11 +201,16 @@ pub enum StepTo {
 }
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the panes,
-/// speed and steps; `at`; follow and play; the ticket; the step; the details; the window.
+/// their folds, speed and steps; `at`; follow and play; the ticket; the step; the details; the
+/// window.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
     pub panes: Option<Panes>,
+    /// Folds or opens the panes named (#68), as a click on a title's chevron does: `{"gates":
+    /// true}` folds the Gates band to its header, `{"details": false}` opens the Details; the
+    /// panes left out stay as they are.
+    pub folded: Option<crate::layout::Folded>,
     pub speed: Option<Speed>,
     /// The key moments a step goes through.
     pub steps: Option<Steps>,
@@ -421,6 +434,7 @@ impl Shell {
             lit: self.timeline.lit(),
             playhead_item: selection.playhead,
             load_ms: self.timeline.load_time().map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
+            in_view: self.timeline.rows_in_view(),
         };
         let shown = self.details.details().filter(|_| self.details.on_timeline(&self.ui.details).is_some());
         let details = DetailsInspect {
@@ -441,6 +455,7 @@ impl Shell {
             details,
             saved: self.saved(),
             gates,
+            layout: self.layout().clone(),
         }
     }
 
@@ -490,9 +505,12 @@ impl Shell {
     }
 
     /// The panes, speed and steps; *t*; follow and play.
-    const fn apply_view(&mut self, set: &UiSet, at: Option<Timestamp>) {
+    fn apply_view(&mut self, set: &UiSet, at: Option<Timestamp>) {
         if let Some(panes) = set.panes {
             self.ui.panes = panes;
+        }
+        if let Some(folded) = set.folded {
+            self.ui.folded = self.ui.folded.with(folded);
         }
         if let Some(speed) = set.speed {
             self.ui.factory.speed = speed;

@@ -25,6 +25,7 @@ use swarmception_engine::stats_cmds::At as When;
 use crate::factory_chip::rgb;
 use crate::factory_tip::legible;
 use crate::icons;
+use crate::layout::{Chevron, fold_title};
 
 /// What the details pane is about: plain data in the shell's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -50,6 +51,8 @@ pub struct DetailsDrawn {
     pub back: bool,
     /// A page chosen this frame.
     pub open: Option<Link>,
+    /// Its title was clicked this frame: fold it to a strip (#68).
+    pub fold: bool,
 }
 
 /// The most subjects ← goes back through.
@@ -162,7 +165,7 @@ impl DetailsPane {
             return;
         }
         ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("{}  Details", icons::INFO)).strong());
+            self.drawn.fold = fold_title(ui, icons::INFO, "Details", Chevron::FoldRight).clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let back = ui.add_enabled(!self.history.is_empty(), egui::Button::new(icons::BACK).small()).on_hover_text("Back to what was selected before");
                 self.drawn.back = back.clicked();

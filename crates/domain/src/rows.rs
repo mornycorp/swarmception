@@ -165,6 +165,33 @@ pub fn bars_where(rows: &[Node], mut keep: impl FnMut(&str, &Bar) -> bool) -> Ve
     found
 }
 
+/// The keys of the groups that hold any of the rows `keys` in `rows`, each once, outermost first
+/// in the tree's order (#68: a group collapsed over them opens to show them).
+#[must_use]
+pub fn groups_holding(rows: &[Node], keys: &[&str]) -> Vec<String> {
+    fn walk(node: &Node, keys: &[&str], found: &mut Vec<String>) -> bool {
+        match node {
+            Node::Ranges { key, .. } => keys.contains(&key.as_str()),
+            Node::Group { key, children, .. } => {
+                let at = found.len();
+                let mut holds = false;
+                for child in children {
+                    holds |= walk(child, keys, found);
+                }
+                if holds {
+                    found.insert(at, key.clone());
+                }
+                holds
+            }
+        }
+    }
+    let mut found = Vec::new();
+    for node in rows {
+        walk(node, keys, &mut found);
+    }
+    found
+}
+
 /// The keys of the two rows at the top.
 pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";
@@ -629,6 +656,18 @@ mod tests {
         assert_eq!(working.tooltip.last().map(String::as_str), Some("done without a merge: review filed as #66-#73"));
         let claimed = bars.iter().find(|b| b.label == "#59 claimed").unwrap();
         assert_eq!(claimed.tooltip.last().map(String::as_str), Some("done without a merge"));
+    }
+
+    #[test]
+    fn the_groups_holding_rows_outermost_first() {
+        let activity = Activity::of(&sample());
+        let rows = rows(&activity, &[], RowsSpec { grouping: Grouping::Workers, ..RowsSpec::default() });
+        assert_eq!(groups_holding(&rows, &["w/mini/worker-2/1"]), ["w/mini", "w/mini/worker-2"]);
+        assert_eq!(groups_holding(&rows, &["w/mini/worker-1/1", "w/mini/worker-2/1", MAIN_KEY]), ["w/mini", "w/mini/worker-1", "w/mini/worker-2"]);
+        assert!(groups_holding(&rows, &[MAIN_KEY, MERGED_KEY]).is_empty(), "the top rows are in no group");
+        assert!(groups_holding(&rows, &["w/mini"]).is_empty(), "a group is no row of bars");
+        let flat = super::rows(&activity, &[], RowsSpec::default());
+        assert!(groups_holding(&flat, &["tickets/1"]).is_empty());
     }
 
     #[test]

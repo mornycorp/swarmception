@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -213,8 +213,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   right-click does. The timeline selects with it (#55): the subject's bars (`details.get`'s
   `timeline`) are the widget's highlight, never the selection, and a new subject's bars are
   brought into view when none is (`TimelinePane::reveal`: the window moves, by `view.show`,
-  centred on them at its width when they fit, else just holding them; the rows scroll to the
-  first of theirs). The highlight has one owner, `TimelinePane::light` (`light_hover`): a factory
+  centred on them at its width when they fit, else just holding them; the groups holding their
+  rows open, by `tracks.expand`, when collapsed (#68: `details.get`'s `timeline.groups`); the
+  rows scroll to the first of theirs under the merges rows, which a merged ticket is always on,
+  when none is on screen). The highlight has one owner, `TimelinePane::light` (`light_hover`): a factory
   hover's ticket while it lasts, else a gates pane hover's run's tickets (`Hover`), else the
   details' bars, so a hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s
   `timeline.lit`).
@@ -229,10 +231,27 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   the lanes' names and the failures by cause, gate and ready. Hovering a run gives its tooltip
   and lights its tickets' bars; clicking it makes it the details' subject (a `ready` check's:
   its ticket). Without the timeline it shows the whole run on its own axis; before the timeline
-  has data it waits, so its height is the one asked for (`PaneSizes::gates`). The factory's floor keeps within its pane, its header wrapping, so a narrower
+  has data it waits. The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
+  The panes share the window (#68) by one rule, `layout`'s plain functions: the timeline keeps
+  its least height (`TimelinePane::least`, `layout::timeline_least`: its toolbar, the rulers, the
+  merges rows and six rows under them, all when fewer, and the scroller); the bands under it
+  (`BandKind::ALL`, top to bottom: the Gates, the Factory; a pane that slots in under the timeline
+  adds itself there) each ask for the person's height (`PaneSizes`, set only by dragging a band's
+  top edge) or the window's default (`layout::defaults`: the Factory about a third of the height,
+  the Gates 130, 170 on a tall window), and when they don't fit over the timeline's least they
+  give way (`layout::share`), each in proportion to what it has over its own least (Gates 90,
+  Factory 140), before the timeline does; they come back when the window grows. Each band folds to
+  its header (28 points) with a click on its title's chevron, the Details to a strip (30 points);
+  folded is the person's choice once made (`UiState::folded`, `layout::Folded`, saved), else the
+  window's size (the Gates under 760 high, the Factory under 560, the Details under 1000 wide).
+  Without the timeline the last open band fills the rest. `ui.inspect`'s `layout` reports what
+  each got (`LayoutDrawn`: the timeline's height and least, each band's height, what it asked and
+  whether it is folded, by default or by choice), `timeline.inView` the rows on screen, and
+  `ui.set`'s `folded` folds or opens a pane.
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
-  moments it steps by, what the details are of; version 5: the gates pane, #61) is serde data. `saved` (#53) keeps the
+  moments it steps by, what the details are of; version 5: the gates pane, #61; version 6: the
+  folded panes, #68) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -245,7 +264,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   what was left out once (a click puts it away). The restored view comes back where it was, at
   the new end as wide when it ended at the last event, the whole swarm when fitted, the details'
   subject not moving it, the playhead at its time (kept across the loads after, as #54's reload
-  keeps it), and Live as the person left it (`live.set`, only when they chose it);
+  keeps it), and Live as the person left it (`live.set`, only when they chose it); a window
+  restored partly or wholly off the monitors winit lists (one since unplugged) is moved onto the
+  one it overlaps most, else the nearest, shrunk to fit (`WindowPlace::onto`, #68);
   `ui.inspect`'s `saved` says where it is kept and was read from. `control` (#46) is the window's side of the control channel: `Shell::answer`
   runs `ui.commands`, `ui.inspect`, `ui.set` and `ui.screenshot`, forwards `timeline.<id>` to
   the widget and every other command to the engine ([Automation](#automation)).
@@ -255,7 +276,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--screenshot`, `--control`,
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--step`, `--steps`, `--size`, `--zoom` (the UI's
+  scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
   `--control-file`, `--state-dir` (else `$SWARMCEPTION_STATE_DIR`, else the platform's), `--fresh`;
   a `--screenshot` or `--control` run keeps the state only in a directory named) and `swarmception-cli` (the engine headless: `commands`, `run`, `serve`,
   `mcp`).

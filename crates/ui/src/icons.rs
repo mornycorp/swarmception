@@ -34,3 +34,7 @@ pub const EXTERNAL: &str = "\u{f35d}";
 pub const LIVE: &str = "\u{f519}";
 /// clipboard-check: the Gates pane (#61).
 pub const GATES: &str = "\u{f46c}";
+/// chevron-down, -right and -left: a pane's fold (#68).
+pub const CHEVRON_DOWN: &str = "\u{f078}";
+pub const CHEVRON_RIGHT: &str = "\u{f054}";
+pub const CHEVRON_LEFT: &str = "\u{f053}";

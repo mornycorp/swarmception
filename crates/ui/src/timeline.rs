@@ -32,7 +32,7 @@ use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
 use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
-use timeline_engine::tracks_cmds::{Layout, LayoutParams};
+use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams};
 
 use timeline_engine::highlight_cmds::HighlightParams;
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, RangeParams, Toggle as ToggleRange};
@@ -204,6 +204,10 @@ pub struct TimelinePane {
     links: Vec<Link>,
     /// Where the widget was drawn last frame.
     rect: Option<egui::Rect>,
+    /// What of it was on screen last frame: the scroll area's viewport (#68).
+    visible: Option<egui::Rect>,
+    /// The widget's toolbar's height last frame, for the pane's least height (#68).
+    toolbar_height: f32,
     /// Where its window's start and end were across the screen last frame: its rows' area, right
     /// of the label column (#61: the Gates pane's runs line up under it).
     axis: Option<(f32, f32)>,
@@ -225,6 +229,8 @@ impl Default for TimelinePane {
             scroll_to: None,
             links: Vec::new(),
             rect: None,
+            visible: None,
+            toolbar_height: 0.0,
             axis: None,
             load_time: None,
         }
@@ -623,13 +629,21 @@ impl TimelinePane {
     /// Brings `on`'s bars into view when none of them is (#55), never touching the selection:
     /// across, when none is drawn in the window, the window moves to them (`view.show`, kept in
     /// the zoom history): the same width centred on them when they fit in it, else just wide
-    /// enough to hold them all; down, on the next frame, the tracks scroll to the first of their
-    /// rows when none is on screen. Whether the window moved.
+    /// enough to hold them all; down, the groups holding their rows opened (#68), and on the next
+    /// frame the tracks scroll to the first of their rows when none is on screen: of their rows
+    /// under the merges rows when they have any (#68: a merged ticket is always on the merges
+    /// rows at the top, which say nothing of where its own rows are). Whether the window moved.
     pub fn reveal(&mut self, engine: &mut Session, on: &OnTimeline) -> bool {
         if !self.has_data || on.bars.is_empty() {
             return false;
         }
-        self.scroll_to = Some(on.bars.iter().map(|bar| bar.track.clone()).collect());
+        self.open_groups(&on.groups);
+        let top = [swarmception_domain::rows::MAIN_KEY, swarmception_domain::rows::MERGED_KEY];
+        let mut rows: Vec<String> = on.bars.iter().map(|bar| bar.track.clone()).filter(|track| !top.contains(&track.as_str())).collect();
+        if rows.is_empty() {
+            rows = on.bars.iter().map(|bar| bar.track.clone()).collect();
+        }
+        self.scroll_to = Some(rows);
         let (Some(start), Some(end)) = (on.start, on.end) else { return false };
         if self.drawn_any(&on.bars) {
             return false;
@@ -651,6 +665,45 @@ impl TimelinePane {
             (start.saturating_sub(pad), end.saturating_add(pad))
         };
         session.call::<Show>(ShowParams { start: from, end: to }).is_ok()
+    }
+
+    /// Opens the groups of `groups` that are collapsed (#68, by worker: a subject's bars in a
+    /// collapsed group are drawn only once it opens); the others left as they are.
+    fn open_groups(&mut self, groups: &[String]) {
+        let session = self.widget.session();
+        let Some(collapsed) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|t| t.collapsed) else { return };
+        for key in groups.iter().filter(|key| collapsed.contains(key)) {
+            let _ = session.call::<Expand>(GroupParams { key: key.clone() });
+        }
+    }
+
+    /// The least height the pane keeps (#68, [`crate::layout::timeline_least`]): its toolbar, the
+    /// rulers, the merges rows and six rows under them (all when there are fewer), and the
+    /// scroller; [`crate::layout::TIMELINE_LEAST_UNMEASURED`] before it has data.
+    pub fn least(&mut self) -> f32 {
+        if !self.has_data {
+            return crate::layout::TIMELINE_LEAST_UNMEASURED;
+        }
+        let Ok(layout) = self.widget.session().call::<Layout>(LayoutParams { pane: 100_000.0, scroll: 0.0 }) else {
+            return crate::layout::TIMELINE_LEAST_UNMEASURED;
+        };
+        let first = layout.rows.first().map_or(layout.top, |row| row.y);
+        let trough = (layout.bands.trough.bottom - layout.bands.trough.top).max(0.0);
+        let heights: Vec<f32> = layout.rows.iter().map(|row| row.height).collect();
+        crate::layout::timeline_least(self.toolbar_height + first + trough, &heights)
+    }
+
+    /// The rows at least partly on screen last frame, top to bottom (`ui.inspect`'s
+    /// `timeline.inView`, #68).
+    pub fn rows_in_view(&mut self) -> Vec<String> {
+        let (Some(rect), Some(visible)) = (self.rect.filter(|_| self.has_data), self.visible) else { return Vec::new() };
+        let Ok(layout) = self.widget.session().call::<Layout>(LayoutParams { pane: rect.height(), scroll: 0.0 }) else { return Vec::new() };
+        layout
+            .rows
+            .into_iter()
+            .filter(|row| row.y + row.height > visible.top() - rect.top() && row.y < visible.bottom() - rect.top())
+            .map(|row| row.key)
+            .collect()
     }
 
     /// Whether any of `bars` is drawn in the window (`query.bars`, whose ranges stand for `count`
@@ -706,7 +759,9 @@ impl TimelinePane {
             ui.centered_and_justified(|ui| ui.label(text));
             return;
         }
+        let top = ui.cursor().top();
         self.widget.toolbar(ui);
+        self.toolbar_height = (ui.cursor().top() - top).max(0.0);
         let shown = egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| {
             let rect = ui.add(&mut self.widget).rect;
             let row = self.scroll_to.take().and_then(|tracks| hidden_row(&mut self.widget, rect, ui.clip_rect(), &tracks));
@@ -716,6 +771,7 @@ impl TimelinePane {
             rect
         });
         self.rect = Some(shown.inner);
+        self.visible = Some(shown.inner_rect);
         let label_width = self.widget.session().call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.label_width);
         self.axis = label_width.filter(|w| w.is_finite()).map(|w| (shown.inner.left() + w.clamp(0.0, shown.inner.width()), shown.inner.right()));
         self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));

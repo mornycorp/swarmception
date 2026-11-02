@@ -28,7 +28,7 @@ use swarmception_model::{IssueKind, IssueState, Issues, Kind, MainMerge, Role, T
 use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
 use crate::colours::{self, Rgb, phase_colour, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
-use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration};
+use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration, groups_holding};
 use crate::tickets::{Merged, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine};
@@ -254,6 +254,10 @@ pub struct OnTimeline {
     /// The first bar's start and the last one's end; none with no bars.
     pub start: Option<Timestamp>,
     pub end: Option<Timestamp>,
+    /// The groups its bars' rows are in, outermost first (#68): by worker, a collapsed one opens
+    /// to show them.
+    #[serde(default)]
+    pub groups: Vec<String>,
 }
 
 /// What the details read: the activity, the merges onto main, GitHub's issues, and what is
@@ -359,7 +363,9 @@ fn on_timeline(ctx: &Ctx<'_>, rows: &[Node], subject: &Subject) -> OnTimeline {
     let mut bars: Vec<BarRef> = found.into_iter().map(|(at, _)| at).collect();
     bars.sort();
     bars.dedup();
-    OnTimeline { bars, start, end }
+    let keys: Vec<&str> = bars.iter().map(|bar| bar.track.as_str()).collect();
+    let groups = groups_holding(rows, &keys);
+    OnTimeline { bars, start, end, groups }
 }
 
 /// A session's bars: the stretches its events began in its time, the tickets it merged then and
@@ -1135,6 +1141,10 @@ mod tests {
             assert_eq!(ticket.bars.len(), 4, "claimed, working, waiting and its merge");
             assert_eq!(ticket.start, Timestamp::parse("2026-10-31T03:53:22Z"));
             assert_eq!(ticket.end, Timestamp::parse("2026-10-31T04:29:08Z"), "its merge's 10 s");
+            // The groups its rows are in (#68): by worker, its machine's and its worker's.
+            let keys: Vec<&str> = tickets.iter().map(|bar| bar.track.as_str()).collect();
+            assert_eq!(ticket.groups, crate::rows::groups_holding(&rows, &keys));
+            assert_eq!(ticket.groups.is_empty(), grouping == crate::Grouping::Flat, "{grouping:?}: {:?}", ticket.groups);
 
             // A gate run: the merge onto main it made, and its ticket's bars.
             let gate = on(Subject::Gate { sub: "gate-pr173".into(), at: None });
