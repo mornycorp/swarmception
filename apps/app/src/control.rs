@@ -271,7 +271,7 @@ mod tests {
             let wrong: Result<Inspect, ClientError> = client.call("ui.set", &serde_json::json!({"at": "noon"}));
             (set, inspect, wrong)
         });
-        assert_eq!(set.state.factory.t, Some(t));
+        assert_eq!(set.factory.t, Some(t));
         assert_eq!(set.state.factory.ticket, Some(7));
         assert!(matches!(wrong, Err(ClientError::Protocol(ProtocolError::Engine { .. }))));
 
@@ -412,7 +412,7 @@ mod tests {
         let loaded: Inspect = serde_json::from_str(result(2).text()).unwrap();
         assert!(!loaded.loading && loaded.timeline.has_data, "ui.loaded answers once the timeline has its data");
         let set: Inspect = serde_json::from_str(result(3).text()).unwrap();
-        assert_eq!((set.state.factory.t, set.state.factory.ticket), (Timestamp::parse("2026-10-31T03:42:00Z"), Some(7)));
+        assert_eq!((set.factory.t, set.state.factory.ticket), (Timestamp::parse("2026-10-31T03:42:00Z"), Some(7)));
 
         // The screenshot, saved by the window as PNG: it reads back as the frame it was handed.
         let saved: Saved = serde_json::from_str(result(4).text()).unwrap();

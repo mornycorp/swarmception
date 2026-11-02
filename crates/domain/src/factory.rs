@@ -267,6 +267,10 @@ pub struct Block {
     pub pr: Option<u64>,
     /// The ticket whose merge names its PR.
     pub issue: Option<u64>,
+    /// Its merge commit onto main, as `details.get`'s `merge` subject names it (#85: a merge
+    /// selected on the timeline selects its brick); none read from a ticket's merge, with no main.
+    #[serde(default)]
+    pub commit: Option<String>,
     /// `PR #<m>`, else the commit's start.
     pub label: String,
     /// What its brick says: `#<issue>` for a ticket's merge; `!<m>`, its PR, for a merge no
@@ -1054,7 +1058,20 @@ fn main_block(merge: &MainMerge, ticket: Option<(u64, Life)>, t: Timestamp) -> B
         (None, None) => short_commit.get(..7).unwrap_or(short_commit).to_owned(),
     };
     let colour = issue.map_or(NO_TICKET, ticket_colour);
-    Block { t: merge.t, pr: merge.pr, issue, label, mark, colour, age: t.0.saturating_sub(merge.t.0), took, segments, sent_back, tooltip }
+    Block {
+        t: merge.t,
+        pr: merge.pr,
+        issue,
+        commit: Some(merge.commit.clone()),
+        label,
+        mark,
+        colour,
+        age: t.0.saturating_sub(merge.t.0),
+        took,
+        segments,
+        sent_back,
+        tooltip,
+    }
 }
 
 /// A ticket's merge's block, when the repository has no main: merged at `when.0`, seen at
@@ -1066,7 +1083,7 @@ fn ticket_block(issue: u64, pr: Option<u64>, when: (Timestamp, Timestamp), life:
     let mut tooltip = vec![format!("#{issue} merged"), at.to_string()];
     tooltip.extend(life_lines(took, &segments, sent_back));
     let (mark, colour, age) = (format!("#{issue}"), ticket_colour(issue), t.0.saturating_sub(at.0));
-    Block { t: at, pr, issue: Some(issue), label, mark, colour, age, took, segments, sent_back, tooltip }
+    Block { t: at, pr, issue: Some(issue), commit: None, label, mark, colour, age, took, segments, sent_back, tooltip }
 }
 
 /// What happened in the `recent` seconds up to `t`, newest first.

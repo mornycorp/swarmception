@@ -37,8 +37,10 @@ use crate::{Panes, Shell, UiState};
 /// lanes (`gates.hours`, #75); 8: where the workers' window was drawn (`workers.rect`, #76); 9:
 /// the rows collapsed to the window (`timeline.leftOut`, `timeline.collapseUs`, #74); 10: the gate
 /// runs as rows of the timeline (#84: `timeline.hoveredRun`; the gates pane's `runs` gone, its
-/// `hovered` an hour).
-pub const INSPECT_VERSION: u32 = 10;
+/// `hovered` an hour); 11: the
+/// factory follows the timeline (#85): its `t` the time it shows, its sources the timeline's, what
+/// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip.
+pub const INSPECT_VERSION: u32 = 11;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -77,13 +79,18 @@ pub struct FactoryDrawn {
     pub hidden: usize,
     /// The traced ticket's journey, its legs' labels in order.
     pub journey: Vec<String>,
+    /// Where what is selected was drawn (#85), `<station> <what>`: `bench #9`, `brick #9`,
+    /// `brick !13`, `run gate-pr8`.
+    #[serde(default)]
+    pub selected: Vec<String>,
 }
 
 /// The factory pane, as `ui.inspect` reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FactoryInspect {
-    /// The time the scene shows (`factory.at`'s *t*): what the clock reads. None before a scene.
+    /// The time it shows (#85: the timeline's playhead, a time put on it, or where it was held),
+    /// what it asks `factory.at` for. None before it has shown one.
     pub t: Option<Timestamp>,
     /// *t* as `YYYY-MM-DDTHH:MM:SSZ`.
     pub text: Option<String>,
@@ -93,9 +100,30 @@ pub struct FactoryInspect {
     pub hovered: Option<u64>,
     /// The key moment a step landed on, named as the header names it.
     pub moment: Option<String>,
+    /// What it has selected (#85): the details' subject, as the factory draws it.
+    #[serde(default)]
+    pub selected: Option<crate::FactorySelected>,
+    /// What its header says after its buttons (#85): the moment, else where *t* comes from.
+    #[serde(default)]
+    pub header: String,
+    /// Its statistics strip (#85).
+    #[serde(default)]
+    pub strip: StripInspect,
     /// Why there is no scene.
     pub error: Option<String>,
     pub drawn: FactoryDrawn,
+}
+
+/// The factory's statistics strip, as `ui.inspect` reads it (#85).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct StripInspect {
+    /// The range its figures are over, as `stats.get` returned it.
+    pub window: Option<Span>,
+    /// It keeps its range after a click on an hour, rather than the timeline's window.
+    pub kept: bool,
+    /// The hour clicked, its start, marked while the range is kept.
+    pub clicked: Option<Timestamp>,
 }
 
 /// The timeline pane, as `ui.inspect` reads it.
@@ -286,7 +314,7 @@ pub enum StepTo {
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the rows'
 /// collapse; the panes, their folds, the workers pane, speed and steps; `at`; follow and play;
-/// the ticket; the step; the details; the window.
+/// the ticket; the step; the details; the window; the strip's hour.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -300,12 +328,12 @@ pub struct UiSet {
     pub speed: Option<Speed>,
     /// The key moments a step goes through.
     pub steps: Option<Steps>,
-    /// The factory's *t* (seconds since the epoch or `YYYY-MM-DDTHH:MM:SSZ`), following and play
-    /// turned off and the timeline's playhead put there.
+    /// The timeline's playhead put at this time (seconds since the epoch or
+    /// `YYYY-MM-DDTHH:MM:SSZ`), and the factory, following it, at it (#85); play off.
     pub at: Option<At>,
-    /// *t* follows the timeline (the pointer, else the playhead, else the window's end).
+    /// The factory follows the timeline (its playhead, else its window's end); off, it holds.
     pub follow: Option<bool>,
-    /// *t* plays through the timeline's window.
+    /// The timeline's playhead plays through its window, the factory following.
     pub playing: Option<bool>,
     /// The ticket selected: its journey traced in the factory and its bars selected on the
     /// timeline.
@@ -327,6 +355,10 @@ pub struct UiSet {
     pub window: Option<SpanAt>,
     /// Which rows Collapse leaves out (#74), as `rows.set` sets it: `off`, `empty` or `window`.
     pub collapse: Option<swarmception_domain::Collapse>,
+    /// As a click on the factory's statistics strip's bar of the hour holding this time (#85):
+    /// the timeline's window on that hour, its playhead at its last second, the strip keeping its
+    /// range with the hour marked. After the window.
+    pub hour: Option<At>,
 }
 
 /// A span of times, each in seconds since the epoch or `YYYY-MM-DDTHH:MM:SSZ`.
@@ -496,28 +528,7 @@ impl Shell {
         self.sync();
         let looking = self.timeline.looking(&mut self.engine).unwrap_or_default();
         let selection = self.timeline.selection().unwrap_or_default();
-        let drawn = self.factory.drawn();
-        let scene = self.factory.scene();
-        let factory = FactoryInspect {
-            t: scene.map(|s| s.t),
-            text: scene.map(|s| s.text.clone()),
-            source: self.factory.source(),
-            hovered: self.factory.hovered(),
-            moment: self.factory.moment(&self.ui.factory).map(|step| step.text.clone()),
-            error: self.factory.error().map(str::to_owned),
-            drawn: FactoryDrawn {
-                upcoming: drawn.upcoming.clone(),
-                shelf: drawn.shelf.clone(),
-                benches: drawn.benches.iter().map(|(key, tickets)| BenchDrawn { key: key.clone(), tickets: tickets.clone() }).collect(),
-                dock: drawn.dock.clone(),
-                gate: drawn.gate.clone(),
-                runs: drawn.runs.clone(),
-                blocks: drawn.blocks,
-                done: drawn.done.clone(),
-                hidden: drawn.hidden,
-                journey: drawn.journey.clone(),
-            },
-        };
+        let factory = self.factory_inspect();
         let timeline = TimelineInspect {
             has_data: self.timeline.has_data(),
             scale: self.timeline.scale(),
@@ -550,6 +561,38 @@ impl Shell {
             layout: self.layout().clone(),
             workers: self.workers_inspect(),
             open: self.open_inspect(),
+        }
+    }
+
+    /// What the factory shows (#85: the time it shows, what it has selected, its header and strip)
+    /// and drew last frame.
+    fn factory_inspect(&self) -> FactoryInspect {
+        let drawn = self.factory.drawn();
+        let t = self.factory.t();
+        let strip = self.factory.strip();
+        FactoryInspect {
+            t,
+            text: t.map(|t| t.to_string()),
+            source: self.factory.source(),
+            hovered: self.factory.hovered(),
+            moment: self.factory.moment().map(|step| step.text.clone()),
+            selected: self.factory.selected().cloned(),
+            header: self.factory.header_drawn().text.clone(),
+            strip: StripInspect { window: strip.stats().map(|s| Span { start: s.start, end: s.end }), kept: strip.kept(), clicked: strip.clicked() },
+            error: self.factory.error().map(str::to_owned),
+            drawn: FactoryDrawn {
+                upcoming: drawn.upcoming.clone(),
+                shelf: drawn.shelf.clone(),
+                benches: drawn.benches.iter().map(|(key, tickets)| BenchDrawn { key: key.clone(), tickets: tickets.clone() }).collect(),
+                dock: drawn.dock.clone(),
+                gate: drawn.gate.clone(),
+                runs: drawn.runs.clone(),
+                blocks: drawn.blocks,
+                done: drawn.done.clone(),
+                hidden: drawn.hidden,
+                journey: drawn.journey.clone(),
+                selected: drawn.selected.clone(),
+            },
         }
     }
 
@@ -600,6 +643,7 @@ impl Shell {
     fn apply(&mut self, set: &UiSet) -> Result<(), EngineError> {
         let at = set.at.as_ref().map(At::time).transpose()?;
         let window = set.window.as_ref().map(|span| self.window(span)).transpose()?;
+        let hour = set.hour.as_ref().map(|at| self.hour(at)).transpose()?;
         if let Some(place) = set.workers.and_then(|w| w.place).filter(|p| !p.sane()) {
             return Err(EngineError::BadParams {
                 message: format!("workers.place: ({}, {}) is over {} points from the window's corner", place.x, place.y, crate::WorkersPlace::MOST),
@@ -622,7 +666,21 @@ impl Shell {
             self.timeline.show_span(&mut self.engine, start, end);
             self.timeline.settle_now();
         }
+        if let Some(start) = hour {
+            self.show_hour(start);
+            self.timeline.settle_now();
+        }
         Ok(())
+    }
+
+    /// The start of the clock hour holding `at` (#85: `ui.set`'s `hour`), when the timeline can
+    /// show it.
+    fn hour(&self, at: &At) -> Result<Timestamp, EngineError> {
+        let t = at.time()?;
+        if !self.timeline.has_data() {
+            return Err(EngineError::Disabled { command: "ui.set".into(), reason: Unavailable::NoData });
+        }
+        Ok(Timestamp(t.0.saturating_sub(t.0.rem_euclid(3_600))))
     }
 
     /// `span`'s times, when the timeline can show them.
@@ -784,6 +842,8 @@ mod tests {
         assert!(matches!(bad(&mut shell, "ui.set", r#"{"at": "teatime"}"#), ShellError::Engine(EngineError::Invalid { .. })));
         assert!(matches!(bad(&mut shell, "ui.set", r#"{"at": 5, "window": {"start": 9, "end": 3}}"#), ShellError::Engine(EngineError::Invalid { .. })));
         assert!(matches!(bad(&mut shell, "ui.set", r#"{"window": {"start": 1, "end": 3}}"#), ShellError::Engine(EngineError::Disabled { .. })));
+        assert!(matches!(bad(&mut shell, "ui.set", r#"{"hour": 3600}"#), ShellError::Engine(EngineError::Disabled { .. })), "no timeline to move");
+        assert!(matches!(bad(&mut shell, "ui.set", r#"{"hour": "elevenses"}"#), ShellError::Engine(EngineError::Invalid { .. })));
         assert!(matches!(bad(&mut shell, "ui.inspect", r#"{"x": 1}"#), ShellError::Engine(EngineError::BadParams { .. })));
         assert!(matches!(bad(&mut shell, "ui.nope", ""), ShellError::Engine(EngineError::UnknownCommand { .. })));
         assert!(matches!(bad(&mut shell, "timeline.view.nope", ""), ShellError::Widget(timeline_engine::EngineError::UnknownCommand { .. })));
@@ -809,8 +869,8 @@ mod tests {
             Panes { timeline: false, factory: true, details: true, gates: true, workers: false },
             "details, gates and workers left out: their defaults"
         );
-        assert_eq!(inspect.state.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"));
-        assert!(!inspect.state.factory.follow);
+        assert_eq!(inspect.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"), "the time it shows");
+        assert!(inspect.state.factory.follow, "following the timeline's playhead, put there");
         assert_eq!((inspect.state.factory.ticket, inspect.state.factory.speed, inspect.state.factory.steps), (Some(7), Speed::Hour, Steps::Merges));
         assert_eq!(inspect, shell.inspect());
         let cleared: Inspect = serde_json::from_str(&now(shell.answer("ui.set", r#"{"clearTicket": true, "follow": true}"#)).unwrap()).unwrap();

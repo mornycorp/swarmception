@@ -141,7 +141,8 @@ fn the_pane_draws_what_factory_at_returns() {
     shell.set_factory_at(t);
     frame(&mut shell, &ctx);
     let texts = frame(&mut shell, &ctx);
-    assert_eq!(shell.factory().source(), FactorySource::Set);
+    assert_eq!(shell.factory().source(), FactorySource::Playhead, "on the timeline's playhead, put there");
+    assert_eq!(shell.factory().t(), Some(t));
 
     let shown: FactoryScene = shell.factory().scene().cloned().unwrap();
     let asked = shell.engine().call::<At>(AtParams { t: Some(t), recent: Some(shown.recent), ticket: None }).unwrap();
@@ -162,9 +163,11 @@ fn the_pane_draws_what_factory_at_returns() {
     assert_eq!(drawn.runs, runs);
     assert_eq!(drawn.blocks, asked.shipping.blocks.len());
     assert_eq!(drawn.hidden, 0, "everything fits at this size");
-    for label in ["#7", "#9", "#11", "#13", "worker-1", "worker-2", "running gate-pr8 · 2m", "2026-10-31 03:42:00 UTC"] {
+    for label in ["#7", "#9", "#11", "#13", "worker-1", "worker-2", "running gate-pr8 · 2m", "at the timeline's playhead"] {
         assert!(texts.iter().any(|text| text.contains(label)), "{label} drawn: {texts:?}");
     }
+    // #85: no clock of its own; the timeline's playhead is the time.
+    assert!(!texts.iter().any(|text| text.contains("03:42:00")), "no clock: {texts:?}");
     // #31: no ticker; the key along the bottom; the gate's list of runs, no press.
     assert!(!texts.iter().any(|text| text.contains("JUST HAPPENED")), "{texts:?}");
     for key in ["border = phase · fill = ticket", "waiting for merge", "in the gate"] {
@@ -185,9 +188,9 @@ fn following_the_timeline_takes_its_window_end_and_play_moves_on() {
     assert_eq!(shell.factory().source(), FactorySource::WindowEnd, "no pointer, no playhead: the window's end");
     let end = shell.factory().scene().unwrap().t;
 
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:10:00Z").unwrap());
     let mut state = shell.ui_state();
     state.factory.playing = true;
-    state.factory.t = Some(Timestamp::parse("2026-10-31T03:10:00Z").unwrap());
     shell.set_ui_state(state);
     let t = |shell: &Shell| shell.factory().scene().unwrap().t;
     frame(&mut shell, &ctx);
@@ -197,6 +200,14 @@ fn following_the_timeline_takes_its_window_end_and_play_moves_on() {
     }
     assert_eq!(shell.factory().source(), FactorySource::Playing);
     assert!(t(&shell) >= first && t(&shell) < end, "play moves on through the window: {first:?} → {:?}", t(&shell));
+    // Play moves the timeline's playhead (#85), not a clock of the factory's own.
+    let playhead = shell.inspect().timeline.playhead.unwrap();
+    let place = |shell: &mut Shell, time| {
+        shell.engine().call::<swarmception_engine::factory_cmds::PlaceAt>(swarmception_engine::factory_cmds::PlaceAtParams { time }).unwrap().item
+    };
+    let now = t(&shell);
+    let (on, at) = (place(&mut shell, now), place(&mut shell, playhead));
+    assert_eq!(on, at, "the playhead on the item play's t falls in");
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -369,6 +380,11 @@ fn hovering_a_chip_highlights_its_bars_and_never_touches_the_selection() {
     // The details follow the person's own bar (#47), which a hover never moves.
     let details = shell.ui_state().details.subject;
     assert!(details.is_some(), "the person's bar chosen");
+    // The factory follows the playhead the person moved (#85): its chips glide there first.
+    for _ in 0..60 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(person(&mut shell), before);
 
     // Every frame of a hover on #7, then on #9, then away: the selection as it was, the
     // highlight on the hovered ticket's bars, then on none.
@@ -503,6 +519,10 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
     session.call::<Set>(SetParams { playhead: Some(0), ..SetParams::default() }).unwrap();
     let before = shell.timeline().selection().unwrap();
     assert_eq!((before.ranges.get("merged").cloned(), before.playhead), (Some(vec![0]), Some(0)));
+    // The factory follows the playhead (#85): its chips glide there first.
+    for _ in 0..60 {
+        frame(&mut shell, &ctx);
+    }
     hover_and_leave(&mut shell, 9);
     assert_eq!(shell.timeline().selection().unwrap(), before);
 
@@ -554,30 +574,68 @@ fn the_strip_draws_what_stats_get_returns_for_the_window() {
 }
 
 #[test]
-fn clicking_an_hours_bar_zooms_the_timeline_to_it_and_moves_t_with_it() {
+fn clicking_an_hours_bar_zooms_the_timeline_to_it_and_the_strip_keeps_its_range() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
     for _ in 0..3 {
         frame(&mut shell, &ctx);
     }
+    let range = |shell: &Shell| shell.factory().strip().stats().map(|s| (s.start, s.end)).unwrap();
+    let before = range(&shell);
+    let click_hour = |shell: &mut Shell, hour: Timestamp| {
+        let hours = shell.factory().strip().drawn().hours.clone();
+        let bar = hours.iter().find(|(start, _)| *start == hour).map(|(_, rect)| rect.center()).expect("the hour's bar drawn");
+        let button = |pressed| egui::Event::PointerButton { pos: bar, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        frame_with(shell, &ctx, vec![egui::Event::PointerMoved(bar), button(true)]);
+        frame_with(shell, &ctx, vec![button(false)]);
+        for _ in 0..3 {
+            frame(shell, &ctx);
+        }
+    };
     let three = Timestamp::parse("2026-10-31T03:00:00Z").unwrap();
-    let hours = shell.factory().strip().drawn().hours.clone();
-    let bar = hours.iter().find(|(start, _)| *start == three).map(|(_, rect)| rect.center()).expect("03:00's bar drawn");
-    let button = |pressed| egui::Event::PointerButton { pos: bar, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
-    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(bar), button(true)]);
-    frame_with(&mut shell, &ctx, vec![button(false)]);
-    for _ in 0..3 {
-        frame(&mut shell, &ctx);
-    }
+    click_hour(&mut shell, three);
     // The hour, as much of it as the timeline holds: its first event is at 03:00, its extent
     // starts a minute later.
     let end = Timestamp(three.0 + 3_600);
     let (start, until) = window(&mut shell);
     assert!(three <= start && start <= Timestamp(three.0 + 60) && until == end, "the timeline's window is that hour: {start:?} → {until:?}");
     let t = shell.factory().scene().unwrap().t;
-    assert!(start <= t && t < end, "the factory's t is in it: {t:?}");
-    let strip = shell.factory().strip().stats().unwrap();
-    assert_eq!((strip.start, strip.end), (start, until), "and the strip is over it");
+    assert_eq!(t, Timestamp(end.0 - 1), "the factory at the hour's last second");
+    let playhead = shell.inspect().timeline.playhead.expect("a playhead");
+    assert!(start <= playhead && playhead < end, "the playhead in it: {playhead:?}");
+    // #85: the strip doesn't zoom itself: its range as it was, the hour clicked marked.
+    assert_eq!(range(&shell), before, "the strip keeps its range");
+    let strip = shell.factory().strip();
+    assert!(strip.kept());
+    assert_eq!(strip.clicked(), Some(three));
+    let marked = strip.drawn().clicked.and_then(|n| strip.drawn().hours.get(n)).map(|(start, _)| *start);
+    assert_eq!(marked, Some(three), "its bar marked");
+    assert_ne!(before, (start, until), "a range the click's window isn't");
+    let inspect = shell.inspect().factory.strip;
+    assert_eq!((inspect.kept, inspect.clicked, inspect.window.map(|w| (w.start, w.end))), (true, Some(three), Some(before)));
+
+    // The same hour again from the kept strip: the range still kept.
+    click_hour(&mut shell, three);
+    assert_eq!((range(&shell), shell.factory().strip().clicked()), (before, Some(three)));
+
+    // The person moves the timeline's window: the strip follows it again, nothing marked.
+    shell.timeline().fit();
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let (start, until) = window(&mut shell);
+    assert_eq!(range(&shell), (start, until), "over the timeline's window again");
+    assert!(!shell.factory().strip().kept() && shell.factory().strip().drawn().clicked.is_none());
+
+    // The control channel's way in, as the click: `ui.set`'s hour.
+    let before = range(&shell);
+    assert!(matches!(shell.answer("ui.set", r#"{"hour": "2026-10-31T03:20:00Z"}"#), swarmception_ui::control::Answer::Now(Ok(_))));
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let (start, until) = window(&mut shell);
+    assert!(three <= start && until == end, "the timeline on 03:00's hour: {start:?} → {until:?}");
+    assert_eq!((range(&shell), shell.factory().strip().clicked()), (before, Some(three)));
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -652,22 +710,22 @@ fn stepping_by_key_moment_back_and_forth_names_each_and_moves_the_playhead() {
     assert!(!shell.factory().drawn().chips.iter().any(|(_, r)| r.contains(empty)));
     click_at(&mut shell, &ctx, empty);
 
-    let t = |shell: &Shell| shell.ui_state().factory.t;
+    let t = |shell: &Shell| shell.factory().t();
     let playhead = |shell: &mut Shell| shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap().playhead;
     let item = |shell: &mut Shell, t| shell.engine().call::<PlaceAt>(PlaceAtParams { time: t }).unwrap().item;
-    // → from 03:10: the setup PR landing on main at 03:20, named beside the clock.
+    // → from 03:10: the setup PR landing on main at 03:20, named in the header.
     let texts = press(&mut shell, &ctx, egui::Key::ArrowRight);
     let asked: Step = shell.engine().call::<StepTo>(StepParams { t: Some(at("2026-10-31T03:10:00Z")), direction: Direction::Next, kinds: Vec::new() }).unwrap();
     assert_eq!(asked.t, Some(at("2026-10-31T03:20:00Z")));
     assert_eq!(t(&shell), asked.t, "t is the step's");
     let view = shell.ui_state().factory;
-    assert_eq!(shell.factory().moment(&view), Some(&asked), "the pane shows factory.step's answer");
+    assert_eq!(shell.factory().moment(), Some(&asked), "the pane shows factory.step's answer");
     assert_eq!(shell.factory().scene().unwrap().t, at("2026-10-31T03:20:00Z"));
     assert_eq!(shell.factory().source(), FactorySource::Stepped);
-    assert!(texts.iter().any(|text| text == "PR #13 merged onto main"), "named beside the clock: {texts:?}");
+    assert!(texts.iter().any(|text| text == "PR #13 merged onto main"), "named in the header: {texts:?}");
     let want = item(&mut shell, at("2026-10-31T03:20:00Z"));
     assert_eq!(playhead(&mut shell), want, "the timeline's playhead follows");
-    assert!(!view.follow && !view.playing);
+    assert!(view.follow && !view.playing, "the factory follows the playhead the step moved");
 
     // ← twice: #11's claim at 03:05, then #7's work at 03:02.
     let texts = press(&mut shell, &ctx, egui::Key::ArrowLeft);
@@ -693,14 +751,162 @@ fn stepping_by_key_moment_back_and_forth_names_each_and_moves_the_playhead() {
     assert_eq!(t(&shell), Some(at("2026-10-31T03:00:00Z")));
     press(&mut shell, &ctx, egui::Key::End);
     assert_eq!(t(&shell), Some(at("2026-10-31T04:30:00Z")));
-    assert_eq!(shell.factory().moment(&shell.ui_state().factory), None, "a jump names no moment");
+    assert_eq!(shell.factory().moment(), None, "a jump names no moment");
     shell.jump_factory(Jump::Step(Direction::Previous));
     frame(&mut shell, &ctx);
     assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")), "the shell's own way in: the last merge before");
 
-    // A click on the timeline takes the keyboard there: → is the timeline's, not the factory's.
+    // A click on the timeline takes the keyboard there: → is the timeline's, not the factory's;
+    // the factory shows wherever the timeline's playhead is (#85).
     click_at(&mut shell, &ctx, egui::pos2(700.0, 150.0));
     press(&mut shell, &ctx, egui::Key::ArrowRight);
-    assert_eq!(t(&shell), Some(at("2026-10-31T03:45:00Z")));
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().moment(), None, "no step of the factory's");
+    let playhead = shell.inspect().timeline.playhead;
+    assert_eq!(t(&shell), playhead, "the factory on the timeline's playhead");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn the_factory_follows_the_timelines_playhead_and_holds_when_it_doesnt() {
+    use timeline_engine::state_cmds::{Set, SetParams};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // The person moves the playhead on the timeline: the factory goes with it, to its item's time.
+    let item = |shell: &mut Shell, text: &str| {
+        let time = Timestamp::parse(text).unwrap();
+        shell.engine().call::<swarmception_engine::factory_cmds::PlaceAt>(swarmception_engine::factory_cmds::PlaceAtParams { time }).unwrap().item
+    };
+    let submit = item(&mut shell, "2026-10-31T03:30:00Z");
+    shell.timeline().widget().session().call::<Set>(SetParams { playhead: submit, ..SetParams::default() }).unwrap();
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:30:00Z"), "the playhead's time");
+    assert_eq!(shell.factory().scene().unwrap().t, Timestamp::parse("2026-10-31T03:30:00Z").unwrap());
+    assert_eq!(shell.factory().source(), FactorySource::Playhead);
+    assert_eq!(shell.inspect().factory.header, "at the timeline's playhead");
+
+    // Not following: it holds where it was, and says so in a small label.
+    let mut state = shell.ui_state();
+    state.factory.follow = false;
+    shell.set_ui_state(state);
+    let merge = item(&mut shell, "2026-10-31T03:45:00Z");
+    shell.timeline().widget().session().call::<Set>(SetParams { playhead: merge, ..SetParams::default() }).unwrap();
+    frame(&mut shell, &ctx);
+    let texts = frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:30:00Z"), "held");
+    assert_eq!(shell.factory().source(), FactorySource::Held);
+    let label = "not following the timeline: held at 03:30:00 UTC";
+    assert!(texts.iter().any(|t| t == label), "{texts:?}");
+    assert_eq!(shell.inspect().factory.header, label);
+
+    // Following again: the playhead's time.
+    let mut state = shell.ui_state();
+    state.factory.follow = true;
+    shell.set_ui_state(state);
+    frame(&mut shell, &ctx);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:45:00Z"));
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// A bar selected on the timeline, alone, as a click selects it.
+fn choose_bar(shell: &mut Shell, track: &str, range: usize) {
+    use timeline_engine::ranges_cmds::{RangeParams, Toggle};
+    let session = shell.timeline().widget().session();
+    session.call::<timeline_engine::ranges_cmds::Clear>(NoParams {}).unwrap();
+    session.call::<Toggle>(RangeParams { track: track.to_owned(), range }).unwrap();
+}
+
+/// Ticket `issue`'s first bar off the merges rows, chosen on the timeline, then frames.
+fn choose_ticket(shell: &mut Shell, ctx: &egui::Context, issue: u64) {
+    let bars = shell.engine().call::<swarmception_engine::factory_cmds::TicketBars>(swarmception_engine::factory_cmds::TicketParams { issue }).unwrap().bars;
+    let bar = bars.iter().find(|b| b.track != "merged").unwrap().clone();
+    choose_bar(shell, &bar.track, bar.range);
+    for _ in 0..3 {
+        frame(shell, ctx);
+    }
+}
+
+#[test]
+fn a_bar_selected_on_the_timeline_selects_it_in_the_factory() {
+    use swarmception_domain::details::Subject;
+    use swarmception_ui::FactorySelected;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert_eq!(shell.factory().selected(), None);
+
+    // #11's bar on the timeline: its chip at the dock, ringed; its journey traced.
+    choose_ticket(&mut shell, &ctx, 11);
+    assert_eq!(shell.ui_state().details.subject, Some(Subject::Ticket { issue: 11 }));
+    assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 11 }));
+    assert_eq!(shell.factory().drawn().selected, ["dock #11"]);
+    assert_eq!(shell.ui_state().factory.ticket, Some(11), "its journey traced");
+    let inspect = shell.inspect().factory;
+    assert_eq!((inspect.selected, inspect.drawn.selected), (Some(FactorySelected::Ticket { issue: 11 }), vec!["dock #11".to_owned()]));
+
+    // At 03:50 #7 has merged: its bar selects its brick on main.
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:50:00Z").unwrap());
+    choose_ticket(&mut shell, &ctx, 7);
+    assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+    assert_eq!(shell.factory().drawn().selected, ["brick #7"]);
+
+    // A merge onto main no ticket names (the setup PR, !13): its brick.
+    choose_bar(&mut shell, "main", 0);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert!(matches!(shell.ui_state().details.subject, Some(Subject::Merge { .. })), "{:?}", shell.ui_state().details.subject);
+    assert!(matches!(shell.factory().selected(), Some(FactorySelected::Merge { .. })));
+    assert_eq!(shell.factory().drawn().selected, ["brick !13"]);
+    assert_eq!(shell.ui_state().factory.ticket, None, "a merge traces no ticket");
+
+    // A gate run's bar on the timeline's Gate runs row (#84): its line in the gate's list.
+    choose_bar(&mut shell, "gates", 0);
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    assert!(matches!(&shell.ui_state().details.subject, Some(Subject::Gate { sub, .. }) if sub == "gate-pr8"), "{:?}", shell.ui_state().details.subject);
+    assert!(matches!(shell.factory().selected(), Some(FactorySelected::Run { sub, .. }) if sub == "gate-pr8"));
+    assert_eq!(shell.factory().drawn().selected, ["run gate-pr8"]);
+    assert_eq!(shell.ui_state().factory.ticket, None, "a run traces no ticket");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn a_ticket_selected_in_the_factory_is_lit_on_the_timeline_and_back() {
+    use swarmception_domain::details::Subject;
+    use swarmception_ui::{FactorySelected, Lit};
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let mut state = shell.ui_state();
+    state.panes.details = true;
+    shell.set_ui_state(state);
+    shell.set_factory_at(Timestamp::parse("2026-10-31T03:42:00Z").unwrap());
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    // The factory → the timeline: #9's chip clicked: its bars lit on the timeline.
+    let on = chips(&shell, 9)[0].center();
+    click_at(&mut shell, &ctx, on);
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.ui_state().details.subject, Some(Subject::Ticket { issue: 9 }));
+    assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (ticket_bars(&mut shell, 9), Lit::Details));
+    assert_eq!(shell.factory().drawn().selected, ["bench #9"]);
+
+    // The timeline → the factory: #7's bar chosen there moves the factory's selection to #7.
+    choose_ticket(&mut shell, &ctx, 7);
+    assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+    assert_eq!(shell.factory().drawn().selected, ["gate #7"]);
+    assert_eq!(shell.timeline().highlighted(), ticket_bars(&mut shell, 7));
     std::fs::remove_dir_all(dir).ok();
 }

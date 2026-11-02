@@ -10,6 +10,10 @@
 //!
 //! Hovering a ticket rings it at every station it is drawn at (and the shell highlights its bars on
 //! the timeline); clicking it traces its journey through the stations, with the time at each.
+//! What is selected ([`Selected`], #85: the details' subject, which a bar chosen on the timeline
+//! sets) is ringed in the selection's colour: a ticket's chips and its brick, a merge's brick, a
+//! gate run's line; and brought into view, a list showing it in place of its last, main's wall
+//! scrolled to it once.
 //! Chips glide and resize between stations; nothing else moves by the wall clock: the gears and
 //! the glow of what just happened follow *t*, so a still *t* draws a still factory.
 
@@ -33,6 +37,13 @@ pub struct Drawn {
     pub runs: Vec<String>,
     /// A gate run clicked this frame, its sub-agent's id and its start: the details pane shows it.
     pub run_clicked: Option<(String, swarmception_model::Timestamp)>,
+    /// A brick of a merge no ticket names clicked this frame, its commit (#85): the details
+    /// pane shows the merge.
+    pub merge_clicked: Option<String>,
+    /// Where what is selected was drawn (#85), `<station> <what>`: `bench #9`, `brick #9`,
+    /// `brick !13`, `run gate-pr8`; stations `upcoming`, `shelf`, `bench`, `dock`, `gate`,
+    /// `done`, `brick`, `run`.
+    pub selected: Vec<String>,
     pub blocks: usize,
     pub done: Vec<u64>,
     /// How many crates a station had no room for, all told.
@@ -58,17 +69,88 @@ pub struct Drawn {
 }
 
 /// What the floor is asked to show besides the scene: the ticket hovered last frame, the
-/// ticket whose journey is traced.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// ticket whose journey is traced, and what is selected (#85).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Marks {
     pub hovered: Option<u64>,
     pub traced: Option<u64>,
+    pub selected: Option<Selected>,
 }
 
-/// How main's wall is scrolled (#32): the points down from its newest row, 0 when it fits.
+/// What the factory has selected (#85): the details' subject as the factory draws it, which a
+/// bar chosen on the timeline, a gate run chosen in the Gates band or a click in the factory sets.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Selected {
+    /// A ticket: its chip at whichever station holds it, and its brick on main.
+    Ticket { issue: u64 },
+    /// A merge onto main, by its commit: its brick.
+    Merge { commit: String },
+    /// A gate run, by its sub-agent's id; `at`, a time in it, picks one of a rerun's runs.
+    Run {
+        sub: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        at: Option<swarmception_model::Timestamp>,
+    },
+}
+
+impl Selected {
+    /// What the factory selects for the details' `subject`: none for a session, which it doesn't draw.
+    #[must_use]
+    pub fn of(subject: &swarmception_domain::details::Subject) -> Option<Self> {
+        use swarmception_domain::details::Subject;
+        match subject {
+            Subject::Ticket { issue } => Some(Self::Ticket { issue: *issue }),
+            Subject::Merge { commit } => Some(Self::Merge { commit: commit.clone() }),
+            Subject::Gate { sub, at } => Some(Self::Run { sub: sub.clone(), at: *at }),
+            Subject::Session { .. } => None,
+        }
+    }
+
+    /// The ticket it is, if a ticket.
+    #[must_use]
+    pub const fn ticket(&self) -> Option<u64> {
+        match self {
+            Self::Ticket { issue } => Some(*issue),
+            _ => None,
+        }
+    }
+
+    /// Whether it is `block`'s merge: the block's ticket, or its commit (the subject's may be
+    /// the commit's start).
+    fn is_block(&self, block: &Block) -> bool {
+        match self {
+            Self::Ticket { issue } => block.issue == Some(*issue),
+            Self::Merge { commit } => !commit.is_empty() && block.commit.as_deref().is_some_and(|c| c.starts_with(commit.as_str())),
+            Self::Run { .. } => false,
+        }
+    }
+
+    /// Whether it is gate run `run`: its sub, and the run `at` falls in (its start, or within it).
+    fn is_run(&self, run: &GateRun) -> bool {
+        match self {
+            Self::Run { sub, at } => *sub == run.sub && at.is_none_or(|at| at == run.start || (run.start <= at && run.end.is_none_or(|end| at <= end))),
+            _ => false,
+        }
+    }
+}
+
+/// How main's wall is scrolled (#32): the points down from its newest row, 0 when it fits; and
+/// whether to scroll the selected brick into view on the next frame (#85), once.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WallView {
     pub scroll: f32,
+    pub reveal: bool,
+}
+
+/// `items` with the one `selected` picks moved into the first `shown`, in place of the last of
+/// them, so a list cut short still shows it (#85); as they were when it is among them, or not there.
+fn into_view<T: Copy>(mut items: Vec<T>, shown: usize, selected: impl Fn(T) -> bool) -> Vec<T> {
+    if let Some(at) = items.iter().position(|item| selected(*item)).filter(|at| shown > 0 && *at >= shown) {
+        let item = items.remove(at);
+        items.insert(shown - 1, item);
+    }
+    items
 }
 
 /// The gap between the wall's bricks, and the width of its scrollbar.
@@ -257,6 +339,8 @@ struct Palette {
     card: Color32,
     edge: Color32,
     cell: Color32,
+    /// What is selected (#85): the theme's selection stroke.
+    selected: Color32,
 }
 
 impl Palette {
@@ -267,6 +351,7 @@ impl Palette {
             card: visuals.faint_bg_color,
             edge: visuals.widgets.noninteractive.bg_stroke.color,
             cell: visuals.extreme_bg_color,
+            selected: visuals.selection.stroke.color,
         }
     }
 }
@@ -379,6 +464,35 @@ impl Floor<'_> {
         self.pal.text
     }
 
+    /// The ticket selected (#85), if a ticket is.
+    fn selected_ticket(&self) -> Option<u64> {
+        self.marks.selected.as_ref().and_then(Selected::ticket)
+    }
+
+    /// Notes where what is selected was drawn, and rings `rect` in the selection's colour.
+    fn mark_selected(&mut self, painter: &egui::Painter, rect: Rect, place: String) {
+        painter.rect_stroke(rect.expand(3.5), 6.0, Stroke::new(2.5, self.pal.selected), StrokeKind::Outside);
+        self.drawn.selected.push(place);
+    }
+
+    /// Which station a chip drawn now is at, for [`Drawn::selected`].
+    fn station_of(&self, issue: u64) -> &'static str {
+        let scene = self.scene;
+        if scene.benches.iter().any(|b| b.crates.iter().any(|c| c.issue == issue)) {
+            "bench"
+        } else if scene.dock.iter().any(|c| c.issue == issue) {
+            "dock"
+        } else if scene.gate.crates.iter().any(|c| c.issue == issue) {
+            "gate"
+        } else if scene.shelf.iter().any(|c| c.issue == issue) {
+            "shelf"
+        } else if scene.upcoming.iter().any(|c| c.issue == issue) {
+            "upcoming"
+        } else {
+            "done"
+        }
+    }
+
     /// Draws ticket `c` as its chip, gliding to `centre` and `size`: its fill its colour, its
     /// border its phase, a glow while its phase is fresh, a ring while it is hovered anywhere.
     /// Hovering or clicking it is noted in [`Drawn`].
@@ -388,6 +502,10 @@ impl Floor<'_> {
         let glow = if look == Look::Hollow { 0.0 } else { self.fresh(c.age) };
         let highlight = self.marks.hovered.filter(|h| *h == c.issue).map(|_| self.ring());
         paint_chip(&self.painter, rect, &Chip { colour: c.colour, look, label: &c.label, ground: self.pal.card, highlight, glow });
+        if self.selected_ticket() == Some(c.issue) {
+            let place = format!("{} {}", self.station_of(c.issue), c.label);
+            self.mark_selected(&self.painter.clone(), rect, place);
+        }
         self.pointed(rect, c.issue, c.pr, &c.tooltip);
         rect
     }
@@ -438,7 +556,9 @@ impl Floor<'_> {
         let (top, bottom) = column.split_top_bottom_at_fraction(1.0 - shelf_share);
         let room = self.card(top.shrink2(vec2(0.0, 0.0)).with_max_y(top.bottom() - 3.0), "UP NEXT", &scene.counts.upcoming.to_string());
         let rows = ((room.height() - 12.0) / 27.0).floor().max(0.0) as usize;
-        for (n, c) in scene.upcoming.iter().take(rows).enumerate() {
+        let selected = self.selected_ticket();
+        let upcoming = into_view(scene.upcoming.iter().collect(), rows, |c: &Crate| Some(c.issue) == selected);
+        for (n, c) in upcoming.into_iter().take(rows).enumerate() {
             let centre = pos2(room.left() + Size::Medium.dims().x / 2.0 + 4.0, room.top() + 12.0 + 27.0 * n as f32);
             let crate_rect = self.chip(c, centre, Size::Medium);
             let text_width = room.right() - crate_rect.right() - 4.0;
@@ -456,24 +576,27 @@ impl Floor<'_> {
         self.more(room, scene.counts.upcoming.saturating_sub(shown));
         let room = self.card(bottom.with_min_y(bottom.top() + 3.0), "SHELF", &scene.counts.shelved.to_string());
         let shelf: Vec<&Crate> = scene.shelf.iter().collect();
-        let shown = self.grid(room, &shelf, Size::Small);
-        self.drawn.shelf = shelf.iter().take(shown).map(|c| c.issue).collect();
+        let (shown, drawn) = self.grid(room, &shelf, Size::Small);
+        self.drawn.shelf = drawn;
         self.more(room, scene.counts.shelved.saturating_sub(shown));
     }
 
-    /// Small crates in rows across `room`, as many as fit with a line left for "+N more": how many.
-    fn grid(&mut self, room: Rect, crates: &[&Crate], size: Size) -> usize {
+    /// Small crates in rows across `room`, as many as fit with a line left for "+N more" (the
+    /// selected one among them, #85): how many, and which.
+    fn grid(&mut self, room: Rect, crates: &[&Crate], size: Size) -> (usize, Vec<u64>) {
         let step = size.dims() + vec2(8.0, 8.0);
         let per_row = ((room.width() + 6.0) / step.x).floor().max(1.0) as usize;
         let rows = ((room.height() - 12.0 + 6.0) / step.y).floor().max(0.0) as usize;
         let room_for = per_row * rows;
         let shown = if crates.len() > room_for { room_for.saturating_sub(1) } else { crates.len() };
+        let selected = self.selected_ticket();
+        let crates = into_view(crates.to_vec(), shown, |c: &Crate| Some(c.issue) == selected);
         for (n, c) in crates.iter().take(shown).enumerate() {
             let (col, row) = ((n % per_row) as f32, (n / per_row) as f32);
             let centre = room.left_top() + vec2(size.dims().x / 2.0 + 4.0 + col * step.x, size.dims().y / 2.0 + 4.0 + row * step.y);
             self.chip(c, centre, size);
         }
-        shown
+        (shown, crates.iter().take(shown).map(|c| c.issue).collect())
     }
 
     fn benches(&mut self, column: Rect) {
@@ -547,7 +670,9 @@ impl Floor<'_> {
     fn bench_crates(&mut self, cell: Rect, bench: &Bench, sizes: &[Size]) {
         let mut x = cell.right() - 8.0;
         let mut drawn = Vec::new();
-        for (c, size) in bench.crates.iter().zip(sizes) {
+        let selected = self.selected_ticket();
+        let crates = into_view(bench.crates.iter().collect(), sizes.len(), |c: &Crate| Some(c.issue) == selected);
+        for (c, size) in crates.into_iter().zip(sizes) {
             let size = *size;
             let barred = drawn.is_empty() && size != Size::Small;
             let y = cell.center().y - if barred { 3.0 } else { 0.0 };
@@ -622,7 +747,9 @@ impl Floor<'_> {
         }
         let fits = ((room.height() - 12.0) / 27.0).floor().max(0.0) as usize;
         let shown = if scene.dock.len() > fits { fits.saturating_sub(1) } else { scene.dock.len() };
-        for (n, c) in scene.dock.iter().take(shown).enumerate() {
+        let selected = self.selected_ticket();
+        let dock = into_view(scene.dock.iter().collect(), shown, |c: &Crate| Some(c.issue) == selected);
+        for (n, c) in dock.into_iter().take(shown).enumerate() {
             let centre = pos2(room.left() + Size::Medium.dims().x / 2.0 + 4.0, room.top() + 12.0 + 27.0 * n as f32);
             let rect = self.chip(c, centre, Size::Medium);
             let who = c.worker.as_deref().unwrap_or("");
@@ -660,7 +787,9 @@ impl Floor<'_> {
             let chip = Size::Medium.dims();
             let fits = ((room.width() + 8.0) / (chip.x + 8.0)).floor().max(1.0) as usize;
             let shown = gate.crates.len().min(fits);
-            for (n, c) in gate.crates.iter().take(shown).enumerate() {
+            let selected = self.selected_ticket();
+            let crates = into_view(gate.crates.iter().collect(), shown, |c: &Crate| Some(c.issue) == selected);
+            for (n, c) in crates.into_iter().take(shown).enumerate() {
                 let x = room.left() + 4.0 + chip.x / 2.0 + n as f32 * (chip.x + 8.0);
                 self.chip(c, pos2(x, y + 4.0 + chip.y / 2.0), Size::Medium);
                 self.drawn.gate.push(c.issue);
@@ -670,6 +799,9 @@ impl Floor<'_> {
         }
         let runs: Vec<&GateRun> = gate.running.iter().chain(&gate.recent).collect();
         let bottom = room.bottom() - if gate.inspectors.is_empty() { 0.0 } else { 15.0 };
+        let fits = ((bottom - y) / RUN_LINE).floor().max(0.0) as usize;
+        let selected = self.marks.selected.clone();
+        let runs = into_view(runs, fits, |run: &GateRun| selected.as_ref().is_some_and(|s| s.is_run(run)));
         for (n, run) in runs.iter().enumerate() {
             if y + RUN_LINE > bottom {
                 break;
@@ -690,6 +822,11 @@ impl Floor<'_> {
         let fresh = if run.outcome == Outcome::Running { 1.0 } else { self.fresh(run.age) };
         if fresh > 0.0 {
             self.painter.rect_filled(line, 3.0, colour.gamma_multiply(0.22 * fresh));
+        }
+        if self.marks.selected.as_ref().is_some_and(|s| s.is_run(run)) {
+            self.painter.rect_filled(line, 3.0, self.pal.selected.gamma_multiply(0.25));
+            self.painter.rect_stroke(line, 3.0, Stroke::new(1.5, self.pal.selected), StrokeKind::Inside);
+            self.drawn.selected.push(format!("run {}", run.sub));
         }
         let mark = match run.outcome {
             Outcome::Running => icons::COG,
@@ -737,8 +874,8 @@ impl Floor<'_> {
             self.painter.text(strip.left_top(), Align2::LEFT_TOP, title, Self::font(10.0), self.pal.weak);
             let room = strip.with_min_y(strip.top() + 13.0);
             let done: Vec<&Crate> = ship.done.iter().collect();
-            let shown = self.grid(room.with_max_y(room.bottom() + 12.0), &done, Size::Small);
-            self.drawn.done = done.iter().take(shown).map(|c| c.issue).collect();
+            let (shown, drawn) = self.grid(room.with_max_y(room.bottom() + 12.0), &done, Size::Small);
+            self.drawn.done = drawn;
             self.drawn.hidden += ship.done_count.saturating_sub(shown);
         }
     }
@@ -760,6 +897,14 @@ impl Floor<'_> {
         let mut scroll = self.wall.scroll;
         if hovered && overflow > 0.0 {
             scroll -= self.ui.input(|i| i.smooth_scroll_delta.y);
+        }
+        // What is selected newly (#85): its brick scrolled to the middle of the wall's room, once.
+        if std::mem::take(&mut self.wall.reveal) && overflow > 0.0 {
+            let selected = self.marks.selected.clone();
+            if let Some(place) = blocks.iter().zip(&wall.places).find(|(b, _)| selected.as_ref().is_some_and(|s| s.is_block(b))).map(|(_, p)| p) {
+                let from_top = (wall.rows - 1 - place.row) as f32 * (wall.height + BRICK_GAP);
+                scroll = from_top - (area.height() - wall.height) / 2.0;
+            }
         }
         scroll = scroll.clamp(0.0, overflow);
         self.wall.scroll = scroll;
@@ -812,13 +957,26 @@ impl Floor<'_> {
         if let Some(ring) = block.issue.filter(|i| self.marks.hovered == Some(*i)).map(|_| self.ring()) {
             painter.rect_stroke(rect.expand(2.5), 5.0, Stroke::new(2.0, ring), StrokeKind::Outside);
         }
+        if self.marks.selected.as_ref().is_some_and(|s| s.is_block(block)) {
+            self.mark_selected(painter, rect, format!("brick {}", block.mark));
+        }
         self.drawn.marks.push(block.mark.clone());
         let target = rect.intersect(clip);
         if target.is_positive() {
             match block.issue {
                 Some(issue) => self.pointed(target, issue, block.pr, &block.tooltip),
-                None => self.tooltip(target, ("block", block.t.0, block.pr), &block.tooltip),
+                None => self.merge_brick(target, block),
             }
+        }
+    }
+
+    /// A merge no ticket names: its tooltip, and a click selecting it (#85), as choosing its bar
+    /// on the timeline does.
+    fn merge_brick(&mut self, target: Rect, block: &Block) {
+        let id = self.ui.scope_id().with(("factory", ("block", block.t.0, block.pr)));
+        let response = factory_tip::show(self.ui.interact(target, id, egui::Sense::click()), &block.tooltip);
+        if response.clicked() {
+            self.drawn.merge_clicked.clone_from(&block.commit);
         }
     }
 
@@ -1021,6 +1179,7 @@ mod tests {
             t: swarmception_model::Timestamp(0),
             pr: None,
             issue: took.map(|_| 1),
+            commit: None,
             label: String::new(),
             mark: String::new(),
             colour: [0, 0, 0],
@@ -1072,6 +1231,44 @@ mod tests {
         for (place, label) in wall.places.iter().zip(&labels) {
             assert!(place.width >= label * brick_font(wall.height) / 10.0 + 8.0 - 0.01, "{place:?}");
         }
+    }
+
+    #[test]
+    fn a_list_cut_short_shows_what_is_selected_in_place_of_its_last() {
+        let list = vec![1, 2, 3, 4, 5, 6];
+        assert_eq!(into_view(list.clone(), 3, |n| n == 5), [1, 2, 5, 3, 4, 6], "past the cut: in the last place shown");
+        assert_eq!(into_view(list.clone(), 3, |n| n == 2), list, "shown already: as it was");
+        assert_eq!(into_view(list.clone(), 3, |n| n == 9), list, "not there: as it was");
+        assert_eq!(into_view(list.clone(), 0, |n| n == 5), list, "nothing shown: nothing to swap");
+    }
+
+    #[test]
+    fn what_is_selected_matches_its_brick_and_its_run() {
+        use swarmception_domain::details::Subject;
+        let mut brick = block(Some(60));
+        brick.commit = Some("abcdef1234".into());
+        assert!(Selected::Ticket { issue: 1 }.is_block(&brick));
+        assert!(Selected::Merge { commit: "abcdef1".into() }.is_block(&brick), "a commit's start names it");
+        assert!(!Selected::Merge { commit: String::new() }.is_block(&brick));
+        assert!(!Selected::Merge { commit: "abd".into() }.is_block(&brick));
+        let t = swarmception_model::Timestamp;
+        let run = GateRun {
+            sub: "gate-pr8".into(),
+            start: t(100),
+            end: Some(t(200)),
+            outcome: Outcome::Passed,
+            cause: None,
+            kind: None,
+            refs: Vec::new(),
+            issues: Vec::new(),
+            inferred: false,
+            age: 0,
+            tooltip: Vec::new(),
+        };
+        let selected = |at| Selected::of(&Subject::Gate { sub: "gate-pr8".into(), at }).unwrap();
+        assert!(selected(None).is_run(&run) && selected(Some(t(100))).is_run(&run) && selected(Some(t(150))).is_run(&run));
+        assert!(!selected(Some(t(250))).is_run(&run), "a rerun's other run");
+        assert_eq!(Selected::of(&Subject::Session { instance: "x".into(), at: None }), None, "a session isn't drawn in the factory");
     }
 
     #[test]
