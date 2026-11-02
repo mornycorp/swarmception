@@ -431,7 +431,8 @@ fn a_hover_wins_the_highlight_and_its_leave_gives_it_back_to_the_details() {
     let merge = shell.engine().call::<swarmception_engine::details_cmds::Get>(params).unwrap();
     assert!(merge.title.starts_with("PR #8"), "the merge onto main of PR #8: {}", merge.title);
     want.insert("main".into(), on_main);
-    assert_eq!(gate_bars, want);
+    want.insert("gates".into(), vec![0]);
+    assert_eq!(gate_bars, want, "and its own bar on the Gate runs row (#84)");
     assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (gate_bars.clone(), Lit::Details));
     let before = shell.timeline().selection().unwrap();
 

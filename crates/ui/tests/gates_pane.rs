@@ -1,18 +1,23 @@
-//! The Gates pane (#61) over a real repository's tracking branch: it draws what `gates.list`
-//! returns for the timeline's window (AGENTS.md rule 6), lines its runs up under the timeline,
-//! asks again only when the window or the data moves, lights a hovered run's tickets' bars on
-//! the timeline, and makes a clicked run the Details pane's subject.
+//! The gate over a real repository's tracking branch. Its runs are rows of the timeline (#84):
+//! the Gate runs and Ready checks rows draw `gates.list`'s runs for the window (AGENTS.md rule 6),
+//! a hovered run lights its tickets' bars and a clicked one is the Details pane's subject. The
+//! Gates pane (#61) keeps what isn't a lane: it draws `gates.list`'s figures, causes and hours for
+//! the timeline's window, lined up under it, and asks again only when the window or the data
+//! moves.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use swarmception_domain::details::Subject;
 use swarmception_domain::gates::{GatesList, Lane};
-use swarmception_domain::rows::BarRef;
+use swarmception_domain::rows::{BarRef, GATES_KEY, READY_KEY};
+use swarmception_domain::{Collapse, Node};
 use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
 use swarmception_engine::gates_cmds::List;
+use swarmception_engine::rows_cmds::List as Rows;
 use swarmception_engine::stats_cmds::{At, GetParams};
 use swarmception_ui::{Lit, MenuAction, Shell};
+use timeline_engine::query_cmds::{Bars, BarsParams};
 
 /// #7 (PR #8) worked on by worker-1, with a failed `ready` check and its rerun; gate-8 sends it
 /// back on a conflict, gate-8b merges it; #9 (PR #10) worked on by worker-2 and merged by gate-10;
@@ -151,31 +156,18 @@ fn the_pane_draws_what_gates_list_returns_under_the_timeline() {
     assert_eq!(shell.gates().list(), Some(&list), "the pane holds what gates.list returns for the timeline's window");
     let drawn = shell.gates().drawn().clone();
     assert_eq!(drawn.window, Some((list.start, list.end)));
-    // The coordinator's lane, then the workers': each in `gates.list`'s order.
-    let lanes = || list.runs.iter().filter(|r| r.lane == Lane::Gate).chain(list.runs.iter().filter(|r| r.lane == Lane::Ready));
-    let runs: Vec<(String, Lane)> = lanes().map(|r| (r.sub.clone(), r.lane)).collect();
-    assert_eq!(drawn.runs.iter().map(|r| (r.sub.clone(), r.lane)).collect::<Vec<_>>(), runs, "a bar a run, in its lane");
-    assert_eq!(runs.len(), 5);
+    assert_eq!(list.runs.len(), 5);
     let pct = |rate: Option<f64>| swarmception_ui::percent(rate);
     assert_eq!(drawn.figures.first().map(String::as_str), Some(format!("gate pass {}", pct(list.gate.pass_rate)).as_str()));
     assert!(drawn.figures.contains(&format!("ready pass {}", swarmception_ui::lane_text(&list.ready))), "{:?}", drawn.figures);
     assert!(drawn.figures.contains(&format!("longest queue {}", list.longest_queue.count)));
     assert_eq!(drawn.causes, ["clippy 0 1", "conflict 1 0"], "the failures by cause, gate and ready");
     assert_eq!(drawn.hours, list.hours.len());
-    // Under the timeline: the window's ends where the timeline's are, and each run as long as it took.
+    // Under the timeline: the window's ends where the timeline's are.
     let axis = shell.timeline().axis().expect("the timeline drew");
     assert_eq!(drawn.axis, Some(axis));
-    let (x0, x1) = axis;
-    let span = list.end.0.saturating_sub(list.start.0) as f32;
-    for (run, bar) in lanes().zip(&drawn.runs) {
-        let x = x0 + (x1 - x0) * run.start.0.saturating_sub(list.start.0) as f32 / span;
-        assert!((bar.rect.left() - x).abs() < 1.0, "{}: drawn from {} where its start is {x}", run.sub, bar.rect.left());
-        let width = (x1 - x0) * run.duration_seconds as f32 / span;
-        assert!((bar.rect.width() - width.max(2.0)).abs() < 1.0, "{}: {} wide for {width}", run.sub, bar.rect.width());
-    }
     // ui.inspect reports what it drew.
     let inspect = shell.inspect();
-    assert_eq!(inspect.gates.runs, lanes().map(|r| format!("{}@{}", r.sub, r.start)).collect::<Vec<_>>());
     assert_eq!((inspect.gates.figures, inspect.gates.causes), (drawn.figures.clone(), drawn.causes.clone()));
     assert!(inspect.state.panes.gates);
 
@@ -191,8 +183,71 @@ fn the_pane_draws_what_gates_list_returns_under_the_timeline() {
     assert!(shell.gates().asks() > asks);
     let narrow = answer(&mut shell);
     assert_eq!(shell.gates().list(), Some(&narrow));
-    let subs: Vec<&str> = shell.gates().drawn().runs.iter().map(|r| r.sub.as_str()).collect();
+    let subs: Vec<&str> = narrow.runs.iter().map(|r| r.sub.as_str()).collect();
     assert_eq!(subs, ["gate-8", "gate-10", "gate-8b"], "the runs the window overlaps");
+    assert_eq!(drawn_runs(&mut shell, &narrow), runs_of(&narrow), "the timeline's rows draw them");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// Each run as `gates.list` gives it: its row, id, start, end, colour and tooltip.
+type RunAt = (String, String, swarmception_model::Timestamp, swarmception_model::Timestamp, [u8; 3], Vec<String>);
+
+fn runs_of(list: &GatesList) -> Vec<RunAt> {
+    let mut runs = Vec::new();
+    for (lane, key) in [(Lane::Gate, GATES_KEY), (Lane::Ready, READY_KEY)] {
+        runs.extend(list.runs.iter().filter(|r| r.lane == lane).map(|r| {
+            let end = r.end.unwrap_or(swarmception_model::Timestamp(r.start.0 + r.duration_seconds));
+            (key.to_owned(), r.sub.clone(), r.start, end, r.colour, r.tooltip.iter().map(|l| l.text()).collect())
+        }));
+    }
+    runs
+}
+
+/// The bars of the timeline's Gate runs and Ready checks rows (`rows.list`) in `list`'s window.
+fn drawn_runs(shell: &mut Shell, list: &GatesList) -> Vec<RunAt> {
+    let rows = shell.engine().call::<Rows>(swarmception_engine::engine_cmds::NoParams {}).unwrap().rows;
+    let mut drawn = Vec::new();
+    for key in [GATES_KEY, READY_KEY] {
+        let bars = rows.iter().find_map(|n| match n {
+            Node::Ranges { key: k, bars, .. } if k == key => Some(bars.clone()),
+            _ => None,
+        });
+        for bar in bars.unwrap_or_default().into_iter().filter(|b| b.start <= list.end && b.end >= list.start) {
+            let sub = bar.run.as_ref().map(|r| r.sub.clone()).unwrap_or_default();
+            drawn.push((key.to_owned(), sub, bar.start, bar.end, bar.colour, bar.tooltip.clone()));
+        }
+    }
+    drawn
+}
+
+/// #84: the timeline gains the Gate runs and Ready checks rows under the merges rows, and they
+/// draw `gates.list`'s runs for its window: the widget draws a bar a run, in its result's colour,
+/// labelled by its tickets (a failure's cause too), and collapsed to the window they come and go
+/// as any row.
+#[test]
+fn the_timelines_gate_rows_draw_gates_lists_runs_for_its_window() {
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    let list = answer(&mut shell);
+    assert_eq!(drawn_runs(&mut shell, &list), runs_of(&list));
+    let inspect = shell.inspect();
+    assert_eq!(inspect.timeline.in_view.get(..4).map(<[String]>::to_vec), Some(vec!["main".into(), "merged".into(), GATES_KEY.into(), READY_KEY.into()]));
+    // The widget draws them: a bar a run, labelled.
+    let drawn = shell.timeline().widget().session().call::<Bars>(BarsParams { tracks: Some(vec![GATES_KEY.into(), READY_KEY.into()]), label_char_width: Some(7.0) }).unwrap();
+    let ranges: Vec<usize> = drawn.tracks.iter().map(|t| t.ranges.iter().map(|r| r.count.max(1)).sum()).collect();
+    assert_eq!(ranges, [3, 2], "gate-8, gate-10, gate-8b; ready-abc and its rerun");
+    // Collapsed to the window: 04:30 to 05:00 holds no ready check, so that row goes.
+    let set = r#"{"collapse": "window", "window": {"start": "2026-10-31T04:05:00Z", "end": "2026-10-31T04:20:00Z"}}"#;
+    assert!(matches!(shell.answer("ui.set", set), swarmception_ui::control::Answer::Now(Ok(_))));
+    for _ in 0..3 {
+        frame(&mut shell, &ctx);
+    }
+    let inspect = shell.inspect();
+    assert_eq!(shell.menu_state().collapse, Collapse::Window);
+    assert!(inspect.timeline.left_out.iter().any(|k| k == READY_KEY), "{:?}", inspect.timeline.left_out);
+    assert!(!inspect.timeline.left_out.iter().any(|k| k == GATES_KEY), "gate-8b ran then: {:?}", inspect.timeline.left_out);
+    let narrow = answer(&mut shell);
+    assert_eq!(drawn_runs(&mut shell, &narrow), runs_of(&narrow));
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -246,33 +301,37 @@ fn both_lanes_hours_are_drawn_as_gates_list_counts_them() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// #84: hovering a run's bar on the timeline lights its tickets' bars; a click on it selects it
+/// and the Details pane tells its story (a ready check's, its ticket's).
 #[test]
-fn hovering_a_run_lights_its_tickets_and_a_click_tells_its_story() {
+fn hovering_a_run_on_the_timeline_lights_its_tickets_and_a_click_tells_its_story() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
-    let rect = |shell: &Shell, sub: &str| shell.gates().drawn().runs.iter().find(|r| r.sub == sub).map(|r| r.rect).unwrap();
-    let eight = rect(&shell, "gate-8b");
-    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(eight.center())]);
+    let eight = shell.run_point("gate-8b").expect("gate-8b's bar drawn");
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(eight)]);
     frame(&mut shell, &ctx);
-    assert_eq!(shell.gates().drawn().hovered.as_ref().map(|(sub, _)| sub.as_str()), Some("gate-8b"));
+    let hovered = shell.inspect().timeline.hovered_run;
+    assert_eq!(hovered.as_deref().map(|h| h.starts_with("gate-8b@")), Some(true), "{hovered:?}");
     let seven = shell.engine().call::<TicketBars>(TicketParams { issue: 7 }).unwrap().bars;
     assert_eq!((shell.timeline().lit(), shell.timeline().highlighted()), (Lit::HoveredRun, by_row(&seven)), "its ticket's bars lit");
-    assert_eq!(shell.inspect().gates.hovered.as_deref().map(|h| h.starts_with("gate-8b@")), Some(true));
 
-    // A click: the gate run in the Details pane.
-    let press = |pressed| egui::Event::PointerButton { pos: eight.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    // A click: the gate run selected, and in the Details pane.
+    let press = |pressed| egui::Event::PointerButton { pos: eight, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     frame_with(&mut shell, &ctx, vec![press(true)]);
     frame_with(&mut shell, &ctx, vec![press(false)]);
+    frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
     let start = swarmception_model::Timestamp::parse("2026-10-31T04:05:00Z");
     assert_eq!(shell.ui_state().details.subject, Some(Subject::Gate { sub: "gate-8b".into(), at: start }));
     assert_eq!(shell.details().details().map(|d| d.title.as_str()), Some("gate run gate-8b"));
+    assert_eq!(shell.inspect().timeline.selected.get(GATES_KEY), Some(&vec![2]), "its bar selected");
 
     // A ready check: its ticket's story.
-    let ready = rect(&shell, "ready-abc");
-    let click = |pressed| egui::Event::PointerButton { pos: ready.center(), button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
-    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(ready.center()), click(true)]);
+    let ready = shell.run_point("ready-abc").expect("ready-abc's bar drawn");
+    let click = |pressed| egui::Event::PointerButton { pos: ready, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+    frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(ready), click(true)]);
     frame_with(&mut shell, &ctx, vec![click(false)]);
+    frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
     assert_eq!(shell.ui_state().details.subject, Some(Subject::Ticket { issue: 7 }));
 
@@ -280,6 +339,7 @@ fn hovering_a_run_lights_its_tickets_and_a_click_tells_its_story() {
     frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
     frame(&mut shell, &ctx);
     assert_eq!(shell.timeline().lit(), Lit::Details);
+    assert_eq!(shell.inspect().timeline.hovered_run, None);
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -287,16 +347,16 @@ fn hovering_a_run_lights_its_tickets_and_a_click_tells_its_story() {
 fn view_gates_shows_and_hides_the_pane() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
-    assert!(shell.menu_state().gates && !shell.gates().drawn().runs.is_empty(), "shown by default");
+    assert!(shell.menu_state().gates && shell.gates().drawn().hours > 0, "shown by default");
     shell.run_menu(&ctx, MenuAction::Gates);
     frame(&mut shell, &ctx);
     assert!(!shell.menu_state().gates && !shell.ui_state().panes.gates);
-    assert!(shell.gates().drawn().runs.is_empty(), "hidden: nothing drawn");
+    assert_eq!(shell.gates().drawn().hours, 0, "hidden: nothing drawn");
     assert_eq!(shell.menu_state().checked(MenuAction::Gates), Some(false));
     shell.run_menu(&ctx, MenuAction::Gates);
     frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
-    assert!(!shell.gates().drawn().runs.is_empty());
+    assert!(shell.gates().drawn().hours > 0);
     // Its height the window's default (#68): no drag, so none of the person's.
     assert_eq!(shell.ui_state().sizes.gates, None);
     let gates = shell.layout().bands.iter().find(|b| b.name == "gates").cloned().unwrap();
@@ -310,6 +370,6 @@ fn view_gates_shows_and_hides_the_pane() {
     frame(&mut shell, &ctx);
     let whole = shell.engine().call::<List>(GetParams::default()).unwrap();
     assert_eq!(shell.gates().list(), Some(&whole));
-    assert_eq!(shell.gates().drawn().runs.len(), whole.runs.len());
+    assert_eq!(shell.gates().drawn().hours, whole.hours.len());
     std::fs::remove_dir_all(dir).ok();
 }

@@ -11,7 +11,7 @@
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
-//! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61), `--hover-worker <name>`
+//! `--hover-gate <sub>` onto a gate run's bar on the timeline (#84), `--hover-worker <name>`
 //! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
 //! `--menu file|file.recent` draws the window's own menu bar and clicks File open (and puts the
 //! pointer on Open Recent), for a screenshot of it (#69); File ▸ Open… (⌘O) is AppKit's open
@@ -451,7 +451,7 @@ struct App {
     hover: Option<u64>,
     /// `--hover-bar`: the ticket whose bar on the timeline the pointer is put on.
     hover_bar: Option<u64>,
-    /// `--hover-gate`: the gate run whose bar in the Gates pane the pointer is put on (#61).
+    /// `--hover-gate`: the gate run whose bar on the timeline the pointer is put on (#84).
     hover_gate: Option<String>,
     /// `--hover-worker`: the worker whose row in the Workers pane the pointer is put on (#67).
     hover_worker: Option<String>,
@@ -467,7 +467,7 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let bar = self.hover_bar.and_then(|issue| self.shell.bar_point(issue));
         let chip = self.hover.and_then(|issue| self.shell.factory().drawn().chips.iter().find(|(i, _)| *i == issue).map(|(_, rect)| rect.center()));
-        let gate = self.hover_gate.as_ref().and_then(|sub| self.shell.gates().drawn().runs.iter().find(|r| &r.sub == sub).map(|r| r.rect.center()));
+        let gate = self.hover_gate.clone().and_then(|sub| self.shell.run_point(&sub));
         let rows = &self.shell.workers().drawn().rows;
         let worker = self.hover_worker.as_ref().and_then(|name| {
             let row = rows

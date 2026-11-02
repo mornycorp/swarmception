@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -52,8 +52,13 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's second run is drawn in its own colour as its first was. `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed: `Collapse` off, `empty` (no events at all) or `window`, #74, which `true`
   and `false` still read as), under two rows at the top, the merges onto `main` and the tickets'
-  merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
-  `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
+  merges, each a 10 s span from its time (`MERGE_SECONDS`), and under them the gate's two (#84:
+  Gate runs and Ready checks, `GATES_KEY` and `READY_KEY`, `TOP_KEYS` the four): a bar a run of
+  `gates`' one definition, `gates.list`'s runs (`gates::told_runs`), from its start to its end (a
+  running one's to the last event, open), in its result's colour, labelled by the tickets it
+  carried and a failure's cause (`#83 · build/clippy`), its tooltip the run's, its `RunBar` (id,
+  lane, result, tickets, its details' `Subject`) where a ticket's bar has its `ticket`; all Ranges
+  rows (`Node::Group` or `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
   its colour and its tooltip, as plain text (`tooltip`) and as styled lines (`tooltip_lines`,
   #35: `tooltip::TipLine`, runs of text each in a colour from `colours` or none, strong or not:
   the phase names in their colours, merged green, sent back, its cause and abandoned red,
@@ -96,10 +101,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   pauses, helpers and gate runs) or a merge onto main; each `Entry` a line in its colour (the
   ticket's own for working and merges, the phases' fixed colours, green passed, red failed or
   sent back), with a header (chip, mark, title, GitHub's state, PR and labels), `Fact`s, the
-  `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket
-  or its merge onto main. `details_on` (#55) adds where the subject is drawn on the rows
+  `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket,
+  its merge onto main or its run's subject (#84: the gate run; a `ready` check's ticket, else its
+  worker's session).   `details_on` (#55) adds where the subject is drawn on the rows
   (`OnTimeline`: its bars as `rows::BarRef`s and the times they span): a ticket's bars; a gate
-  run's merges onto main and its tickets' bars; a session's, the stretches its events began in
+  run's merges onto main, its tickets' bars and its own on the Gate runs row (#84); a session's, the stretches its events began in
   its time, the tickets it merged and their merges onto main; a merge onto main's bar and its
   ticket's. `gates` (#61) is how the gate behaved over a window (`GatesList`): every run, the
   coordinator's gates (`factory::gate_runs`, inferred ones too) and the workers' `ready` checks
@@ -156,7 +162,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `rows.window` (#74: `{start?, end?, keep?}`; collapsed to the window, the rows and groups a
   window leaves out, `rows::left_out`: a row none of whose bars overlaps it unless `keep` names
   it, a group with no row left in place of its rows; and those it shows, top to bottom),
-  `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
+  `timeline.timeAt`, `timeline.bar` (#84: `{track, range}`, the bar there with its `RunBar`) and
+  `timeline.runBars` (#84: `{sub, at?}`, a gate run's bar, to point at or select), `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
   ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
   a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
@@ -259,23 +266,24 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   rows open, by `tracks.expand`, when collapsed (#68: `details.get`'s `timeline.groups`); the
   rows scroll to the first of theirs under the merges rows, which a merged ticket is always on,
   when none is on screen). The highlight has one owner, `TimelinePane::light` (`light_hover`): a factory
-  hover's ticket while it lasts, else a gates pane hover's run's tickets (`Hover`), else the
-  details' bars, so a hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s
-  `timeline.lit`).
+  hover's ticket while it lasts, else the tickets of the run whose bar on the timeline's Gate runs
+  or Ready checks row is under the pointer (#84, `TimelinePane::hovered`: the widget's
+  `query.tooltip` bar read back through `query.bars` and `timeline.bar`; `ui.inspect`'s
+  `timeline.hoveredRun`), else a Workers pane hover's (`Hover`), else the details' bars, so a
+  hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). A run's bar
+  clicked is the details' subject as any bar is (`details.get`'s `track` and `range`).
   The gates pane (#61, View ▸ Gates, on by default) is a band between the timeline and the
   factory drawing what `gates.list` returns for the timeline's window (asked again only when
   the window or the data moves): the headline figures as pills along its top (the gate's pass
   rate, median run, busy share, reruns, the longest queue, the `ready` checks' pass rate and
-  median), then the runs along time under the timeline's rows (`TimelinePane::axis`: the window's
-  ends across the screen, right of the label column), a lane of the coordinator's gate runs and
-  one of the `ready` checks, each run a bar as long as it took in its result's colour (overlaps
-  side by side), both lanes' runs per hour under them (#75: each hour's column under its hour,
-  stacked by result, mirrored about one baseline, the gate's up and the `ready` checks' down, each
-  on its own scale; `GatesDrawn::hour_columns`, `ui.inspect`'s `gates.hours`), and in the left column
-  the lanes' names and the failures by cause, gate and ready. Hovering a run gives its tooltip
-  and lights its tickets' bars; clicking it makes it the details' subject (a `ready` check's:
-  its ticket). Without the timeline it shows the whole run on its own axis; before the timeline
-  has data it waits. The factory's floor keeps within its pane, its header wrapping, so a narrower
+  median), then under the timeline's rows (`TimelinePane::axis`: the window's ends across the
+  screen, right of the label column) both lanes' runs per hour (#75: each hour's column under its
+  hour, stacked by result, mirrored about one baseline, the gate's up and the `ready` checks'
+  down, each on its own scale; `GatesDrawn::hour_columns`, `ui.inspect`'s `gates.hours`;
+  hovering one gives its figures), and in the left column the runs each lane started and the
+  failures by cause, gate and ready. Its lanes of runs went to the timeline (#84, the owner's):
+  the band keeps what isn't a lane, shown by default. Without the timeline it shows the whole run
+  on its own axis; before the timeline has data it waits. The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
   The panes share the window (#68) by one rule, `layout`'s plain functions: the timeline keeps
   its least height (`TimelinePane::least`, `layout::timeline_least`: its toolbar, the rulers, the
@@ -360,7 +368,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse [off|empty|window]`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate`, `--hover-worker`,
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate` (#84: a run's bar on the timeline), `--hover-worker`,
   `--menu file|file.recent` (#69: the window's own menu bar, File clicked open and the pointer on
   Open Recent, for a screenshot), `--step`, `--steps`, `--size`, `--zoom` (the UI's
   scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
@@ -522,6 +530,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Gate runs and ready checks as rows on the timeline (#84): the domain's Gate runs and Ready checks rows under the merges rows (`Style::GateRun`, `Style::ReadyCheck`, `Bar::run`, `RunBar`, `TOP_KEYS`), `gates.list`'s runs a bar each; `bar_subject` and a gate run's `OnTimeline` read them; `timeline.bar`, `timeline.runBars`; the timeline's hovered run lights its tickets (`TimelinePane::hovered`); the Gates band keeps its figures, causes and hours, its lanes gone; `ui.inspect` version 10 (`timeline.hoveredRun`; `gates.runs` gone, `gates.hovered` an hour) |
 | 2026-11-02 | minor | A submit straight after a send-back is its rework, drawn as working in the ticket's colour after a minute's sent-back mark (#83) |
 | 2026-11-02 | minor | `ui.set` reaches the Workers window (#76: `workers`, its place in `WorkersView` and `UiState` version 8, `ui.inspect` version 8 with `workers.rect`); MCP answers a screenshot's PNG as an image up to `IMAGE_MOST` (`mcp::Content`, `image_too_large`, `image_unreadable`); Open… off macOS through the desktop's picker as a child process (`picker`, `Picked`) |
 | 2026-11-02 | minor | One definition of a gate run (#75): `gates::runs` and `gates::figures`, counted by `gates.list` and `stats.get` alike (`Stats::gates` gains `running` and `inferred`, its `noResult` no longer counting running runs; `Figures::inferred`); the Gates band draws both lanes' hours, mirrored (`GatesDrawn::hour_columns`), `ui.inspect` version 7 with `gates.hours` |
