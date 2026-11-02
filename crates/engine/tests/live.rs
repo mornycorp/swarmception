@@ -178,14 +178,81 @@ fn live_is_on_by_default_only_for_a_swarm_at_work() {
     assert!(!live.on && live.default);
     assert_eq!(live.next_in_seconds, None);
 
-    // A choice stands over the default, and across opening another repository.
+    // A choice stands over the default.
     let chosen: LiveStatus = call(&mut session, "live.set", r#"{"on": true, "intervalSeconds": 10}"#);
     assert!(chosen.on && !chosen.default);
     assert_eq!((chosen.interval_seconds, chosen.next_in_seconds), (10, Some(0)), "turned on: at once");
     let _: LiveStatus = call(&mut session, "live.set", r#"{"on": false}"#);
+    // Opening another repository stops the old watch and starts the new one's default (#69):
+    // the app restores what was chosen for it, per repository.
     fresh.open(&mut session);
     let live: LiveStatus = call(&mut session, "live.get", "");
-    assert!(!live.on && !live.default && live.interval_seconds == 10);
+    assert!(live.on && live.default && live.interval_seconds == 30, "{live:?}");
+    let _: LiveStatus = call(&mut session, "live.set", r#"{"on": true, "intervalSeconds": 10}"#);
+    stale.open(&mut session);
+    let live: LiveStatus = call(&mut session, "live.get", "");
+    assert!(!live.on && live.default && live.checks == 0, "the old watch stopped: {live:?}");
+}
+
+/// A `gh` that answers the issues' requests with an empty page (and an ETag), counting each call
+/// in `<dir>/calls`.
+fn fake_gh(dir: &Path) -> PathBuf {
+    let gh = dir.join("fake-gh");
+    let calls = dir.join("calls");
+    let script = format!(
+        "#!/bin/sh\necho x >> '{}'\ncase \"$*\" in\n  *--include*) printf 'HTTP/2.0 200 OK\\r\\nEtag: \"e1\"\\r\\n\\r\\n[]' ;;\n  *) printf '[]' ;;\nesac\n",
+        calls.display()
+    );
+    std::fs::write(&gh, script).unwrap();
+    let mut perms = std::fs::metadata(&gh).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&gh, perms).unwrap();
+    gh
+}
+
+fn gh_calls(dir: &Path) -> usize {
+    std::fs::read_to_string(dir.join("calls")).map_or(0, |text| text.lines().count())
+}
+
+/// G13's leftover (#69): every check that read the branch again reads the issues again, not
+/// only one naming a new ticket, so the PRs' states keep up; a check that found nothing moved
+/// doesn't.
+#[test]
+fn every_check_that_brings_events_refreshes_the_issues() {
+    let swarm = Swarm::new(old());
+    // The clone's origin as GitHub's, so the issues are read through the fake `gh`; its fetches
+    // reach the local remote all the same, through an `ssh` that serves it.
+    let ssh = swarm.work.join("fake-ssh");
+    std::fs::write(&ssh, format!("#!/bin/sh\nexec git-upload-pack '{}'\n", swarm.remote.display())).unwrap();
+    let mut perms = std::fs::metadata(&ssh).unwrap().permissions();
+    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
+    std::fs::set_permissions(&ssh, perms).unwrap();
+    git(&swarm.clone, &["remote", "set-url", "origin", "git@github.com:them/swarm.git"]);
+    git(&swarm.clone, &["config", "core.sshCommand", ssh.to_str().unwrap()]);
+    let mut session = Session::new();
+    let gh = fake_gh(&swarm.work);
+    let cache = swarm.work.join("cache");
+    session.set_github(Github { gh, cache_dir: Some(cache) });
+    let path = serde_json::to_string(&swarm.clone.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let opened = gh_calls(&swarm.work);
+    assert!(opened > 0, "the open read the issues");
+    // Nothing moved: no read of the issues.
+    let quiet: LiveStatus = call(&mut session, "live.check", "");
+    assert!(!quiet.cost.unwrap().issues);
+    assert_eq!(gh_calls(&swarm.work), opened);
+    // An event on a ticket the swarm already had: the issues again all the same.
+    swarm.log(600, r#""event":"submit","issue":7,"mr":8"#);
+    let moved: LiveStatus = call(&mut session, "live.check", "");
+    assert_eq!(moved.cost.unwrap().new_events, Some(1));
+    assert!(moved.cost.unwrap().issues, "{moved:?}");
+    let after = gh_calls(&swarm.work);
+    assert!(after > opened, "the check read the issues again");
+    // A merge onto main alone: a PR merged, so the issues again too.
+    swarm.land(8);
+    let merged: LiveStatus = call(&mut session, "live.check", "");
+    assert!(merged.cost.unwrap().issues);
+    assert!(gh_calls(&swarm.work) > after);
 }
 
 #[test]

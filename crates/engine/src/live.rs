@@ -35,6 +35,11 @@ pub struct LiveCost {
     pub build_ms: Option<u64>,
     /// The events the reload brought (none when nothing moved).
     pub new_events: Option<usize>,
+    /// The check read the GitHub issues again, in the background (#69: every check that read
+    /// the branch again does, unless a read of them is going on); `repo.status`'s
+    /// `issues.refresh` says what that cost once it lands.
+    #[serde(default)]
+    pub issues: bool,
 }
 
 /// `live.get`'s answer: whether the session watches the swarm, and how it is going.
@@ -102,11 +107,6 @@ impl Default for LiveState {
 }
 
 impl LiveState {
-    /// A new repository's watch: what was chosen stays, the rest starts afresh.
-    pub(crate) fn reopened(&self) -> Self {
-        Self { on: self.on && self.chosen, chosen: self.chosen, interval: self.interval, ..Self::default() }
-    }
-
     /// The wait after a check: the interval, doubled for each failure in a row, up to
     /// [`MAX_BACKOFF`] (or the interval, when that is longer).
     pub(crate) fn wait(&self) -> Duration {
@@ -248,7 +248,7 @@ mod tests {
         }
         assert_eq!(live.wait(), MAX_BACKOFF, "capped");
         assert_eq!(live.status(now, false).error.as_deref(), Some("no network"));
-        live.checked(now, Timestamp(6), Ok(LiveCost { fetch_ms: 3, read_ms: Some(4), build_ms: Some(5), new_events: Some(2) }));
+        live.checked(now, Timestamp(6), Ok(LiveCost { fetch_ms: 3, read_ms: Some(4), build_ms: Some(5), new_events: Some(2), issues: true }));
         assert_eq!((live.failures, live.wait(), live.error.clone()), (0, secs(30), None));
         assert_eq!((live.checks, live.reloads, live.last_new), (12, 1, Some(Timestamp(6))));
         // A long interval backs off no further than itself.
@@ -273,7 +273,5 @@ mod tests {
         live.choose(Some(false), None, now);
         assert!(!live.is_due(now + secs(1_000)));
         assert_eq!(live.status(now, false).next_in_seconds, None);
-        let reopened = live.reopened();
-        assert!(!reopened.on && reopened.chosen && reopened.interval == secs(60));
     }
 }

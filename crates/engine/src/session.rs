@@ -4,7 +4,7 @@
 //! A live watch (#54, [`crate::live`]) fetches on an interval from [`Session::poll`], in the
 //! background, and reads the branch again only when `tracking` or `main` moved.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -85,6 +85,10 @@ pub struct Session {
     generation: u64,
     /// Moved on by every command that isn't read-only.
     revision: u64,
+    /// The repositories opened, newest first (#69, `repo.recent`).
+    recent: Vec<PathBuf>,
+    /// Moved on by every repository opened (#69): a front end switches its state to the new one.
+    opens: u64,
 }
 
 impl Session {
@@ -104,6 +108,50 @@ impl Session {
     /// by default `gh` on the path and the user's cache directory.
     pub fn set_github(&mut self, github: Github) {
         self.github = github;
+    }
+
+    /// The repository open (its top level once `repo.open` checked it), if any.
+    #[must_use]
+    pub fn repo(&self) -> Option<&Path> {
+        self.repo.as_deref()
+    }
+
+    /// How many repositories this session has opened (#69): when it moves, another repository
+    /// (or the same again) was opened, by whatever front end.
+    #[must_use]
+    pub const fn opens(&self) -> u64 {
+        self.opens
+    }
+
+    pub(crate) const fn opened(&mut self) {
+        self.opens = self.opens.wrapping_add(1);
+    }
+
+    /// The repositories opened, newest first (`repo.recent`).
+    #[must_use]
+    pub fn recent(&self) -> &[PathBuf] {
+        &self.recent
+    }
+
+    /// Puts `repo` first in the recent list, once, at most [`crate::repo_cmds::MAX_RECENT`].
+    pub(crate) fn remember(&mut self, repo: &Path) {
+        self.recent.retain(|r| r != repo);
+        self.recent.insert(0, repo.to_path_buf());
+        self.recent.truncate(crate::repo_cmds::MAX_RECENT);
+    }
+
+    /// Adds `repos` (newest first, as kept across runs) after the ones opened this run, each once,
+    /// at most [`crate::repo_cmds::MAX_RECENT`] in all (#69: the app hands back what it kept).
+    pub fn remember_all(&mut self, repos: impl IntoIterator<Item = PathBuf>) {
+        for repo in repos {
+            if !repo.as_os_str().is_empty() && !self.recent.contains(&repo) && self.recent.len() < crate::repo_cmds::MAX_RECENT {
+                self.recent.push(repo);
+            }
+        }
+    }
+
+    pub(crate) fn clear_recent(&mut self) {
+        self.recent.clear();
     }
 
     /// Whether the issues are still being read.
@@ -274,24 +322,28 @@ impl Session {
         }
     }
 
-    /// What a live check brought: new events read, and the issues fetched again when they name
-    /// tickets the swarm hadn't before (#54: not every check); or why it failed, kept apart from
-    /// the session's error so the timeline stays as it was.
+    /// What a live check brought: new events read, and the issues fetched again whenever it read
+    /// the branch again (#69); or why it failed, kept apart from the session's error so the
+    /// timeline stays as it was.
     fn land_live(&mut self, result: Result<Landed, SourceError>) {
         let wall = swarmception_source::github::now();
         let landed = match result {
             Ok(landed) => landed,
             Err(error) => return self.live.checked(Instant::now(), wall, Err(error.to_string())),
         };
-        let mut cost = LiveCost { fetch_ms: landed.fetch.map_or(0, millis), read_ms: landed.read.map(millis), build_ms: None, new_events: None };
+        let mut cost = LiveCost { fetch_ms: landed.fetch.map_or(0, millis), read_ms: landed.read.map(millis), build_ms: None, new_events: None, issues: false };
         if let Some(tracking) = landed.tracking {
-            let (events, tickets) = (self.events(), self.tickets());
+            let events = self.events();
             let started = Instant::now();
             self.take(tracking);
             cost.build_ms = Some(millis(started.elapsed()));
             cost.new_events = Some(self.events().saturating_sub(events));
-            if !self.tickets().is_subset(&tickets) && self.issues.job.is_none() {
+            // Every check that brought something (new events, or a merge onto main) reads the
+            // issues again, in the background, so the PRs' states (merged, closed) keep up
+            // (#69): with a cache, one page of what changed since (#62).
+            if self.issues.job.is_none() {
                 self.start_issues(false);
+                cost.issues = true;
             }
         }
         self.live.checked(Instant::now(), wall, Ok(cost));
@@ -309,12 +361,6 @@ impl Session {
 
     fn events(&self) -> usize {
         self.loaded.as_ref().map_or(0, |l| l.activity.events())
-    }
-
-    /// The tickets the swarm's work names.
-    fn tickets(&self) -> BTreeSet<u64> {
-        let agents = self.loaded.iter().flat_map(|l| &l.activity.agents);
-        agents.flat_map(|a| a.work.iter().map(|w| w.issue).chain(a.marks.iter().filter_map(|m| m.issue))).collect()
     }
 
     /// The rows again, from the activity and the spec, and the timeline's data from them; the

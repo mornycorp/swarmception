@@ -306,6 +306,19 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         assert!(matches!(read(&dir), Err(SourceError::NotARepo { .. })));
         assert!(matches!(heads(&dir), Err(SourceError::NotARepo { .. })));
+        assert!(matches!(probe(&dir), Err(SourceError::NotARepo { .. })));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// #69: a probe before opening says a clone's top level and tracking ref, or why it isn't one.
+    #[test]
+    fn a_probe_finds_the_top_level_and_the_tracking_branch() {
+        let dir = repo();
+        let found = probe(&dir.join("tracking/mini-1")).unwrap();
+        assert_eq!((found.top, found.reference.as_str()), (std::fs::canonicalize(&dir).unwrap(), "refs/heads/tracking"));
+        git(&dir, &["switch", "-q", "main"]);
+        git(&dir, &["branch", "-q", "-D", "tracking"]);
+        assert!(matches!(probe(&dir), Err(SourceError::NoTrackingBranch { .. })));
         std::fs::remove_dir_all(dir).ok();
     }
 
