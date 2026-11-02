@@ -14,11 +14,11 @@ publish = false
 # The swarm tooling (claims, tracking, the gates, stack and land), pinned by revision.
 swarm-core = { git = "https://github.com/mornycorp/swarm-core.git", rev = "d4a0194e666a88681a1123a0cfa882fda16f2a0b" }
 # The timeline widget (its model, engine and egui widget), pinned by revision.
-timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "ed630f13bc159ae3a756019a667327b201b0548c" }
-timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "ed630f13bc159ae3a756019a667327b201b0548c" }
-timeline-egui = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "ed630f13bc159ae3a756019a667327b201b0548c" }
+timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "9bf2651b2ea7a56875483a2e66653760155610ca" }
+timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "9bf2651b2ea7a56875483a2e66653760155610ca" }
+timeline-egui = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "9bf2651b2ea7a56875483a2e66653760155610ca" }
 # The widget's control protocol pieces (the line reader, the token, the loopback bind), same pin.
-timeline-automation = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "ed630f13bc159ae3a756019a667327b201b0548c" }
+timeline-automation = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "9bf2651b2ea7a56875483a2e66653760155610ca" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 schemars = "1"

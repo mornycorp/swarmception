@@ -95,8 +95,6 @@ pub struct Shell {
     followed: (Option<(String, usize)>, Option<u64>),
     /// A time put on the factory (`--at`) that the timeline's playhead goes to once it has data.
     playhead_to: Option<swarmception_model::Timestamp>,
-    /// The ticket whose bars the timeline has selected because it is hovered in the factory.
-    lit: Option<u64>,
     ui: UiState,
     /// The engine's revision `status` was read at.
     status_at: Option<(u64, u64)>,
@@ -132,7 +130,6 @@ impl Shell {
             details: DetailsPane::default(),
             followed: (None, None),
             playhead_to: None,
-            lit: None,
             ui: UiState::default(),
             status_at: None,
             status: StatusResult::default(),
@@ -431,13 +428,11 @@ impl Shell {
         self.timeline.put_playhead(&mut self.engine, t);
     }
 
-    /// The ticket hovered in the factory, its bars selected on the timeline; the person's own
-    /// selection put back when the pointer leaves it.
+    /// The ticket hovered in the factory, its bars highlighted on the timeline apart from the
+    /// person's selection (#48); the pane tells the widget only when it changes.
     fn light_timeline(&mut self, ctx: &egui::Context) {
         let hovered = if self.ui.panes.factory { self.factory.hovered() } else { None };
-        if hovered != self.lit {
-            self.timeline.light_ticket(&mut self.engine, hovered);
-            self.lit = hovered;
+        if self.timeline.light_ticket(&mut self.engine, hovered) {
             ctx.request_repaint();
         }
     }

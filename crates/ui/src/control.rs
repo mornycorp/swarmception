@@ -99,6 +99,10 @@ pub struct TimelineInspect {
     pub hover: Option<Timestamp>,
     /// The selected ranges, by row key.
     pub selected: BTreeMap<String, Vec<usize>>,
+    /// The ranges the widget highlights, by row key: the bars of the ticket hovered in the
+    /// factory (#48), apart from the selection.
+    #[serde(default)]
+    pub highlighted: BTreeMap<String, Vec<usize>>,
     /// The playhead's item.
     pub playhead_item: Option<u64>,
 }
@@ -303,6 +307,7 @@ impl Shell {
             playhead: looking.playhead,
             hover: looking.hover,
             selected: selection.ranges,
+            highlighted: self.timeline.highlighted(),
             playhead_item: selection.playhead,
         };
         Inspect {

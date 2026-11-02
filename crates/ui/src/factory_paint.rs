@@ -8,7 +8,7 @@
 //! the scene's own lines in colour ([`crate::factory_tip`]). [`Drawn`] records what each station
 //! drew, for a test to check against `factory.at`.
 //!
-//! Hovering a ticket rings it at every station it is drawn at (and the shell selects its bars on
+//! Hovering a ticket rings it at every station it is drawn at (and the shell highlights its bars on
 //! the timeline); clicking it traces its journey through the stations, with the time at each.
 //! Chips glide and resize between stations; nothing else moves by the wall clock: the gears and
 //! the glow of what just happened follow *t*, so a still *t* draws a still factory.
