@@ -90,3 +90,4 @@
 {"event":"merge","issue":47,"mr":50,"sub":"gate-50","t":"2026-11-02T07:26:31Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #50","sub":"gate-50","t":"2026-11-02T07:26:37Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #51 (#48, widget highlight and pin bump); capacity=3 free=12.6; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-51","t":"2026-11-02T07:29:45Z"}
+{"event":"merge","issue":48,"mr":51,"sub":"gate-51","t":"2026-11-02T07:30:09Z"}
