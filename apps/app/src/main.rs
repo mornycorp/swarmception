@@ -89,6 +89,17 @@ fn subject(text: &str) -> Result<Subject, String> {
     }
 }
 
+/// `--step`'s direction: `next`, `previous`, `first` or `last`.
+fn direction(text: &str) -> Result<Direction, String> {
+    match text {
+        "next" => Ok(Direction::Next),
+        "previous" => Ok(Direction::Previous),
+        "first" => Ok(Direction::First),
+        "last" => Ok(Direction::Last),
+        other => Err(format!("--step takes next, previous, first or last, not {other}")),
+    }
+}
+
 /// An issue number: `18` or `#18`.
 fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
@@ -148,15 +159,7 @@ impl Options {
                 "--trace" => options.trace = Some(issue(&value()?)?),
                 "--hover" => options.hover = Some(issue(&value()?)?),
                 "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
-                "--step" => {
-                    options.step = Some(match value()?.as_str() {
-                        "next" => Direction::Next,
-                        "previous" => Direction::Previous,
-                        "first" => Direction::First,
-                        "last" => Direction::Last,
-                        other => return Err(format!("--step takes next, previous, first or last, not {other}")),
-                    });
-                }
+                "--step" => options.step = Some(direction(&value()?)?),
                 "--steps" => {
                     let text = value()?;
                     let ids = swarmception_ui::Steps::ALL.map(swarmception_ui::Steps::id);
@@ -209,22 +212,7 @@ fn main() -> ExitCode {
     mac_menu::no_window_tabs();
     let repo = options.repo.clone().or_else(|| std::env::current_dir().ok());
     let keep = keeping(&options, repo.as_deref());
-    if let Keep::Kept(_, _, loaded) = &keep
-        && let Some(note) = &loaded.note
-    {
-        eprintln!("swarmception: {note} ({})", loaded.file.display());
-    }
-    // The window as it was left, unless `--size` says otherwise.
-    let place = match &keep {
-        Keep::Kept(_, _, loaded) if options.size.is_none() => loaded.state.as_ref().and_then(|s| s.window).and_then(|w| w.sane(MIN_SIZE)),
-        _ => None,
-    };
-    let (width, height) = options.size.or(place.map(|p| (p.width, p.height))).unwrap_or((1_400.0, 860.0));
-    let mut viewport =
-        egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([MIN_SIZE.0, MIN_SIZE.1]);
-    if let Some(place) = place {
-        viewport = viewport.with_position([place.x, place.y]);
-    }
+    let viewport = viewport(&options, &keep);
     let native = eframe::NativeOptions { viewport, ..Default::default() };
     let start = move |cc: &eframe::CreationContext<'_>| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
         swarmception_ui::fonts::install(&cc.egui_ctx);
@@ -235,11 +223,7 @@ fn main() -> ExitCode {
         }
         let mut shell = swarmception_ui::Shell::new(&cc.egui_ctx, repo.as_deref());
         // The saved state first, so the command line's choices go over it.
-        match keep {
-            Keep::Off => {}
-            Keep::Fresh(store, key) => shell.keep_state(store, &key, None),
-            Keep::Kept(store, key, loaded) => shell.keep_state(store, &key, Some(&loaded)),
-        }
+        keep.give(&mut shell);
         set_up(&mut shell, &options)?;
         let control = match options.control {
             Some(port) => Some(control::start(port, options.control_file.as_deref(), &cc.egui_ctx)?.0),
@@ -277,6 +261,28 @@ fn main() -> ExitCode {
     }
 }
 
+/// The window: its size and place as it was left (unless `--size` says otherwise); the saved
+/// state's note said on stderr.
+fn viewport(options: &Options, keep: &Keep) -> egui::ViewportBuilder {
+    if let Keep::Kept(_, _, loaded) = keep
+        && let Some(note) = &loaded.note
+    {
+        eprintln!("swarmception: {note} ({})", loaded.file.display());
+    }
+    // The window as it was left, unless `--size` says otherwise.
+    let place = match keep {
+        Keep::Kept(_, _, loaded) if options.size.is_none() => loaded.state.as_ref().and_then(|s| s.window).and_then(|w| w.sane(MIN_SIZE)),
+        _ => None,
+    };
+    let (width, height) = options.size.or(place.map(|p| (p.width, p.height))).unwrap_or((1_400.0, 860.0));
+    let mut viewport =
+        egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([MIN_SIZE.0, MIN_SIZE.1]);
+    if let Some(place) = place {
+        viewport = viewport.with_position([place.x, place.y]);
+    }
+    viewport
+}
+
 /// The window's smallest inner size.
 const MIN_SIZE: (f32, f32) = (480.0, 320.0);
 
@@ -288,7 +294,18 @@ enum Keep {
     /// Started without it, written as it goes: `--fresh`.
     Fresh(StateStore, PathBuf),
     /// Read at the start (what was found), written as it goes.
-    Kept(StateStore, PathBuf, Loaded),
+    Kept(StateStore, PathBuf, Box<Loaded>),
+}
+
+impl Keep {
+    /// Has `shell` keep the state as this says: restored from what was read, then written.
+    fn give(self, shell: &mut swarmception_ui::Shell) {
+        match self {
+            Self::Off => {}
+            Self::Fresh(store, key) => shell.keep_state(store, &key, None),
+            Self::Kept(store, key, loaded) => shell.keep_state(store, &key, Some(&*loaded)),
+        }
+    }
 }
 
 /// How this run keeps the state of `repo`: in `--state-dir`, else `SWARMCEPTION_STATE_DIR`'s
@@ -306,7 +323,7 @@ fn keeping(options: &Options, repo: Option<&Path>) -> Keep {
         return Keep::Fresh(store, key);
     }
     let loaded = store.load(&key);
-    Keep::Kept(store, key, loaded)
+    Keep::Kept(store, key, Box::new(loaded))
 }
 
 /// The shell as the command line asks: the rows, the panes, the factory's time and its traced
@@ -512,10 +529,10 @@ mod tests {
             options.state_dir = Some(dir.clone());
             keeping(&options, Some(&repo))
         };
-        assert_eq!(named(&[]), Keep::Kept(store.clone(), key.clone(), store.load(&key)));
+        assert_eq!(named(&[]), Keep::Kept(store.clone(), key.clone(), Box::new(store.load(&key))));
         assert_eq!(named(&["--fresh"]), Keep::Fresh(store.clone(), key.clone()));
-        assert_eq!(named(&["--screenshot", "a.ppm"]), Keep::Kept(store.clone(), key.clone(), store.load(&key)), "named: kept");
-        assert_eq!(named(&["--control"]), Keep::Kept(store.clone(), key.clone(), store.load(&key)));
+        assert_eq!(named(&["--screenshot", "a.ppm"]), Keep::Kept(store.clone(), key.clone(), Box::new(store.load(&key))), "named: kept");
+        assert_eq!(named(&["--control"]), Keep::Kept(store.clone(), key.clone(), Box::new(store.load(&key))));
         assert_eq!(keeping(&parse(&[]).unwrap(), None), Keep::Off, "no repository, no state");
         // Not named (and no SWARMCEPTION_STATE_DIR): an agent's run leaves the owner's alone.
         if saved::dir_from_env().is_none() {

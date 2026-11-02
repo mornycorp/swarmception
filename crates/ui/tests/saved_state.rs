@@ -144,20 +144,23 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     assert_eq!((fresh.saved.keeping, fresh.saved.loaded_from.as_deref(), fresh.saved.note.as_deref()), (Keeping::Kept, None, None), "no file yet");
     assert_eq!(fresh.saved.file.as_deref(), Some(store.file(&saved::repo_key(&dir)).display().to_string().as_str()));
 
-    // The person hides the factory, groups by worker, zooms to an hour, puts the factory at a
-    // time stepping by merges at an hour a second, and looks at #7's details; a Clock ruler
+    // The person hides the factory, groups by worker, zooms to 40 minutes before #9, puts the factory at a
+    // time stepping by merges at an hour a second, and looks at #9's details; a Clock ruler
     // under the scrub ruler (the widget's own state).
     frame(&mut first, &ctx, 2.0);
     let settled = first.inspect().saved.writes;
     assert!(settled <= 1, "the first frames' state, written once: {settled}");
     first.run_menu(&ctx, MenuAction::Factory);
     first.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
+    // #9's details first (the timeline brings its bars into view, #55), then a window without
+    // them: restored, the window stays where it was left, not moved to the subject's bars.
+    first.select(Subject::Ticket { issue: 9 });
+    frame(&mut first, &ctx, 9.4);
     frame(&mut first, &ctx, 9.5);
     set(
         &mut first,
-        r#"{"window": {"start": "2026-10-31T04:00:00Z", "end": "2026-10-31T05:00:00Z"}, "at": "2026-10-31T04:30:00Z", "speed": "hour", "steps": "merges"}"#,
+        r#"{"window": {"start": "2026-10-31T03:10:00Z", "end": "2026-10-31T03:50:00Z"}, "at": "2026-10-31T04:30:00Z", "speed": "hour", "steps": "merges"}"#,
     );
-    first.select(Subject::Ticket { issue: 7 });
     first.timeline().widget().session().call::<Add>(AddParams { domain: RulerDomainWire::Clock, origin: Some(OriginWire::Absolute) }).unwrap();
     frame(&mut first, &ctx, 10.0);
     // Written once it has held still a second, with no quit.
@@ -169,7 +172,7 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     assert_eq!(Some(written), first.app_state());
     assert_eq!(first.save_state().unwrap(), Some(store.file(&saved::repo_key(&dir))), "and on quit");
     let window = before.timeline.window.expect("a window");
-    assert_eq!((window.start.to_string(), window.end.to_string()), ("2026-10-31T04:00:00Z".to_owned(), "2026-10-31T05:00:00Z".to_owned()));
+    assert_eq!((window.start.to_string(), window.end.to_string()), ("2026-10-31T03:10:00Z".to_owned(), "2026-10-31T03:50:00Z".to_owned()));
     let rulers_before = rulers(&mut first);
     assert_eq!(rulers_before, [RulerDomainWire::Clock, RulerDomainWire::Clock]);
     drop(first);
@@ -179,9 +182,9 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     let after = second.inspect();
     assert_eq!(after.state, before.state, "the panes and their sizes, the factory's settings and t, the details");
     assert!(!after.state.panes.factory && after.state.sizes.details.is_some());
-    assert_eq!(after.state.details.subject, Some(Subject::Ticket { issue: 7 }));
+    assert_eq!(after.state.details.subject, Some(Subject::Ticket { issue: 9 }));
     assert_eq!(second.menu_state().grouping, Grouping::Workers, "the rows by worker, through rows.set");
-    assert_eq!(after.timeline.window, before.timeline.window, "the hour it was zoomed to");
+    assert_eq!(after.timeline.window, before.timeline.window, "the window it was left at, not moved to the details subject's bars");
     assert_eq!(after.timeline.playhead, before.timeline.playhead);
     assert_eq!(rulers(&mut second), rulers_before, "the widget's own state, through state.save and state.restore");
     let file = store.file(&saved::repo_key(&dir)).display().to_string();
