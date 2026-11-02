@@ -7,3 +7,4 @@
 {"event":"sub.stop","note":"rc=1; cause=test","sub":"ready-afaecc6-rerun","t":"2026-11-02T20:28:14Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-afaecc6","t":"2026-11-02T20:29:18Z"}
 {"event":"submit","issue":86,"mr":90,"t":"2026-11-02T20:29:47Z"}
+{"event":"session.stop","t":"2026-11-02T20:31:45Z"}
