@@ -350,7 +350,9 @@ fn on_timeline(ctx: &Ctx<'_>, rows: &[Node], subject: &Subject) -> OnTimeline {
             let Some(run) = ctx.run(sub, *at) else { return OnTimeline::default() };
             let named: Vec<u64> = ctx.tickets.iter().filter(|t| names_ticket(run, t)).map(|t| t.issue).collect();
             let commits: Vec<&MainMerge> = merged_prs(&run_events(ctx, run)).into_iter().filter_map(|pr| main_commit(ctx, Some(pr), run.start)).collect();
-            bars_where(rows, |key, bar| bar.ticket.is_some_and(|issue| named.contains(&issue)) || on_main(key, bar, &commits))
+            // Its own bar on the Gate runs row (#84) too.
+            let drawn = |bar: &Bar| bar.run.as_ref().is_some_and(|r| r.sub == run.sub && bar.start == run.start);
+            bars_where(rows, |key, bar| bar.ticket.is_some_and(|issue| named.contains(&issue)) || on_main(key, bar, &commits) || drawn(bar))
         }
         Subject::Session { instance, at } => session_bars(ctx, rows, instance, *at),
         Subject::Merge { commit } => {
@@ -389,14 +391,18 @@ fn session_bars<'r>(ctx: &Ctx<'_>, rows: &'r [Node], instance: &str, at: Option<
     })
 }
 
-/// What the bar `range` of row `track` is the details of: its ticket, or the merge onto main it
-/// draws; none for a bar that isn't there.
+/// What the bar `range` of row `track` is the details of: its ticket, the merge onto main it
+/// draws, or a gate run's subject (#84: the run; a `ready` check's ticket, else its worker's
+/// session, as a click on the Gates band's lane told); none for a bar that isn't there.
 #[must_use]
 pub fn bar_subject(rows: &[Node], merges: &[MainMerge], track: &str, range: usize) -> Option<Subject> {
     let bar = rows.iter().flat_map(Node::leaves).find_map(|leaf| match leaf {
         Node::Ranges { key, bars, .. } if key == track => bars.get(range),
         _ => None,
     })?;
+    if let Some(run) = &bar.run {
+        return Some(run.subject.clone());
+    }
     match (bar.ticket, bar.style) {
         (Some(issue), _) => Some(Subject::Ticket { issue }),
         (None, Style::MainMerge) => merges.iter().find(|m| m.t == bar.start && m.pr == bar.pr).map(|m| Subject::Merge { commit: m.commit.clone() }),
@@ -1152,6 +1158,11 @@ mod tests {
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 1), Some(Subject::Ticket { issue: 170 }));
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 99), None);
         assert_eq!(bar_subject(&rows, &merges(), "nope", 0), None);
+        // #84: a gate run's bar is the run; a ready check's, the ticket it checked.
+        let at = Timestamp::parse("2026-10-31T04:20:00Z");
+        assert_eq!(bar_subject(&rows, &merges(), crate::rows::GATES_KEY, 0), Some(Subject::Gate { sub: "gate-pr173".into(), at }));
+        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 0), Some(Subject::Ticket { issue: 170 }));
+        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 1), None);
     }
 
     #[test]
@@ -1180,12 +1191,16 @@ mod tests {
             assert_eq!(ticket.groups, crate::rows::groups_holding(&rows, &keys));
             assert_eq!(ticket.groups.is_empty(), grouping == crate::Grouping::Flat, "{grouping:?}: {:?}", ticket.groups);
 
-            // A gate run: the merge onto main it made, and its ticket's bars.
+            // A gate run: the merge onto main it made, its ticket's bars and its own on the Gate
+            // runs row (#84).
             let gate = on(Subject::Gate { sub: "gate-pr173".into(), at: None });
             let mut want = tickets.clone();
             want.push(main.clone());
             want.sort();
-            assert_eq!(gate.bars, want, "{grouping:?}");
+            let mut with_run = want.clone();
+            with_run.push(BarRef { track: crate::rows::GATES_KEY.into(), range: 0 });
+            with_run.sort();
+            assert_eq!(gate.bars, with_run, "{grouping:?}");
             // A merge onto main: its bar on main's row, and its ticket's.
             assert_eq!(on(Subject::Merge { commit: "be043bc".into() }).bars, want);
 

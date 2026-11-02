@@ -19,6 +19,8 @@ static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
         Entry::of::<rows_cmds::List>(),
         Entry::of::<rows_cmds::WindowRows>(),
         Entry::of::<rows_cmds::TimeAt>(),
+        Entry::of::<rows_cmds::GetBar>(),
+        Entry::of::<rows_cmds::RunBars>(),
         Entry::of::<stats_cmds::Get>(),
         Entry::of::<factory_cmds::PlaceAt>(),
         Entry::of::<factory_cmds::At>(),

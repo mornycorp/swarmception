@@ -1,6 +1,7 @@
 //! How the gate behaved over time (#61, G9): every gate run, the coordinator's and the workers'
 //! own `ready` checks kept apart, with what it carried, what it did and how it ended, and the
-//! figures over a window. What the Gates pane draws, and `gates.list` returns.
+//! figures over a window. What `gates.list` returns, the Gates pane's figures and hours, and the
+//! timeline's Gate runs and Ready checks rows (#84: a bar a run, [`crate::rows`]).
 //!
 //! **The one definition of a gate run** (#75): [`runs`] reads them, and both `gates.list`
 //! ([`gates`]) and `stats.get` (`Stats::gates` and `ready`) count them with [`figures`], so the
@@ -297,6 +298,16 @@ pub(crate) fn runs(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge]
     all.extend(ready_runs(activity, tickets, last));
     all.sort_by(|a, b| (a.start, a.lane, &a.sub).cmp(&(b.start, b.lane, &b.sub)));
     mark_reruns(&mut all);
+    all
+}
+
+/// Every run, as [`runs`], each with its tooltip as [`gates`] gives it: what the timeline's Gate
+/// runs and Ready checks rows draw (#84), so a bar there is `gates.list`'s run.
+pub(crate) fn told_runs(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge]) -> Vec<Run> {
+    let mut all = runs(activity, tickets, merges);
+    for run in &mut all {
+        run.tooltip = tooltip(activity, run);
+    }
     all
 }
 
@@ -912,6 +923,62 @@ mod tests {
         assert_eq!(inferred, [("gate-pr21", GateResult::Passed), ("gate-pr22", GateResult::Failed)]);
         let late = stats(&activity, &tickets, &[], Window { start: Some(at(4, 15)), end: None });
         assert_eq!((late.gates.runs, late.gates.inferred, late.gates.failed, late.gates.pass_rate), (1, 1, 1, Some(0.0)));
+    }
+
+    /// #84: the timeline's Gate runs and Ready checks rows draw `gates.list`'s runs, a bar a run:
+    /// from its start to its end (a running one's to the last event, open), in its result's
+    /// colour, its tooltip the run's, named by its tickets and a failure's cause; a window's bars
+    /// are the runs `gates.list` gives for it, and Collapse to the window treats the rows as rows.
+    #[test]
+    fn the_timelines_gate_rows_are_gates_lists_runs() {
+        use crate::rows::{Bar, Collapse, GATES_KEY, READY_KEY, RowsSpec, Style, left_out, rows};
+        let files = swarm();
+        let activity = Activity::of(&files);
+        let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into() }];
+        let rows = rows(&activity, &merges, RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
+        let row = |key: &str| -> Vec<Bar> {
+            rows.iter().find_map(|n| match n {
+                crate::Node::Ranges { key: k, bars, .. } if k == key => Some(bars.clone()),
+                _ => None,
+            })
+            .unwrap_or_default()
+        };
+        let (gate, ready) = (row(GATES_KEY), row(READY_KEY));
+        let names: Vec<&str> = rows.iter().map(crate::Node::name).collect();
+        assert_eq!(names.get(..4), Some(&["Merges to main", "Tickets merged", "Gate runs", "Ready checks"][..]), "under the merges rows");
+        let drawn = |bars: &[Bar]| -> Vec<(String, Timestamp, Timestamp, Rgb, Vec<TipLine>)> {
+            bars.iter().map(|b| (b.run.as_ref().map(|r| r.sub.clone()).unwrap_or_default(), b.start, b.end, b.colour, b.tooltip_lines.clone())).collect()
+        };
+        let windows = [Window::default(), Window { start: Some(at(2, 10)), end: Some(at(2, 35)) }, Window { start: Some(at(3, 40)), end: None }];
+        for window in windows {
+            let list = list(&files, window);
+            let runs = |lane: Lane| -> Vec<(String, Timestamp, Timestamp, Rgb, Vec<TipLine>)> {
+                list.runs
+                    .iter()
+                    .filter(|r| r.lane == lane)
+                    .map(|r| (r.sub.clone(), r.start, r.end.unwrap_or(at(4, 0)).max(r.start), r.colour, r.tooltip.clone()))
+                    .collect()
+            };
+            let inside = |bars: &[Bar]| -> Vec<Bar> { bars.iter().filter(|b| b.start <= list.end && b.end >= list.start).cloned().collect() };
+            assert_eq!(drawn(&inside(&gate)), runs(Lane::Gate), "{window:?}");
+            assert_eq!(drawn(&inside(&ready)), runs(Lane::Ready), "{window:?}");
+        }
+        let bar = |bars: &[Bar], sub: &str| bars.iter().find(|b| b.run.as_ref().is_some_and(|r| r.sub == sub)).cloned().unwrap();
+        let eleven = bar(&gate, "gate-11");
+        assert_eq!((eleven.label.as_str(), eleven.style, eleven.colour, eleven.ticket, eleven.pr), ("#1", Style::GateRun, PASSED, None, Some(11)));
+        let info = eleven.run.clone().unwrap();
+        assert_eq!((info.lane, info.result, info.tickets, info.subject), (Lane::Gate, GateResult::Passed, vec![1], Subject::Gate { sub: "gate-11".into(), at: Some(at(1, 0)) }));
+        assert_eq!(bar(&gate, "gate-12").label, "#2 · clippy", "a failure names its cause");
+        assert_eq!(bar(&gate, "gate-13").colour, NO_RESULT);
+        let failed = bar(&ready, "ready-bbb");
+        assert_eq!((failed.label.as_str(), failed.style, failed.colour), ("#2 · test", Style::ReadyCheck, FAILED));
+        assert_eq!(failed.run.map(|r| r.subject), Some(Subject::Ticket { issue: 2 }), "a ready check tells its ticket's story");
+        let running = bar(&ready, "ready-ccc");
+        assert_eq!((running.open, running.end, running.colour), (true, at(4, 0), RUNNING), "running: to the last event, open");
+        // Collapse to the window: a window with no gate run leaves the Gate runs row out, as any row.
+        let out = left_out(&rows, at(0, 38), at(0, 50), &[]);
+        assert!(out.iter().any(|k| k == GATES_KEY) && !out.iter().any(|k| k == READY_KEY), "{out:?}");
+        assert!(!left_out(&rows, at(2, 10), at(2, 12), &[]).iter().any(|k| k == GATES_KEY));
     }
 
     #[test]
