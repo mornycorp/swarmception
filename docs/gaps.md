@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 5: the state kept, live watching, the Details highlight) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 6: automation through the window, incremental issues, a gates pane) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,12 +19,13 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | open | | 2–4 h |
-| 2 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42 | 3–6 h |
-| 3 | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | open | | 1–2 h |
-| 4 | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | open | | 1–2 h |
+| 1 | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | partial | #18, #20, #22, #31–#33, #42, #61 | 3–6 h |
+| 2 | [G18 The panes share the window](#g18-the-panes-share-the-window) | open | | 1–3 h |
+| 3 | [G17 The restored window and the Details' rows are always in view](#g17-the-restored-window-and-the-details-rows-are-always-in-view) | open | | 1–2 h |
+| 4 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
 | 5 | [G6 Collapse to the window](#g6-collapse-to-the-window) | open | | 2–4 h |
-| 6 | [G8 Opening a repository from the app](#g8-opening-a-repository-from-the-app) | open | | 1–2 h |
+| — | [G15 Automation reaches the window](#g15-automation-reaches-the-window) | done | #60 | |
+| — | [G13 Issues fetched incrementally](#g13-issues-fetched-incrementally) | done | #62 | |
 | — | [G5 The state survives a restart](#g5-the-state-survives-a-restart) | done | #53 | |
 | — | [G4 Watching a live swarm](#g4-watching-a-live-swarm) | done | #54 | |
 | — | [G16 The details pane and the timeline select together](#g16-the-details-pane-and-the-timeline-select-together) | done | #55 | |
@@ -71,13 +72,19 @@ marked **Human:** with what is needed.
 
 ## G13 Issues fetched incrementally
 
-- **Missing:** every load (Reload too) runs `gh api --paginate` for all the repo's issues and
-  PRs: about 1.4 s for mc-engine's 166 (#17, PR #26, measured 2026-11-01). A `since=` or ETag
-  fetch over the cache would make a reload near free on a big repo.
-- **Left:** also linking an issue to its PR by branch name, not only closing keywords and the
-  tracking branch's `mr`.
-- **Evidence:** `crates/source/src/github.rs`, `crates/model/src/issues.rs`.
-- **Estimate:** 1–2 agent-hours.
+- **Done** (#62, PR #64): the cache (version 2) keeps its fetch times, ETag and each item's
+  `updated`; a refresh asks once for `issues?since=<newest updated − 60 s>` with `If-None-Match`
+  (a 304 is "unchanged") and merges what changed; a full fetch only with no usable cache, a week
+  after the last full one, or more than 100 changed; a `gh` error leaves the cache alone. An
+  issue links to its PR by the PR's head branch (`<n>-…`) too; `repo.status` reports the last
+  refresh.
+- **Measured:** mc-engine (229 issues and PRs): full 2.2–2.7 s, incremental 0.55 s, unchanged
+  0.49–0.58 s (mostly `gh` starting) (2026-11-02).
+- **Left:** a live check refreshes issues only when new tickets appear (the rule from #54 when a
+  refresh cost 1.4 s; at 0.5 s every check that brings events could, keeping PR states current);
+  deleted or transferred issues leave the cache only at the weekly full fetch.
+- **Evidence:** `crates/source/src/github.rs`, `crates/model/src/issues.rs`,
+  `crates/engine/tests/issues.rs`.
 
 ## G14 The widget's toolbar and labels read clearly
 
@@ -94,16 +101,15 @@ marked **Human:** with what is needed.
 
 ## G15 Automation reaches the window
 
-- **Missing:** after G2 (#46, PR #49) an agent drives the window over `--control` by hand: MCP
-  serves the headless engine only, so its tools don't reach a running window; `ui.screenshot`
-  writes PPM only (no PNG encoder in the lock); there's no `swarmception-cli` subcommand that
-  sends a series of requests to a running app; the widget's forwarded commands aren't in
-  `ui.commands` (`timeline.engine.commands` lists them).
-- **Left:** `swarmception-cli mcp --control <file>` (tools for `ui.*` and `timeline.*` through a
-  running window); PNG screenshots; a CLI client (`swarmception-cli send` / a script of steps);
-  the widget's commands listed with schemas.
-- **Evidence:** `crates/automation`, `apps/cli`.
-- **Estimate:** 2–4 agent-hours.
+- **Done** (#60, PR #63): `swarmception-cli mcp --control <file>` serves the engine's, the
+  window's and the widget's commands as tools run in the window (114 on mc-engine);
+  `ui.screenshot` and `--screenshot` write PNG for `.png` (`png` was already in the lock);
+  `swarmception-cli send --control <f> <id> [<params>]` and `--script <file.jsonl>` with exit codes;
+  `ui.commands` lists the widget's commands with their schemas; `ui.loaded` waits for the data;
+  `scripts/screenshots.sh` takes a PR's screenshots.
+- **Left:** MCP returns a screenshot's path, not image content.
+- **Evidence:** `crates/automation`, `crates/ui/src/shot.rs`, `apps/cli/tests/automation.rs`,
+  `apps/app` control tests; PNGs checked 2026-11-02.
 
 ## G16 The details pane and the timeline select together
 
@@ -128,6 +134,15 @@ marked **Human:** with what is needed.
   the ruler can draw over it (swarm-timeline).
 - **Evidence:** `crates/ui/src/saved.rs`, `apps/app/src/main.rs`, `crates/ui/src/lib.rs`.
 - **Estimate:** 1–2 agent-hours.
+
+## G18 The panes share the window
+
+- **Missing:** with the Timeline, Gates, Factory and Details panes all open (all on by default
+  now) the timeline keeps only about four rows on a laptop screen (#61's screenshots). The panes
+  want sensible default sizes for the window, a way to fold a band to its header, and the
+  timeline keeping a minimum of rows.
+- **Evidence:** `crates/ui/src/lib.rs`, `gates.rs`, `factory.rs`, `details.rs`.
+- **Estimate:** 1–3 agent-hours.
 
 ## G1 The ruler reads clock time
 
@@ -236,13 +251,20 @@ marked **Human:** with what is needed.
     for each send back; stepping back and forth by key moment (`factory.moments`, `factory.step`).
   - **Statistics** (#20, PR #21; #22, PR #23): `stats.get` and a strip in the Factory's header
     for the visible window; a click on an hour's bar zooms the timeline to it. Tickets landed per
-    active hour (active = a worker on shift, less gaps over 15 min with no events): mc-engine 7.2
-    (98 in 13.69 h), swarm-timeline 10.6 (86 in 8.12 h) (measured 2026-11-02).
+    active hour (active = a worker on shift, less gaps over 15 min with no events): mc-engine 6.9
+    (100 in 14.42 h), swarm-timeline 10.6 (86 in 8.12 h) (measured 2026-11-02).
   - **Colours** (#15, PR #25; #34, PR #36; #40, PR #41): one colour per ticket from a fixed
     11-colour palette (scheme B, the owner's choice), shared by the timeline and the Factory, kept
     clear of the phase colours.
-- **Left:** a gates pane (runs, causes, durations over time); model and effort compared per
-  worker.
+  - **Gates** (#61, PR #65): `gates.list` (every gate run and `ready` check in a window, with
+    its result and cause, cargo, merges, reruns; figures per lane; per hour; the longest queue)
+    and a Gates band under the timeline, aligned with it: a lane each for the gate and the
+    ready checks, runs per hour, causes; hover lights a run's tickets, a click tells its story.
+    mc-engine: gate 124 runs, 99.2% pass, median 64 s, busy 7.3%; ready 138, 85.3%.
+    swarm-timeline: gate 83, 93.8%, median 28 s; ready 107, 96.3% (measured 2026-11-02).
+- **Left:** model and effort compared per worker; the ready lane's hours drawn (only in the
+  tooltip now); the ready checks' failures carry no cause (their notes say only `rc=1`: a
+  swarm-core change); `gates.list` counts inferred runs `stats.get` doesn't.
 - **Evidence:** `crates/domain/src/factory.rs`, `moments.rs`, `stats.rs`, `colours.rs`;
   `crates/ui/src/factory*.rs`.
 - **Estimate:** 3–6 agent-hours, in issues of their own.
@@ -251,6 +273,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 6: G13, G15 done (#60, #62); G9 grew (#61, a gates pane); G18 new; focus G9, G18, G17 |
 | 2026-11-02 | minor | Batch 5: G4, G5, G16 done (#53–#55); G17 new; M2 built; focus G15, G9, G13 |
 | 2026-11-02 | minor | Batch 4: G2, G3, G12, G14 done (#46–#48, swarm-timeline#183, #188); G15, G16 new; focus G5, G4, G16 |
 | 2026-11-01 | minor | Batch 3: G10, G11 done (#9, #28); G9 grew (#31–#33, #40, #42); G14 new; focus G2, G3, G12 |
