@@ -124,3 +124,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #70","sub":"gate-70","t":"2026-11-02T12:54:34Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #72 (#69, open a repository, live issue refresh); capacity=3 free=14.2; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-72","t":"2026-11-02T13:17:35Z"}
 {"event":"merge","issue":69,"mr":72,"sub":"gate-72","t":"2026-11-02T13:17:59Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #72","sub":"gate-72","t":"2026-11-02T13:18:05Z"}
