@@ -233,7 +233,12 @@ fn the_timelines_gate_rows_draw_gates_lists_runs_for_its_window() {
     let inspect = shell.inspect();
     assert_eq!(inspect.timeline.in_view.get(..4).map(<[String]>::to_vec), Some(vec!["main".into(), "merged".into(), GATES_KEY.into(), READY_KEY.into()]));
     // The widget draws them: a bar a run, labelled.
-    let drawn = shell.timeline().widget().session().call::<Bars>(BarsParams { tracks: Some(vec![GATES_KEY.into(), READY_KEY.into()]), label_char_width: Some(7.0) }).unwrap();
+    let drawn = shell
+        .timeline()
+        .widget()
+        .session()
+        .call::<Bars>(BarsParams { tracks: Some(vec![GATES_KEY.into(), READY_KEY.into()]), label_char_width: Some(7.0) })
+        .unwrap();
     let ranges: Vec<usize> = drawn.tracks.iter().map(|t| t.ranges.iter().map(|r| r.count.max(1)).sum()).collect();
     assert_eq!(ranges, [3, 2], "gate-8, gate-10, gate-8b; ready-abc and its rerun");
     // Collapsed to the window: 04:30 to 05:00 holds no ready check, so that row goes.

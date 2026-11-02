@@ -937,11 +937,12 @@ mod tests {
         let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into() }];
         let rows = rows(&activity, &merges, RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
         let row = |key: &str| -> Vec<Bar> {
-            rows.iter().find_map(|n| match n {
-                crate::Node::Ranges { key: k, bars, .. } if k == key => Some(bars.clone()),
-                _ => None,
-            })
-            .unwrap_or_default()
+            rows.iter()
+                .find_map(|n| match n {
+                    crate::Node::Ranges { key: k, bars, .. } if k == key => Some(bars.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default()
         };
         let (gate, ready) = (row(GATES_KEY), row(READY_KEY));
         let names: Vec<&str> = rows.iter().map(crate::Node::name).collect();
@@ -967,8 +968,17 @@ mod tests {
         let eleven = bar(&gate, "gate-11");
         assert_eq!((eleven.label.as_str(), eleven.style, eleven.colour, eleven.ticket, eleven.pr), ("#1", Style::GateRun, PASSED, None, Some(11)));
         let info = eleven.run.clone().unwrap();
-        assert_eq!((info.lane, info.result, info.tickets, info.subject), (Lane::Gate, GateResult::Passed, vec![1], Subject::Gate { sub: "gate-11".into(), at: Some(at(1, 0)) }));
+        assert_eq!(
+            (info.lane, info.result, info.tickets, info.subject),
+            (Lane::Gate, GateResult::Passed, vec![1], Subject::Gate { sub: "gate-11".into(), at: Some(at(1, 0)) })
+        );
         assert_eq!(bar(&gate, "gate-12").label, "#2 · clippy", "a failure names its cause");
+        // A run that named no ticket: its pull requests, else its id.
+        let mut docs = sub_of(&list(&files, Window::default()), "gate-12");
+        docs.tickets.clear();
+        assert_eq!(crate::rows::run_label(&docs), "PR #12 · clippy");
+        docs.prs.clear();
+        assert_eq!(crate::rows::run_label(&docs), "gate-12 · clippy");
         assert_eq!(bar(&gate, "gate-13").colour, NO_RESULT);
         let failed = bar(&ready, "ready-bbb");
         assert_eq!((failed.label.as_str(), failed.style, failed.colour), ("#2 · test", Style::ReadyCheck, FAILED));

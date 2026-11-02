@@ -388,7 +388,6 @@ impl GatesPane {
         scales((painter, visuals), chart, most_gate, most_ready);
         under
     }
-
 }
 
 /// Where times fall across the screen: the window from `x0` to `x1`.

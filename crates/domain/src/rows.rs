@@ -614,10 +614,15 @@ fn run_bars(runs: &[Run], lane: Lane, last: Timestamp) -> Vec<Bar> {
     runs.iter().filter(|run| run.lane == lane).map(|run| run_bar(run, last)).collect()
 }
 
-/// What a run's bar says: the tickets it carried (its id when it carried none), and a failure's
-/// cause (`#83 · build/clippy`).
-fn run_label(run: &Run) -> String {
-    let what = if run.tickets.is_empty() { run.sub.clone() } else { run.tickets.iter().map(|n| format!("#{n}")).collect::<Vec<_>>().join(" ") };
+/// What a run's bar says: the tickets it carried (its pull requests when it named no ticket, its
+/// id when neither), and a failure's cause (`#83 · build/clippy`, `PR #153 · test`).
+pub(crate) fn run_label(run: &Run) -> String {
+    let numbers = |prefix: &str, list: &[u64]| list.iter().map(|n| format!("{prefix}{n}")).collect::<Vec<_>>().join(" ");
+    let what = match (run.tickets.is_empty(), run.prs.is_empty()) {
+        (false, _) => numbers("#", &run.tickets),
+        (true, false) => numbers("PR #", &run.prs),
+        (true, true) => run.sub.clone(),
+    };
     match run.result {
         GateResult::Failed if run.cause.is_some() || run.step.is_some() => format!("{what} · {}", failure_label(run.cause.as_deref(), run.step.as_deref())),
         GateResult::Failed => format!("{what} · failed"),
@@ -636,13 +641,7 @@ fn run_bar(run: &Run, last: Timestamp) -> Bar {
         _ => None,
     };
     let info = RunBar { sub: run.sub.clone(), lane: run.lane, result: run.result, tickets: run.tickets.clone(), subject: run.subject.clone() };
-    Bar {
-        pr,
-        open: run.end.is_none(),
-        colour: run.colour,
-        run: Some(info),
-        ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone())
-    }
+    Bar { pr, open: run.end.is_none(), colour: run.colour, run: Some(info), ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone()) }
 }
 
 fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {

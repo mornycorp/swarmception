@@ -10,8 +10,8 @@ use swarmception_model::Timestamp;
 
 use crate::command::Command;
 use crate::engine_cmds::NoParams;
-use crate::factory_cmds::TicketBarsResult;
 use crate::error::{EngineError, Refusal, Unavailable};
+use crate::factory_cmds::TicketBarsResult;
 use crate::session::Session;
 use crate::stats_cmds::At;
 

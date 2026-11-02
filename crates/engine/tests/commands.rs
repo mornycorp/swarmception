@@ -306,7 +306,11 @@ fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
     let late = r#"{"start":1793422200,"end":1793422800}"#;
     assert_eq!(window(&mut session, late).left_out, ["merged", "gates", "tickets/1"], "after the merge, nothing");
     let kept = window(&mut session, r#"{"start":1793422200,"end":1793422800,"keep":["tickets/1"]}"#);
-    assert_eq!((kept.shown, kept.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned(), "gates".to_owned()]), "a row kept for the selection stays");
+    assert_eq!(
+        (kept.shown, kept.left_out),
+        (vec!["tickets/1".to_owned()], vec!["merged".to_owned(), "gates".to_owned()]),
+        "a row kept for the selection stays"
+    );
     assert!(window(&mut session, "{}").left_out.is_empty(), "no window: nothing left out");
 
     // Refused: a window ending before it starts, half a window, a time that isn't one.

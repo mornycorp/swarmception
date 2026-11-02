@@ -344,9 +344,12 @@ impl TimelinePane {
         found.bars.iter().find_map(|bar| {
             let row = layout.rows.iter().find(|r| r.key == bar.track)?;
             let drawn = session.call::<Bars>(BarsParams { tracks: Some(vec![bar.track.clone()]), label_char_width: None }).ok()?;
-            let range = drawn.tracks.first()?.ranges.iter().find(|r| r.range <= bar.range && bar.range < r.range.saturating_add(r.count.max(1)))?;
+            let track = drawn.tracks.first()?;
+            let range = track.ranges.iter().find(|r| r.range <= bar.range && bar.range < r.range.saturating_add(r.count.max(1)))?;
             let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
-            Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
+            // Runs that overlap stack in lanes: the middle of its own.
+            let lane = row.height / track.lanes.max(1) as f32;
+            Some(egui::pos2(x, rect.top() + row.y + lane * (range.lane as f32 + 0.5))).filter(|p| rect.contains(*p))
         })
     }
 
