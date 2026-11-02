@@ -4,14 +4,15 @@
 //! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes <list>]
 //! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>]`: `--repo` is any
 //! directory in a swarm's clone (the current directory if not given); `--panes` the panes shown
-//! (`timeline`, `factory`, `details`, `gates`, comma-separated); `--details <what>` shows the details of
+//! (`timeline`, `factory`, `details`, `gates`, `workers`, comma-separated); `--details <what>` shows the details of
 //! a ticket (`47`, `#47`), a gate run (`gate:<sub>[@<time>]`), a session
 //! (`session:<instance>[@<time>]`) or a merge onto main (`merge:<commit>`), its pane open (#47);
 //! `--at` puts the factory at a UTC time
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
-//! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61);
+//! `--hover-gate <sub>` onto a gate run's bar in the Gates pane (#61), `--hover-worker <name>`
+//! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
 //! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,
@@ -51,16 +52,24 @@ use swarmception_engine::rows_cmds::{Set as SetRows, SetParams as SetRowsParams}
 use swarmception_model::Timestamp;
 use swarmception_ui::saved::{self, Loaded, StateStore};
 
-/// `--panes`' list: `timeline`, `factory`, `details`, `gates`.
+/// `--steps`' kinds of key moment: `all`, `claims`, …
+fn steps(text: &str) -> Result<swarmception_ui::Steps, String> {
+    let ids = swarmception_ui::Steps::ALL.map(swarmception_ui::Steps::id);
+    let steps = swarmception_ui::Steps::ALL.into_iter().find(|s| s.id() == text);
+    steps.ok_or_else(|| format!("--steps takes one of {}, not {text}", ids.join(", ")))
+}
+
+/// `--panes`' list: `timeline`, `factory`, `details`, `gates`, `workers`.
 fn panes(list: &str) -> Result<swarmception_ui::Panes, String> {
-    let mut panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, gates: false };
+    let mut panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, gates: false, workers: false };
     for name in list.split(',').map(str::trim) {
         match name {
             "timeline" => panes.timeline = true,
             "factory" => panes.factory = true,
             "details" => panes.details = true,
             "gates" => panes.gates = true,
-            other => return Err(format!("--panes takes timeline, factory, details and gates, not {other}")),
+            "workers" => panes.workers = true,
+            other => return Err(format!("--panes takes timeline, factory, details, gates and workers, not {other}")),
         }
     }
     Ok(panes)
@@ -109,7 +118,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -125,6 +134,7 @@ struct Options {
     hover: Option<u64>,
     hover_bar: Option<u64>,
     hover_gate: Option<String>,
+    hover_worker: Option<String>,
     step: Option<Direction>,
     steps: Option<swarmception_ui::Steps>,
     theme: Option<egui::Theme>,
@@ -145,7 +155,7 @@ impl Options {
     /// Frames to draw once ready before a screenshot: a hover waits a little longer, for its
     /// tooltip.
     fn settle(&self) -> u32 {
-        if self.hover.or(self.hover_bar).is_some() || self.hover_gate.is_some() { 45 } else { SETTLE_FRAMES }
+        if self.hover.or(self.hover_bar).is_some() || self.hover_gate.is_some() || self.hover_worker.is_some() { 45 } else { SETTLE_FRAMES }
     }
 
     fn parse(args: &[String]) -> Result<Self, String> {
@@ -173,13 +183,9 @@ impl Options {
                 "--hover" => options.hover = Some(issue(&value()?)?),
                 "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
                 "--hover-gate" => options.hover_gate = Some(value()?),
+                "--hover-worker" => options.hover_worker = Some(value()?),
                 "--step" => options.step = Some(direction(&value()?)?),
-                "--steps" => {
-                    let text = value()?;
-                    let ids = swarmception_ui::Steps::ALL.map(swarmception_ui::Steps::id);
-                    let steps = swarmception_ui::Steps::ALL.into_iter().find(|s| s.id() == text);
-                    options.steps = Some(steps.ok_or_else(|| format!("--steps takes one of {}, not {text}", ids.join(", ")))?);
-                }
+                "--steps" => options.steps = Some(steps(&value()?)?),
                 "--dark" => options.theme = Some(egui::Theme::Dark),
                 "--light" => options.theme = Some(egui::Theme::Light),
                 "--size" => {
@@ -260,6 +266,7 @@ fn main() -> ExitCode {
             hover: options.hover,
             hover_bar: options.hover_bar,
             hover_gate: options.hover_gate,
+            hover_worker: options.hover_worker,
             pointer: None,
             control,
             #[cfg(target_os = "macos")]
@@ -420,7 +427,9 @@ struct App {
     hover_bar: Option<u64>,
     /// `--hover-gate`: the gate run whose bar in the Gates pane the pointer is put on (#61).
     hover_gate: Option<String>,
-    /// Where `--hover`, `--hover-bar` or `--hover-gate` put the pointer last.
+    /// `--hover-worker`: the worker whose row in the Workers pane the pointer is put on (#67).
+    hover_worker: Option<String>,
+    /// Where `--hover`, `--hover-bar`, `--hover-gate` or `--hover-worker` put the pointer last.
     pointer: Option<egui::Pos2>,
     /// `--control`: the control channel's requests.
     control: Option<control::Control>,
@@ -433,8 +442,17 @@ impl eframe::App for App {
         let bar = self.hover_bar.and_then(|issue| self.shell.bar_point(issue));
         let chip = self.hover.and_then(|issue| self.shell.factory().drawn().chips.iter().find(|(i, _)| *i == issue).map(|(_, rect)| rect.center()));
         let gate = self.hover_gate.as_ref().and_then(|sub| self.shell.gates().drawn().runs.iter().find(|r| &r.sub == sub).map(|r| r.rect.center()));
+        let rows = &self.shell.workers().drawn().rows;
+        let worker = self.hover_worker.as_ref().and_then(|name| {
+            let row = rows
+                .iter()
+                .find(|r| &r.key == name)
+                .or_else(|| rows.iter().find(|r| r.kind == swarmception_ui::WorkerRowKind::Worker && r.cells.first() == Some(name)));
+            // On its name, clear of the figures' own tooltips.
+            row.map(|r| egui::pos2(r.rect.left() + 60.0, r.rect.center().y))
+        });
         // Moved only when the point moves: each move restarts egui's tooltip delay.
-        if let Some(point) = chip.or(bar).or(gate).filter(|p| self.pointer.is_none_or(|last| last.distance(*p) > 1.0)) {
+        if let Some(point) = chip.or(bar).or(gate).or(worker).filter(|p| self.pointer.is_none_or(|last| last.distance(*p) > 1.0)) {
             raw_input.events.push(egui::Event::PointerMoved(point));
             self.pointer = Some(point);
         }
@@ -525,7 +543,7 @@ mod tests {
         assert!(parse(&["--zoom", "0"]).is_err() && parse(&["--zoom", "big"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
         let options = parse(&["--panes", "factory", "--at", "2026-10-31T13:20:00Z"]).unwrap();
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false, gates: false }));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false, gates: false, workers: false }));
         assert_eq!(options.at.map(|t| t.to_string()).as_deref(), Some("2026-10-31T13:20:00Z"));
         assert!(parse(&["--panes", "timeline,gantt"]).is_err());
         assert!(parse(&["--at", "teatime"]).is_err());
@@ -536,7 +554,10 @@ mod tests {
         assert_eq!(options.hover_bar, Some(17));
         let options = parse(&["--hover-gate", "gate-12b", "--panes", "timeline,gates"]).unwrap();
         assert_eq!(options.hover_gate.as_deref(), Some("gate-12b"));
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: true }));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: true, workers: false }));
+        let options = parse(&["--hover-worker", "alder", "--panes", "timeline,workers"]).unwrap();
+        assert_eq!(options.hover_worker.as_deref(), Some("alder"));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: false, workers: true }));
         assert!(parse(&["--no-titles"]).is_err(), "titles are always on (#34)");
         let options = parse(&["--step", "previous", "--steps", "sendBacks"]).unwrap();
         assert_eq!((options.step, options.steps), (Some(Direction::Previous), Some(swarmception_ui::Steps::SendBacks)));
@@ -563,7 +584,7 @@ mod tests {
         }
         assert_eq!(
             parse(&["--panes", "details"]).unwrap().panes,
-            Some(swarmception_ui::Panes { timeline: false, factory: false, details: true, gates: false })
+            Some(swarmception_ui::Panes { timeline: false, factory: false, details: true, gates: false, workers: false })
         );
 
         assert_eq!(parse(&["--help"]), Err(String::new()));

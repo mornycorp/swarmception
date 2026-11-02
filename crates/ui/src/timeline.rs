@@ -101,12 +101,15 @@ pub enum Lit {
     Hovered { ticket: u64 },
     /// The bars of the tickets a gate run hovered in the Gates pane carried (#61).
     HoveredRun,
+    /// The bars of the tickets of a worker (or a model × effort) hovered in the Workers pane (#67).
+    HoveredWorker,
     /// The bars of what the details pane shows (`details.get`'s `timeline`).
     Details,
 }
 
 /// What a hover elsewhere asks the timeline to highlight, over the details pane's bars: a ticket
-/// hovered in the factory (#48), or the tickets of a gate run hovered in the Gates pane (#61).
+/// hovered in the factory (#48), the tickets of a gate run hovered in the Gates pane (#61), or a
+/// worker's in the Workers pane (#67).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Hover {
     #[default]
@@ -118,6 +121,12 @@ pub enum Hover {
         start: Timestamp,
         tickets: Vec<u64>,
     },
+    /// A worker in the Workers pane (#67), by its instance (a model × effort's label), and the
+    /// tickets it claimed, worked on, landed or abandoned in the pane's window.
+    Worker {
+        key: String,
+        tickets: Vec<u64>,
+    },
 }
 
 impl Hover {
@@ -126,7 +135,7 @@ impl Hover {
         match self {
             Self::Nothing => &[],
             Self::Ticket(issue) => std::slice::from_ref(issue),
-            Self::Run { tickets, .. } => tickets,
+            Self::Run { tickets, .. } | Self::Worker { tickets, .. } => tickets,
         }
     }
 }
@@ -621,6 +630,7 @@ impl TimelinePane {
         match &self.lit {
             Some(Lighting { hovered: Hover::Ticket(ticket), .. }) => Lit::Hovered { ticket: *ticket },
             Some(Lighting { hovered: Hover::Run { .. }, .. }) => Lit::HoveredRun,
+            Some(Lighting { hovered: Hover::Worker { .. }, .. }) => Lit::HoveredWorker,
             Some(Lighting { details, .. }) if !details.is_empty() => Lit::Details,
             _ => Lit::Nothing,
         }

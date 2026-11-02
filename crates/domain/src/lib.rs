@@ -7,8 +7,9 @@
 //! active hour first ([`stats`]); the gate's runs over time and their figures ([`gates`]); the swarm at one moment as a factory building the app
 //! ([`factory`]), and its key moments to step through ([`moments`]); what GitHub's issues say
 //! of a ticket, its title on bars and first in tooltips ([`titles`]); a tooltip's lines in
-//! colour, the bars' ([`tooltip`]); and the story of what is selected, in order, for the details
-//! pane ([`details`]). Pure: no I/O, no clock.
+//! colour, the bars' ([`tooltip`]); the story of what is selected, in order, for the details
+//! pane ([`details`]); and how each worker did, by model × effort ([`workers`]). Pure: no I/O,
+//! no clock.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -27,6 +28,7 @@ pub mod tickets;
 pub mod timeline;
 pub mod titles;
 pub mod tooltip;
+pub mod workers;
 
 pub use activity::Activity;
 pub use rows::{Grouping, Node, RowsSpec};

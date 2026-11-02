@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_domain::RowsSpec;
 
 use crate::timeline::TimelineView;
-use crate::{DetailsView, FactoryView, PaneSizes, Panes, UI_STATE_VERSION, UiState};
+use crate::{DetailsView, FactoryView, PaneSizes, Panes, UI_STATE_VERSION, UiState, WorkersView};
 
 /// [`AppState`]'s shape. A file of another version still reads: an older one has fewer
 /// sections, a newer one's sections this build doesn't know are skipped.
@@ -302,6 +302,7 @@ struct UiSections {
     sizes: Option<serde_json::Value>,
     #[serde(default)]
     folded: Option<serde_json::Value>,
+    workers: Option<serde_json::Value>,
 }
 
 /// `value` as a `T`, its default when it is missing or doesn't read (`name` added to `skipped`).
@@ -333,6 +334,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         details: section::<DetailsView>(ui.details, "details", &mut skipped),
         sizes: section::<PaneSizes>(ui.sizes, "sizes", &mut skipped),
         folded: section::<crate::layout::Folded>(ui.folded, "folded", &mut skipped),
+        workers: section::<WorkersView>(ui.workers, "workers", &mut skipped),
     });
     let state = AppState {
         version: APP_STATE_VERSION,

@@ -2,8 +2,8 @@
 //! which are enabled and checked. The in-window menu bar and macOS's system menu bar draw the
 //! same items and run them through the same [`crate::Shell::run_menu`], so both reach the same
 //! engine commands (`repo.reload`, `repo.fetch`, `rows.set`, `live.set`) and widget commands
-//! (`view.fit`); View lists the panes, the timeline, the factory, the details and the gates, and
-//! Live.
+//! (`view.fit`); View lists the panes, the timeline, the factory, the details, the gates and the
+//! workers, and Live.
 
 use swarmception_domain::Grouping;
 
@@ -24,6 +24,8 @@ pub enum MenuAction {
     Details,
     /// View ▸ Gates: shows or hides the gates pane (#61).
     Gates,
+    /// View ▸ Workers: shows or hides the workers pane, model and effort compared (#67).
+    Workers,
     /// View ▸ Flat or By Worker: `rows.set` with that grouping.
     Grouping(Grouping),
     /// View ▸ Collapse Empty Rows: `rows.set` with collapse toggled.
@@ -36,7 +38,7 @@ pub enum MenuAction {
 
 impl MenuAction {
     /// Every item, in menu order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 13] = [
         Self::Reload,
         Self::Fetch,
         Self::Quit,
@@ -44,6 +46,7 @@ impl MenuAction {
         Self::Factory,
         Self::Details,
         Self::Gates,
+        Self::Workers,
         Self::Grouping(Grouping::Flat),
         Self::Grouping(Grouping::Workers),
         Self::Collapse,
@@ -55,11 +58,12 @@ impl MenuAction {
     pub const FILE: [Option<Self>; 4] = [Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 12] = [
+    pub const VIEW: [Option<Self>; 13] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
         Some(Self::Gates),
+        Some(Self::Workers),
         None,
         Some(Self::Grouping(Grouping::Flat)),
         Some(Self::Grouping(Grouping::Workers)),
@@ -81,6 +85,7 @@ impl MenuAction {
             Self::Factory => "view.factory",
             Self::Details => "view.details",
             Self::Gates => "view.gates",
+            Self::Workers => "view.workersPane",
             Self::Grouping(Grouping::Flat) => "view.flat",
             Self::Grouping(Grouping::Workers) => "view.workers",
             Self::Collapse => "view.collapse",
@@ -106,6 +111,7 @@ impl MenuAction {
             Self::Factory => "Factory",
             Self::Details => "Details",
             Self::Gates => "Gates",
+            Self::Workers => "Workers",
             Self::Grouping(Grouping::Flat) => "Flat",
             Self::Grouping(Grouping::Workers) => "By Worker",
             Self::Collapse => "Collapse Empty Rows",
@@ -126,6 +132,7 @@ impl MenuAction {
             Self::Factory => icons::FACTORY,
             Self::Details => icons::INFO,
             Self::Gates => icons::GATES,
+            Self::Workers => icons::WORKERS,
             Self::Grouping(Grouping::Flat) => icons::FLAT,
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
             Self::Collapse => icons::COLLAPSE,
@@ -152,6 +159,7 @@ pub struct MenuState {
     pub factory: bool,
     pub details: bool,
     pub gates: bool,
+    pub workers: bool,
     pub grouping: Grouping,
     pub collapse: bool,
     /// The live watch is on (#54).
@@ -170,6 +178,7 @@ impl MenuState {
             | MenuAction::Factory
             | MenuAction::Details
             | MenuAction::Gates
+            | MenuAction::Workers
             | MenuAction::Grouping(_)
             | MenuAction::Collapse
             | MenuAction::Live => true,
@@ -184,6 +193,7 @@ impl MenuState {
             MenuAction::Factory => Some(self.factory),
             MenuAction::Details => Some(self.details),
             MenuAction::Gates => Some(self.gates),
+            MenuAction::Workers => Some(self.workers),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse => Some(self.collapse),
             MenuAction::Live => Some(self.live),
@@ -227,6 +237,7 @@ mod tests {
             factory: false,
             details: true,
             gates: false,
+            workers: true,
             grouping: Grouping::Workers,
             collapse: false,
             live: true,
@@ -238,6 +249,7 @@ mod tests {
         assert_eq!(state.checked(MenuAction::Timeline), Some(true));
         assert_eq!(state.checked(MenuAction::Factory), Some(false));
         assert_eq!(state.checked(MenuAction::Details), Some(true));
+        assert_eq!(state.checked(MenuAction::Workers), Some(true));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Flat)), Some(false));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
         assert_eq!(state.checked(MenuAction::Collapse), Some(false));
