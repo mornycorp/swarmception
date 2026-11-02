@@ -48,6 +48,10 @@ pub enum Refusal {
     BackwardWindow { start: swarmception_model::Timestamp, end: swarmception_model::Timestamp },
     /// What was asked for isn't in the swarm: no such ticket, gate run, session or merge.
     NotFound { what: String },
+    /// A live watch's interval outside the seconds it takes (#54).
+    BadInterval { seconds: u64, min: u64, max: u64 },
+    /// Bars of rows the session no longer remembers (`timeline.carryBars`, #54).
+    OldRows { generation: u64 },
 }
 
 impl fmt::Display for Refusal {
@@ -58,6 +62,8 @@ impl fmt::Display for Refusal {
             Self::BadTime { text } => write!(f, "{text:?} is not a UTC time (YYYY-MM-DDTHH:MM:SSZ) or seconds since the epoch"),
             Self::BackwardWindow { start, end } => write!(f, "the window ends ({end}) before it starts ({start})"),
             Self::NotFound { what } => write!(f, "the swarm has no {what}"),
+            Self::BadInterval { seconds, min, max } => write!(f, "a live interval is {min} to {max} seconds, not {seconds}"),
+            Self::OldRows { generation } => write!(f, "the rows of generation {generation} are no longer remembered"),
         }
     }
 }

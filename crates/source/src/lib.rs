@@ -83,6 +83,8 @@ pub struct Tracking {
     pub skipped: Vec<String>,
     /// The main ref read, of [`MAIN_REFS`]: none when the repository has none of them.
     pub main: Option<String>,
+    /// Its commit.
+    pub main_commit: Option<String>,
     /// Its first-parent merge commits, oldest first.
     pub merges: Vec<MainMerge>,
 }
@@ -117,11 +119,42 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     }
     let texts = git.cat_files(&commit, &paths)?;
     let files = paths.iter().zip(texts).filter_map(|(path, text)| Some(parse_file(instance_of(path)?, &text))).collect();
-    let (main, merges) = match first_ref(&git, &MAIN_REFS) {
-        Some((main, head)) => (Some(main), merges(&git, &head)?),
-        None => (None, Vec::new()),
+    let (main, main_commit, merges) = match first_ref(&git, &MAIN_REFS) {
+        Some((main, head)) => {
+            let merges = merges(&git, &head)?;
+            (Some(main), Some(head), merges)
+        }
+        None => (None, None, Vec::new()),
     };
-    Ok(Tracking { repo: top, reference, commit, files, skipped, main, merges })
+    Ok(Tracking { repo: top, reference, commit, files, skipped, main, main_commit, merges })
+}
+
+/// The commits a read would take now: the tracking ref's and main's, the first of [`REFS`] and
+/// of [`MAIN_REFS`] there. A few `rev-parse`s, so a live watch (#54) reads the branch again only
+/// when one of them moved.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Heads {
+    pub tracking: Option<String>,
+    pub main: Option<String>,
+}
+
+impl Heads {
+    /// The commits `tracking` was read at.
+    #[must_use]
+    pub fn of(tracking: &Tracking) -> Self {
+        Self { tracking: Some(tracking.commit.clone()), main: tracking.main_commit.clone() }
+    }
+}
+
+/// `repo`'s [`Heads`] now.
+///
+/// # Errors
+///
+/// [`SourceError::NotARepo`] when git can't read the repository.
+pub fn heads(repo: &Path) -> Result<Heads, SourceError> {
+    let git = Git::new(repo, READ_DEADLINE, 64 * 1024);
+    git.run(&["rev-parse", "--git-dir"], None).map_err(|e| SourceError::NotARepo { path: repo.to_path_buf(), message: e.to_string() })?;
+    Ok(Heads { tracking: first_ref(&git, &REFS).map(|(_, commit)| commit), main: first_ref(&git, &MAIN_REFS).map(|(_, commit)| commit) })
 }
 
 /// The first of `refs` there, and its commit.
@@ -142,17 +175,33 @@ fn merges(git: &Git, head: &str) -> Result<Vec<MainMerge>, SourceError> {
     Ok(merges)
 }
 
-/// Fetches the remote's tracking branch into `refs/remotes/origin/tracking`, then its `main`
-/// into `refs/remotes/origin/main` when it has one.
+/// Fetches the remote's tracking branch into `refs/remotes/origin/tracking` and its `main` into
+/// `refs/remotes/origin/main`, in one fetch (one round trip: a live watch's, #54, makes one
+/// every interval); a remote with no `main` has its tracking branch fetched alone.
 ///
 /// # Errors
 ///
 /// [`SourceError::Git`] when git fails or runs past its deadline fetching the tracking branch.
 pub fn fetch(repo: &Path) -> Result<(), SourceError> {
-    let git = Git::new(repo, FETCH_DEADLINE, 1024 * 1024);
-    git.run(&["fetch", "--quiet", "origin", "+refs/heads/tracking:refs/remotes/origin/tracking"], None)?;
+    fetch_within(repo, FETCH_DEADLINE)
+}
+
+/// [`fetch`] with `deadline` for each fetch it makes.
+///
+/// # Errors
+///
+/// As [`fetch`].
+pub fn fetch_within(repo: &Path, deadline: Duration) -> Result<(), SourceError> {
+    let git = Git::new(repo, deadline, 1024 * 1024);
+    let tracking = "+refs/heads/tracking:refs/remotes/origin/tracking";
+    match git.run(&["fetch", "--quiet", "origin", tracking, "+refs/heads/main:refs/remotes/origin/main"], None) {
+        Ok(_) => return Ok(()),
+        // Past the deadline, a second try would only wait as long again.
+        Err(error @ GitError::Deadline { .. }) => return Err(error.into()),
+        Err(_) => {}
+    }
     // A remote whose main is called something else still has its tracking branch fetched.
-    let _ = git.run(&["fetch", "--quiet", "origin", "+refs/heads/main:refs/remotes/origin/main"], None);
+    git.run(&["fetch", "--quiet", "origin", tracking], None)?;
     Ok(())
 }
 
@@ -224,6 +273,77 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("swarmception-not-a-repo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         assert!(matches!(read(&dir), Err(SourceError::NotARepo { .. })));
+        assert!(matches!(heads(&dir), Err(SourceError::NotARepo { .. })));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
+        all.extend_from_slice(args);
+        let ok = std::process::Command::new("git").current_dir(dir).args(&all).output().unwrap();
+        assert!(ok.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&ok.stderr));
+    }
+
+    /// A clone of [`repo`] whose remote's tracking branch gains an event after the clone (#54).
+    #[test]
+    fn heads_move_only_when_a_fetch_brings_something() {
+        let remote = repo();
+        let clone = remote.with_extension("clone");
+        git(&remote, &["clone", "-q", "--no-checkout", remote.to_str().unwrap(), clone.to_str().unwrap()]);
+        git(&clone, &["fetch", "-q", "origin", "+refs/heads/tracking:refs/remotes/origin/tracking"]);
+        let first = read(&clone).unwrap();
+        assert_eq!(first.reference, "refs/remotes/origin/tracking");
+        assert_eq!(heads(&clone).unwrap(), Heads::of(&first));
+        assert!(first.main_commit.is_some(), "main's commit is read with its merges");
+
+        fetch(&clone).unwrap();
+        assert_eq!(heads(&clone).unwrap(), Heads::of(&first), "nothing new: nothing moved");
+
+        // The remote's swarm logs an event.
+        let file = remote.join("tracking/mini-1/work.jsonl");
+        let mut text = std::fs::read_to_string(&file).unwrap();
+        text.push_str("{\"event\":\"claim\",\"issue\":9,\"t\":\"2026-10-31T03:05:00Z\"}\n");
+        std::fs::write(&file, text).unwrap();
+        git(&remote, &["commit", "-q", "-am", "an event"]);
+        assert_eq!(heads(&clone).unwrap(), Heads::of(&first), "not until a fetch");
+        fetch(&clone).unwrap();
+        let moved = heads(&clone).unwrap();
+        assert_ne!(moved.tracking, Heads::of(&first).tracking);
+        assert_eq!(moved.main, first.main_commit, "main stayed");
+        let second = read(&clone).unwrap();
+        assert_eq!(Heads::of(&second), moved);
+        assert_eq!(second.files[0].events.len(), first.files[0].events.len() + 1);
+        std::fs::remove_dir_all(remote).ok();
+        std::fs::remove_dir_all(clone).ok();
+    }
+
+    #[test]
+    fn a_remote_with_no_main_still_has_its_tracking_branch_fetched() {
+        let remote = repo();
+        git(&remote, &["branch", "-q", "-m", "main", "trunk"]);
+        let clone = remote.with_extension("trunk");
+        git(&remote, &["init", "-q", clone.to_str().unwrap()]);
+        git(&clone, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        fetch(&clone).unwrap();
+        let tracking = read(&clone).unwrap();
+        assert_eq!((tracking.reference.as_str(), tracking.main.as_deref()), ("refs/remotes/origin/tracking", None));
+        std::fs::remove_dir_all(remote).ok();
+        std::fs::remove_dir_all(clone).ok();
+    }
+
+    #[test]
+    fn a_fetch_with_no_remote_or_past_its_deadline_is_an_error() {
+        let dir = repo();
+        assert!(matches!(fetch(&dir), Err(SourceError::Git(GitError::Failed { .. }))), "no origin");
+        // A remote whose upload-pack naps: the fetch is stopped at its deadline.
+        let clone = dir.with_extension("slow");
+        git(&dir, &["clone", "-q", "--no-checkout", dir.to_str().unwrap(), clone.to_str().unwrap()]);
+        git(&clone, &["config", "remote.origin.uploadpack", "sleep 5; git-upload-pack"]);
+        let started = std::time::Instant::now();
+        let result = fetch_within(&clone, Duration::from_millis(300));
+        assert!(matches!(result, Err(SourceError::Git(GitError::Deadline { .. }))), "{result:?}");
+        assert!(started.elapsed() < Duration::from_secs(4));
+        std::fs::remove_dir_all(dir).ok();
+        std::fs::remove_dir_all(clone).ok();
     }
 }

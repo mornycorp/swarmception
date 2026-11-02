@@ -36,8 +36,11 @@ use swarmception_engine::details_cmds::{DetailsParams, Get as GetDetails};
 use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::factory_cmds::TicketParams;
 use swarmception_engine::issues_cmds::Urls;
+use swarmception_engine::live::LiveStatus;
+use swarmception_engine::live_cmds::{Get as GetLive, Set as SetLive, SetParams as SetLiveParams};
 use swarmception_engine::repo_cmds::{Fetch, Open, OpenParams, Reload, Status, StatusResult};
 use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams as SetRowsParams};
+use swarmception_engine::session::Job;
 
 pub use details::{DetailsDrawn, DetailsPane, DetailsView, params as details_params};
 pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed, Steps};
@@ -101,6 +104,8 @@ pub struct Shell {
     /// The engine's revision `status` was read at.
     status_at: Option<(u64, u64)>,
     status: StatusResult,
+    /// The live watch (#54), as `live.get` said at `status_at`.
+    live: LiveStatus,
     spec: RowsSpec,
     /// The last command's error, shown in the status bar until the next succeeds.
     error: Option<String>,
@@ -136,6 +141,7 @@ impl Shell {
             ui: UiState::default(),
             status_at: None,
             status: StatusResult::default(),
+            live: LiveStatus::default(),
             spec: RowsSpec::default(),
             error: None,
             native_menu: false,
@@ -204,10 +210,23 @@ impl Shell {
         self.factory.ask(jump);
     }
 
-    /// Whether a read is still going.
+    /// Whether a read is still going: a Reload's or a Fetch's, not a live check's, which goes on
+    /// unseen until it brings something (#54).
     #[must_use]
-    pub const fn loading(&self) -> bool {
-        self.status.job.is_some()
+    pub fn loading(&self) -> bool {
+        self.status.job.is_some_and(|job| job != Job::Live)
+    }
+
+    /// The live watch (#54), as `live.get` said last.
+    #[must_use]
+    pub const fn live(&self) -> &LiveStatus {
+        &self.live
+    }
+
+    /// Turns the live watch on or off, or sets its interval (`live.set`).
+    pub fn set_live(&mut self, params: SetLiveParams) {
+        let result = self.engine.call::<SetLive>(params);
+        self.note(result);
     }
 
     /// Whether the GitHub issues are still being fetched.
@@ -239,6 +258,7 @@ impl Shell {
             details: self.ui.panes.details,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
+            live: self.live.on,
         }
     }
 
@@ -281,6 +301,7 @@ impl Shell {
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
             MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
+            MenuAction::Live => self.set_live(SetLiveParams { on: Some(!self.live.on), interval_seconds: None }),
         }
     }
 
@@ -309,8 +330,11 @@ impl Shell {
             if let Ok(spec) = self.engine.call::<GetRows>(NoParams {}) {
                 self.spec = spec;
             }
+            if let Ok(live) = self.engine.call::<GetLive>(NoParams {}) {
+                self.live = live;
+            }
         }
-        if let Err(error) = self.timeline.sync(&self.engine) {
+        if let Err(error) = self.timeline.sync(&mut self.engine) {
             self.error = Some(error);
         }
     }
@@ -333,6 +357,10 @@ impl Shell {
     /// Draws the window's frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.sync();
+        // Woken for the live watch's next check (#54), which the next frame's poll starts.
+        if let Some(wait) = self.engine.live_wait(std::time::Instant::now()) {
+            ui.ctx().request_repaint_after(wait);
+        }
         if !self.native_menu {
             egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
         }
@@ -524,6 +552,7 @@ impl Shell {
             if ui.add_enabled(can, icon_button(icons::FETCH)).on_hover_text("Fetch the remote's tracking branch, then reload").clicked() {
                 self.fetch();
             }
+            self.live_toggle(ui);
             ui.separator();
             let mut spec = self.spec;
             ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("Tickets packed onto shared rows, in the order they began");
@@ -567,6 +596,7 @@ impl Shell {
                 ui.separator();
                 ui.label(format!("{}  {text}", icons::CLOCK));
             }
+            self.live_note(ui);
             self.issues_note(ui);
             let problem = self.error.as_ref().or(s.error.as_ref());
             if let Some(problem) = problem {
@@ -582,7 +612,81 @@ impl Shell {
     }
 }
 
+/// The intervals the toolbar offers a live watch, in seconds.
+pub const LIVE_INTERVALS: [u64; 5] = [10, 30, 60, 120, 300];
+
+/// An interval as the toolbar shows it: `30 s`, `2 min`.
+#[must_use]
+pub fn interval_text(seconds: u64) -> String {
+    if seconds >= 60 && seconds.is_multiple_of(60) { format!("{} min", seconds / 60) } else { format!("{seconds} s") }
+}
+
+/// A time of day, `HH:MM:SS`, as the status bar shows it (UTC).
+fn time_of_day(t: swarmception_model::Timestamp) -> String {
+    let text = t.to_string();
+    text.get(11..19).map_or(text.clone(), str::to_owned)
+}
+
 impl Shell {
+    /// The toolbar's Live toggle and, while it is on, its interval (#54): `live.set`.
+    fn live_toggle(&mut self, ui: &mut egui::Ui) {
+        let mut on = self.live.on;
+        let hover = format!(
+            "Live: fetch the remote's tracking and main every {}, off the UI thread, and reload when either moved; the view stays, or follows the end when it was there",
+            interval_text(self.live.interval_seconds)
+        );
+        if ui.add_enabled(self.status.repo.is_some(), egui::Button::selectable(on, format!("{}  Live", icons::LIVE))).on_hover_text(hover).clicked() {
+            on = !on;
+            self.set_live(SetLiveParams { on: Some(on), interval_seconds: None });
+        }
+        if !self.live.on {
+            return;
+        }
+        let mut interval = self.live.interval_seconds;
+        egui::ComboBox::from_id_salt("live-interval").width(56.0).selected_text(interval_text(interval)).show_ui(ui, |ui| {
+            for seconds in LIVE_INTERVALS {
+                ui.selectable_value(&mut interval, seconds, interval_text(seconds));
+            }
+        });
+        if interval != self.live.interval_seconds {
+            self.set_live(SetLiveParams { on: None, interval_seconds: Some(interval) });
+        }
+    }
+
+    /// The status bar's word on the live watch (#54): live and when it last checked, paused, or
+    /// why its last check failed and when it tries again; one segment, the error on hover.
+    fn live_note(&self, ui: &mut egui::Ui) {
+        let live = &self.live;
+        if self.status.repo.is_none() {
+            return;
+        }
+        ui.separator();
+        let checked = live.last_check.map(|t| format!(" · checked {}", time_of_day(t))).unwrap_or_default();
+        let mut hover = vec![format!("Every {}: fetches tracking and main, and reloads when either moved.", interval_text(live.interval_seconds))];
+        hover.extend(live.last_new.map(|t| format!("Last new events: {} UTC", time_of_day(t))));
+        if let Some(cost) = live.cost {
+            let mut parts = vec![format!("fetch {} ms", cost.fetch_ms)];
+            parts.extend(cost.read_ms.map(|ms| format!("read {ms} ms")));
+            parts.extend(cost.build_ms.map(|ms| format!("build {ms} ms")));
+            parts.extend(cost.new_events.map(|n| format!("{n} new events")));
+            hover.push(format!("Last check: {}", parts.join(", ")));
+        }
+        let label = match (&live.error, live.on) {
+            (Some(error), true) => {
+                let retry = live
+                    .last_check
+                    .zip(live.next_in_seconds)
+                    .map(|(t, s)| format!(" · retry at {}", time_of_day(swarmception_model::Timestamp(t.0.saturating_add(i64::try_from(s).unwrap_or(0))))));
+                hover.push(error.clone());
+                let failed = if live.failures > 1 { format!("check failed ×{}", live.failures) } else { "check failed".to_owned() };
+                ui.colored_label(ui.visuals().warn_fg_color, format!("{}  live · {failed}{}  {}", icons::LIVE, retry.unwrap_or_default(), icons::WARNING))
+            }
+            (_, true) => ui.label(format!("{}  live{checked}", icons::LIVE)),
+            (_, false) => ui.weak(format!("{}  paused{checked}", icons::LIVE)),
+        };
+        label.on_hover_text(hover.join("\n"));
+    }
+
     /// The status bar's word on the GitHub issues: how many and from where, the fetch going on,
     /// or why there are none (a warning, never a failed load).
     fn issues_note(&self, ui: &mut egui::Ui) {
@@ -646,8 +750,22 @@ mod tests {
         let state = shell.menu_state();
         assert_eq!(
             state,
-            MenuState { can_reload: false, can_fit: false, timeline: true, factory: true, details: true, grouping: Grouping::Flat, collapse: false }
+            MenuState {
+                can_reload: false,
+                can_fit: false,
+                timeline: true,
+                factory: true,
+                details: true,
+                grouping: Grouping::Flat,
+                collapse: false,
+                live: false
+            }
         );
+        // Live is `live.set`, and the menu's mark is what `live.get` says.
+        shell.run_menu(&ctx, MenuAction::Live);
+        assert!(shell.menu_state().live && shell.live().on && !shell.live().default);
+        shell.run_menu(&ctx, MenuAction::Live);
+        assert!(!shell.menu_state().live);
 
         shell.run_menu(&ctx, MenuAction::Timeline);
         shell.run_menu(&ctx, MenuAction::Factory);

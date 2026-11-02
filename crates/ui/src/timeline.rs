@@ -4,6 +4,12 @@
 //! whole swarm, under a Clock ruler (the time of day, UTC). The ruler's menu still offers the Time
 //! ruler (seconds from the axis's origin).
 //!
+//! A reload (a live watch's, #54) keeps the person's view: a window at the timeline's end
+//! follows the new end (the whole swarm shown stays the whole swarm), any other stays put; the
+//! selection and focus are carried to the same bars in the new rows (`timeline.carryBars`), the
+//! playhead to the same time, and the highlight (the hovered ticket's, else the details'
+//! subject's) is lit again on the new rows ([`TimelinePane::light`]).
+//!
 //! What the owner fixed (#35) the pane sets by command on every load, and the widget's toolbar
 //! leaves out: the `Time` scale, the absolute origin, the minimap always and a click selecting
 //! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
@@ -17,6 +23,7 @@ use swarmception_domain::timeline::Link;
 use swarmception_engine::Session;
 
 use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, TicketParams};
+use swarmception_engine::live_cmds::{CarryBars, CarryParams};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
 use swarmception_model::Timestamp;
@@ -28,7 +35,7 @@ use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams
 use timeline_engine::tracks_cmds::{Layout, LayoutParams};
 
 use timeline_engine::highlight_cmds::HighlightParams;
-use timeline_engine::ranges_cmds::{Clear as ClearRanges, RangeParams, Toggle as ToggleRange};
+use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, RangeParams, Toggle as ToggleRange};
 use timeline_engine::rulers_cmds::{Add as AddRuler, AddParams as AddRulerParams, Set as SetRuler, SetParams as SetRulerParams};
 use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Set, SetParams, TimelineState};
 use timeline_engine::view_cmds::{Fit, Show, ShowParams, Zoom, ZoomParams};
@@ -104,6 +111,34 @@ struct Lighting {
     generation: Option<u64>,
 }
 
+/// What a load keeps of the view (#54), read before it.
+struct Kept {
+    scale: String,
+    extent: SpanWire,
+    window: SpanWire,
+    rulers: Vec<RulerWire>,
+    selection: Selection,
+    /// The start of the playhead's item, a position on the scale.
+    playhead: Option<i64>,
+}
+
+/// The window to show after a load whose extent went from `before` to `after`: at the end, it
+/// follows the new end at its width (at both ends, it shows the whole new extent); elsewhere it
+/// stays. Positions are the `Time` scale's, which a load keeps (nanoseconds from the first
+/// event's hour). A window within a hundredth of its width of the end is at the end.
+fn follow(window: SpanWire, before: SpanWire, after: SpanWire) -> Option<SpanWire> {
+    let width = window.end.checked_sub(window.start)?;
+    let slack = (width / 100).max(1);
+    let at_end = window.end >= before.end.saturating_sub(slack);
+    let at_start = window.start <= before.start.saturating_add(slack);
+    let window = match (at_start, at_end) {
+        (true, true) => after,
+        (false, true) => SpanWire { start: after.end.saturating_sub(width).max(after.start), end: after.end },
+        _ => window,
+    };
+    (window.end > window.start).then_some(window)
+}
+
 pub struct TimelinePane {
     widget: timeline_egui::Timeline,
     loaded: Option<u64>,
@@ -117,6 +152,8 @@ pub struct TimelinePane {
     links: Vec<Link>,
     /// Where the widget was drawn last frame.
     rect: Option<egui::Rect>,
+    /// How long the last load took, its view put back.
+    load_time: Option<std::time::Duration>,
 }
 
 impl Default for TimelinePane {
@@ -124,7 +161,16 @@ impl Default for TimelinePane {
         let mut session = timeline_engine::Session::new();
         // The session keeps the toolbar's spec across loads: set once.
         let _ = session.call::<SetToolbar>(ToolbarSetParams { show: Some(TOOLBAR.to_vec()), hide: Vec::new() });
-        Self { widget: timeline_egui::Timeline::new(session), loaded: None, has_data: false, lit: None, scroll_to: None, links: Vec::new(), rect: None }
+        Self {
+            widget: timeline_egui::Timeline::new(session),
+            loaded: None,
+            has_data: false,
+            lit: None,
+            scroll_to: None,
+            links: Vec::new(),
+            rect: None,
+            load_time: None,
+        }
     }
 }
 
@@ -165,10 +211,24 @@ impl TimelinePane {
         &mut self.widget
     }
 
-    /// The scale, window and rulers the widget shows.
-    fn view(&mut self) -> Option<(String, SpanWire, Vec<RulerWire>)> {
+    /// What a load keeps of the view: the scale, extent, window and rulers, the selection and
+    /// focus, and where the playhead is.
+    fn view(&mut self) -> Option<Kept> {
         let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
-        Some((state.scale, state.window, state.rulers))
+        Some(Kept {
+            playhead: state.playhead_span.map(|s| s.start),
+            scale: state.scale.clone(),
+            extent: state.extent,
+            window: state.window,
+            rulers: state.rulers.clone(),
+            selection: Selection::of(state),
+        })
+    }
+
+    /// How long the last load into the widget took, and its view put back (#54's cost).
+    #[must_use]
+    pub const fn load_time(&self) -> Option<std::time::Duration> {
+        self.load_time
     }
 
     /// Puts back the ruler stack a load reset: the scrub ruler's domain, then the rulers under it.
@@ -188,12 +248,13 @@ impl TimelinePane {
     /// # Errors
     ///
     /// The engine's refusal of the rows, as text to show.
-    pub fn sync(&mut self, engine: &Session) -> Result<(), String> {
+    pub fn sync(&mut self, engine: &mut Session) -> Result<(), String> {
         let (generation, _) = engine.revision();
         if self.loaded == Some(generation) {
             return Ok(());
         }
-        self.loaded = Some(generation);
+        let started = std::time::Instant::now();
+        let previous = self.loaded.replace(generation);
         let before = if self.has_data { self.view() } else { None };
         let Some(timeline) = engine.widget_timeline().map_err(|e| e.to_string())? else {
             *self = Self { loaded: self.loaded, ..Self::default() };
@@ -203,23 +264,62 @@ impl TimelinePane {
         session.load(timeline);
         self.has_data = true;
         Self::fix_view(session);
-        let restored = before.and_then(|(scale, window, rulers)| {
-            let window = (scale == TIME).then_some(window);
-            session.call::<Set>(SetParams { window, ..SetParams::default() }).ok().map(|_| (window.is_some(), rulers))
-        });
-        match restored {
-            Some((kept, rulers)) => {
-                if !kept {
-                    let _ = session.call::<Fit>(NoParams {});
-                }
-                self.restore_rulers(&rulers);
+        match before {
+            Some(kept) => {
+                self.restore_window(&kept);
+                self.restore_rulers(&kept.rulers);
+                self.restore_selection(engine, &kept, previous);
             }
             None => {
                 let _ = session.call::<Fit>(NoParams {});
                 let _ = session.call::<SetRuler>(SetRulerParams { ruler: 0, domain: Some(RulerDomainWire::Clock), origin: None });
             }
         }
+        self.load_time = Some(started.elapsed());
         Ok(())
+    }
+
+    /// The window after a load: on the `Time` scale, one at the timeline's end follows the new
+    /// end at its width (the whole swarm shown stays the whole swarm), any other stays where it
+    /// was; on another scale, or one the new extent can't hold, the whole swarm.
+    fn restore_window(&mut self, kept: &Kept) {
+        let session = self.widget.session();
+        let Some(extent) = session.call::<Get>(NoParams {}).ok().and_then(|s| s.timeline).map(|s| s.extent) else { return };
+        let window = (kept.scale == TIME).then(|| follow(kept.window, kept.extent, extent)).flatten();
+        if window.is_none_or(|window| session.call::<Set>(SetParams { window: Some(window), ..SetParams::default() }).is_err()) {
+            let _ = session.call::<Fit>(NoParams {});
+        }
+    }
+
+    /// The selection and focus carried to the same bars in the new rows, and the playhead to the
+    /// same time.
+    fn restore_selection(&mut self, engine: &mut Session, kept: &Kept, previous: Option<u64>) {
+        let mut carry = |bars: Vec<BarRef>| match previous {
+            Some(generation) if !bars.is_empty() => engine.call::<CarryBars>(CarryParams { generation, bars }).map(|c| c.bars).unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        let selected =
+            carry(kept.selection.ranges.iter().flat_map(|(track, ranges)| ranges.iter().map(|&range| BarRef { track: track.clone(), range })).collect());
+        let focus = kept.selection.focus.as_ref();
+        let focused = carry(focus.and_then(|f| f.range.map(|range| BarRef { track: f.track.clone(), range })).into_iter().collect());
+        let playhead = kept.playhead.and_then(|position| engine.call::<TimeAt>(TimeAtParams { position }).ok()).map(|t| t.time);
+        let session = self.widget.session();
+        for bar in selected {
+            let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
+        }
+        let focus_params = match (focused.into_iter().next(), focus) {
+            (Some(bar), _) => Some(FocusParams { key: Some(bar.track), range: Some(bar.range) }),
+            (None, Some(f)) if f.range.is_none() => Some(FocusParams { key: Some(f.track.clone()), range: None }),
+            // Toggling took the focus: put back none.
+            (None, None) => Some(FocusParams::default()),
+            (None, Some(_)) => None,
+        };
+        if let Some(params) = focus_params {
+            let _ = session.call::<FocusTrack>(params);
+        }
+        if let Some(t) = playhead {
+            self.put_playhead(engine, t);
+        }
     }
 
     /// What the owner fixed (#35), by command: the `Time` scale, the absolute origin, the minimap
@@ -494,4 +594,27 @@ fn hidden_row(widget: &mut timeline_egui::Timeline, rect: egui::Rect, clip: egui
         .map(|row| egui::Rect::from_min_size(egui::pos2(rect.left(), rect.top() + row.y), egui::vec2(rect.width(), row.height)))
         .collect();
     (!rows.iter().any(|row| row.intersects(clip))).then(|| rows.first().copied()).flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const fn span(start: i64, end: i64) -> SpanWire {
+        SpanWire { start, end }
+    }
+
+    #[test]
+    fn a_window_at_the_end_follows_it_and_any_other_stays() {
+        let (before, after) = (span(0, 1_000), span(0, 1_500));
+        assert_eq!(follow(span(800, 1_000), before, after), Some(span(1_300, 1_500)), "at the end: the new end, the same width");
+        assert_eq!(follow(span(500, 996), before, after), Some(span(1_004, 1_500)), "within a hundredth of its width");
+        assert_eq!(follow(span(500, 995), before, after), Some(span(500, 995)), "further: put");
+        assert_eq!(follow(span(0, 1_000), before, after), Some(after), "the whole swarm: the whole swarm again");
+        assert_eq!(follow(span(200, 600), before, after), Some(span(200, 600)), "elsewhere: put");
+        assert_eq!(follow(span(0, 600), before, after), Some(span(0, 600)), "at the start only: put");
+        // A window wider than what is left of a shrunk extent starts at its start.
+        assert_eq!(follow(span(500, 1_000), before, span(800, 900)), Some(span(800, 900)));
+        assert_eq!(follow(span(5, 5), before, after), None, "no width: nothing to keep");
+    }
 }

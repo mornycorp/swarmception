@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -98,7 +98,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
   else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
-  each call with a deadline and capped output, every path checked as an instance id. `github`
+  each call with a deadline and capped output, every path checked as an instance id. `fetch`
+  takes `tracking` and `main` in one round trip (`tracking` alone from a remote with no `main`);
+  `heads` reads the two refs' commits with a few `rev-parse`s, so a live check (#54) reads the
+  branch again only when one moved (`Heads::of` a read's). `github`
   (#17): the `origin` remote read as GitHub's `owner/name`, the issues fetched with `gh api
   --paginate` (the same runner as git: a deadline, a cap, no prompts), and a cache per repository
   in the user's cache directory (`~/Library/Caches/swarmception/issues/<owner>--<name>.json` on
@@ -115,7 +118,16 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `details.get` (#47: exactly one of `ticket`, `gate`, `session`, `merge`, or a bar's `track` and
   `range`, with `at` to pick a rerun or a session; `details::Details` with its pages' URLs and,
   in `timeline`, its bars on the rows shown now (#55); a subject the swarm never had is
-  `Refusal::NotFound`). Every load
+  `Refusal::NotFound`), `live.get`, `live.set` (`{on?, intervalSeconds?}`, 5 to 3600 s) and
+  `live.check` (#54, `live`: the watch of a live swarm: on by default only when the latest event
+  was under 30 min old at the first read; every interval, 30 s by default, a check from
+  `Session::poll` in the background fetches `tracking` and `main` with a 30 s deadline and reads
+  them again only when one moved; `LiveStatus` says when it last checked, what that cost
+  (`LiveCost`: fetch, read, build, new events) and why the last failed, apart from the session's
+  error, each failure in a row doubling the wait up to 10 min; a Reload or Fetch takes a check's
+  place; a reload that names tickets the swarm hadn't before reads the issues again, no other
+  does), `timeline.carryBars` (#54: where bars of an earlier generation of rows are now, by
+  ticket, start and style; the last eight generations remembered). Every load
   (`repo.open`, `repo.reload`, `repo.fetch`) also reads the repository's GitHub issues (#17): the
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
   where and why not is `repo.status`'s `issues`, and new issues build the rows again. Where they
@@ -123,13 +135,19 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Reload, Fetch and Reload, Quit; View:
-  the panes, the grouping, Collapse, Fit), as data (`menu`: `MenuAction`, `MenuState`) that the
+  the panes, the grouping, Collapse, Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
   in-window bar draws and `Shell::run_menu` runs; on macOS the app puts it in the system menu
   bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
   their marks following `Shell::menu_state`; the toolbar (Font Awesome 5's solid face,
   `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
-  (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the window,
-  and drives the widget through its own commands (`view.fit`, `state.set`). On every load it fixes
+  (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the view
+  (#54): a window at the timeline's end follows the new end at its width (the whole swarm shown
+  stays the whole swarm), any other stays put; the selection and focus carried to the same bars
+  (`timeline.carryBars`), the playhead to the same time, the highlight lit again on the new rows;
+  and drives the widget through its own commands (`view.fit`, `state.set`). The toolbar's Live
+  toggle (and View ▸ Live, ⌘L) is `live.set`, its interval beside it while on; the status bar says
+  live and when it last checked, paused, or that the last check failed and when it tries again,
+  the why on hover; the shell asks for a frame when the next check is due. On every load it fixes
   what the owner fixed (#35) by command: the `Time` scale and the absolute origin (`state.set`),
   the minimap always (`view.minimap`), a click selecting the nearest bar (`view.clickMode`); the
   widget's toolbar shows only `TIMELINE_TOOLBAR` (`toolbar.set`: Fit, Zoom to Selection, Undo
@@ -320,6 +338,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Watching a live swarm (#54): `live.get` / `live.set` / `live.check`, the source's one-trip `fetch` and `heads`, a reload that keeps or follows the view and carries the selection (`timeline.carryBars`), Live in the toolbar, View menu and status bar; `ui.inspect`'s `timeline.loadMs` |
 | 2026-11-02 | minor | The details pane and the timeline select together (#55): `details.get`'s `timeline` (the subject's bars), highlighted with one owner (a factory hover wins while it lasts) and brought into view; `ui.set`'s `details`, `ui.inspect`'s `details` and `timeline.lit` |
 | 2026-11-02 | minor | The factory's chip hover uses the widget's highlight (`Timeline::set_highlight`), not the selection; `ui.inspect`'s `highlighted`; swarm-timeline pinned at 9bf2651 (#48) |
 | 2026-11-02 | minor | The details of what is selected (#47): the domain's `details`, `details.get`, the details pane following the timeline's and the factory's selection; `--details` |

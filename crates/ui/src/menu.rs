@@ -1,8 +1,8 @@
 //! The menus as data: every item is a [`MenuAction`] with a stable id, and [`MenuState`] says
 //! which are enabled and checked. The in-window menu bar and macOS's system menu bar draw the
 //! same items and run them through the same [`crate::Shell::run_menu`], so both reach the same
-//! engine commands (`repo.reload`, `repo.fetch`, `rows.set`) and widget commands (`view.fit`); View
-//! lists the panes, the timeline, the factory and the details.
+//! engine commands (`repo.reload`, `repo.fetch`, `rows.set`, `live.set`) and widget commands
+//! (`view.fit`); View lists the panes, the timeline, the factory and the details, and Live.
 
 use swarmception_domain::Grouping;
 
@@ -27,11 +27,13 @@ pub enum MenuAction {
     Collapse,
     /// View ▸ Fit: the widget's `view.fit`.
     Fit,
+    /// View ▸ Live: `live.set` toggled, watching the swarm (#54).
+    Live,
 }
 
 impl MenuAction {
     /// Every item, in menu order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Reload,
         Self::Fetch,
         Self::Quit,
@@ -42,13 +44,14 @@ impl MenuAction {
         Self::Grouping(Grouping::Workers),
         Self::Collapse,
         Self::Fit,
+        Self::Live,
     ];
 
     /// The File menu's items, separated where `None` is.
     pub const FILE: [Option<Self>; 4] = [Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 9] = [
+    pub const VIEW: [Option<Self>; 11] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
@@ -58,6 +61,8 @@ impl MenuAction {
         None,
         Some(Self::Collapse),
         Some(Self::Fit),
+        None,
+        Some(Self::Live),
     ];
 
     /// A stable id, for a native menu's items.
@@ -74,6 +79,7 @@ impl MenuAction {
             Self::Grouping(Grouping::Workers) => "view.workers",
             Self::Collapse => "view.collapse",
             Self::Fit => "view.fit",
+            Self::Live => "view.live",
         }
     }
 
@@ -97,6 +103,7 @@ impl MenuAction {
             Self::Grouping(Grouping::Workers) => "By Worker",
             Self::Collapse => "Collapse Empty Rows",
             Self::Fit => "Fit",
+            Self::Live => "Live",
         }
     }
 
@@ -115,6 +122,7 @@ impl MenuAction {
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
             Self::Collapse => icons::COLLAPSE,
             Self::Fit => icons::FIT,
+            Self::Live => icons::LIVE,
         }
     }
 
@@ -137,6 +145,8 @@ pub struct MenuState {
     pub details: bool,
     pub grouping: Grouping,
     pub collapse: bool,
+    /// The live watch is on (#54).
+    pub live: bool,
 }
 
 impl MenuState {
@@ -146,7 +156,13 @@ impl MenuState {
         match action {
             MenuAction::Reload | MenuAction::Fetch => self.can_reload,
             MenuAction::Fit => self.can_fit,
-            MenuAction::Quit | MenuAction::Timeline | MenuAction::Factory | MenuAction::Details | MenuAction::Grouping(_) | MenuAction::Collapse => true,
+            MenuAction::Quit
+            | MenuAction::Timeline
+            | MenuAction::Factory
+            | MenuAction::Details
+            | MenuAction::Grouping(_)
+            | MenuAction::Collapse
+            | MenuAction::Live => true,
         }
     }
 
@@ -159,6 +175,7 @@ impl MenuState {
             MenuAction::Details => Some(self.details),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse => Some(self.collapse),
+            MenuAction::Live => Some(self.live),
             MenuAction::Reload | MenuAction::Fetch | MenuAction::Quit | MenuAction::Fit => None,
         }
     }
@@ -192,7 +209,16 @@ mod tests {
 
     #[test]
     fn state_enables_and_checks() {
-        let state = MenuState { can_reload: false, can_fit: true, timeline: true, factory: false, details: true, grouping: Grouping::Workers, collapse: false };
+        let state = MenuState {
+            can_reload: false,
+            can_fit: true,
+            timeline: true,
+            factory: false,
+            details: true,
+            grouping: Grouping::Workers,
+            collapse: false,
+            live: true,
+        };
         assert!(!state.enabled(MenuAction::Reload));
         assert!(!state.enabled(MenuAction::Fetch));
         assert!(state.enabled(MenuAction::Fit));
@@ -203,6 +229,8 @@ mod tests {
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Flat)), Some(false));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
         assert_eq!(state.checked(MenuAction::Collapse), Some(false));
+        assert_eq!(state.checked(MenuAction::Live), Some(true));
+        assert!(state.enabled(MenuAction::Live), "on or off whatever is being read");
 
         assert_eq!(state.checked(MenuAction::Reload), None);
     }

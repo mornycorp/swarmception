@@ -64,7 +64,7 @@ fn the_first_load_reads_the_clock_and_a_reload_keeps_the_rulers() {
     let path = serde_json::to_string(&dir.display().to_string()).unwrap();
     engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
     let mut pane = TimelinePane::default();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     assert_eq!(rulers(&mut pane), [RulerDomainWire::Clock], "the scrub ruler reads the time of day");
     let text = pane.clock_text(&mut engine).unwrap();
     assert!(text.starts_with("2026-10-31 03:") && text.contains(" UTC"), "{text}");
@@ -74,7 +74,7 @@ fn the_first_load_reads_the_clock_and_a_reload_keeps_the_rulers() {
     session.call::<Set>(SetParams { ruler: 0, domain: Some(RulerDomainWire::Axis), origin: None }).unwrap();
     session.call::<Add>(AddParams { domain: RulerDomainWire::Clock, origin: Some(OriginWire::Absolute) }).unwrap();
     engine.execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     assert_eq!(rulers(&mut pane), [RulerDomainWire::Axis, RulerDomainWire::Clock]);
     std::fs::remove_dir_all(dir).ok();
 }
@@ -97,7 +97,7 @@ fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_comma
     let mut engine = Session::new();
     let path = serde_json::to_string(&dir.display().to_string()).unwrap();
     engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     let fixed = |pane: &mut TimelinePane| {
         let state = pane.widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
         (state.scale, state.origin, state.minimap, state.click)
@@ -115,7 +115,7 @@ fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_comma
     let session = pane.widget().session();
     session.call::<SetState>(SetStateParams { scale: Some("Unit".to_owned()), origin: Some(OriginWire::Viewport), ..SetStateParams::default() }).unwrap();
     engine.execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     assert_eq!(fixed(&mut pane), expected);
     assert_eq!(pane.widget().session().call::<GetToolbar>(NoParams {}).unwrap().show, wanted);
     std::fs::remove_dir_all(dir).ok();
@@ -128,7 +128,7 @@ fn opened(submit: &str) -> (PathBuf, Session, TimelinePane) {
     let path = serde_json::to_string(&dir.display().to_string()).unwrap();
     engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
     let mut pane = TimelinePane::default();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     (dir, engine, pane)
 }
 
@@ -148,7 +148,7 @@ fn a_hovered_tickets_highlight_leaves_the_selection_and_comes_back_after_a_reloa
     assert_eq!(pane.selection().unwrap(), before, "the selection untouched");
     // New rows: the widget's load cleared its highlight; the pane highlights the bars again.
     engine.execute("rows.set", r#"{"grouping":"workers"}"#).unwrap();
-    pane.sync(&engine).unwrap();
+    pane.sync(&mut engine).unwrap();
     assert!(pane.highlighted().is_empty(), "a load clears the widget's highlight");
     assert!(pane.light_ticket(&mut engine, Some(7)));
     assert!(!pane.highlighted().is_empty());
