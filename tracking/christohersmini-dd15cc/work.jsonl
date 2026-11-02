@@ -153,3 +153,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #90 (#86, fold quiet time; swarm-timeline efdf212); capacity=2 free=16.7; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-90","t":"2026-11-02T20:30:28Z"}
 {"event":"merge","issue":86,"mr":90,"sub":"gate-90","t":"2026-11-02T20:31:23Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #90","sub":"gate-90","t":"2026-11-02T20:31:29Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #91 (batch 9 fold); capacity=2 free=12.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-91","t":"2026-11-02T20:33:40Z"}
