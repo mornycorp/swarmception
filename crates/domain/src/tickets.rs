@@ -4,7 +4,13 @@
 //!
 //! - `claim` starts a *claimed* stretch, unless the ticket is already claimed, worked on or waiting;
 //! - `work` starts *working*; `submit` starts *waiting* for the merge;
-//! - `sendback` starts *sent back*, until work begins again;
+//! - `sendback` starts *sent back*, until work begins again. A worker answers a send-back by
+//!   fixing its PR and submitting again, and logs no `work` before it (Swarm Core's `ready` logs
+//!   the `submit` alone), so a `submit` straight after a send-back is its rework (#83): the
+//!   send-back reads as such for [`SENT_BACK_MARK`] seconds (or until the submit, if sooner),
+//!   and the time from there to the submit is *working* again, by the submitter, a
+//!   [`Stretch::rework`]. The ticket's second run is drawn as its first, in its own colour; a
+//!   send-back nothing has answered yet stays *sent back*;
 //! - `stop` but `done` starts *stopped* (a handoff, a block, a pause);
 //! - `stop done` while claimed or worked on ends the stretch and marks the ticket done without a
 //!   merge (its output was something else, such as new issues); after a `submit` it changes
@@ -71,7 +77,18 @@ pub struct Stretch {
     pub note: Option<String>,
     /// Its holder's session ended, which ended it.
     pub abandoned: Option<Abandoned>,
+    /// Working again after a send-back that its submit answered with no `work` logged between
+    /// (#83): it starts [`SENT_BACK_MARK`] after the send-back, a time no event logged.
+    pub rework: bool,
 }
+
+/// How long a send-back that a submit answered reads as *sent back*, in seconds, before the rest
+/// of the time up to the submit reads as its rework (#83): long enough to be seen on the timeline
+/// as a mark, as a merge's ten seconds are.
+pub const SENT_BACK_MARK: i64 = 60;
+
+/// The note a rework stretch carries, for its tooltip and the details.
+pub const REWORK_NOTE: &str = "working again after the send-back (no work logged: from the send-back to the submit)";
 
 /// A ticket left by its holder: the session of the instance that held it ended with a claimed,
 /// working or sent back stretch going on.
@@ -185,7 +202,34 @@ impl Ticket {
     fn begin(&mut self, phase: Phase, event: &IssueEvent, note: Option<String>) {
         self.end(event.t);
         self.abandoned = None;
-        self.stretches.push(Stretch { phase, start: event.t, end: event.t, open: true, by: event.instance.clone(), note, abandoned: None });
+        self.stretches.push(Stretch { phase, start: event.t, end: event.t, open: true, by: event.instance.clone(), note, abandoned: None, rework: false });
+    }
+
+    /// A worker's `submit` straight after a send-back (#83): the send-back keeps its mark, and the
+    /// rest of the time up to the submit is working again, by the submitter. A gate's submit, or
+    /// one within the mark, changes nothing.
+    fn rework(&mut self, event: &IssueEvent) {
+        if event.sub.is_some() {
+            return;
+        }
+        let Some(sent) = self.stretches.last_mut().filter(|s| s.open && s.phase == Phase::SentBack) else { return };
+        let from = Timestamp(sent.start.0.saturating_add(SENT_BACK_MARK));
+        if from >= event.t {
+            return;
+        }
+        sent.end = from;
+        sent.open = false;
+        let by = event.instance.clone();
+        self.stretches.push(Stretch {
+            phase: Phase::Working,
+            start: from,
+            end: event.t,
+            open: true,
+            by,
+            note: Some(REWORK_NOTE.to_owned()),
+            abandoned: None,
+            rework: true,
+        });
     }
 
     /// Ends a claimed, working or sent back stretch where its holder's session ended, when that
@@ -237,6 +281,7 @@ impl Ticket {
             }
             Kind::Submit { .. } => {
                 self.finished = Some(event.t);
+                self.rework(event);
                 self.enter(Phase::Waiting, event, &[Phase::Waiting]);
             }
             Kind::Sendback { .. } => self.begin(Phase::SentBack, event, event.note.clone()),
@@ -484,6 +529,149 @@ pub(crate) mod tests {
         assert_eq!(phases(&tickets[1]), [Phase::Claimed, Phase::Stopped]);
         assert_eq!(tickets[1].stretches[1].note.as_deref(), Some("blocked"));
         assert!(!tickets[1].stretches[1].open, "the release ended it");
+    }
+
+    /// mc-engine #169 as its tracking branch has it (#83, the owner's): alder claims, works and
+    /// submits; the coordinator sends it back for a conflict; alder fixes it and submits again,
+    /// with no `work` logged between; the gate merges it.
+    pub(crate) const SENT_BACK_169: [(&str, &str); 2] = [
+        (
+            "christohersmini-314f61",
+            r#"{"effort":"high","event":"session.start","format":3,"machine":"christohersmini","model":"claude-opus-5-5","name":"alder","parent":"christohersmini-dadb36","role":"worker","t":"2026-11-01T10:56:01Z"}
+{"event":"claim","issue":169,"mr":178,"t":"2026-11-01T10:56:32Z"}
+{"event":"work","issue":169,"t":"2026-11-01T10:56:34Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-a4d8225","t":"2026-11-01T11:21:25Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-a4d8225","t":"2026-11-01T11:22:53Z"}
+{"event":"submit","issue":169,"mr":178,"t":"2026-11-01T11:23:00Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-aec5c5f","t":"2026-11-01T11:34:59Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-aec5c5f","t":"2026-11-01T11:35:54Z"}
+{"event":"submit","issue":169,"mr":178,"t":"2026-11-01T11:36:00Z"}"#,
+        ),
+        (
+            "christohersmini-dadb36",
+            r##"{"event":"session.start","format":3,"machine":"christohersmini","model":"claude-opus-5-5","name":"coordinator","note":"setup: workspace, spec, first issues, workers","role":"coordinator","t":"2026-10-31T10:59:14Z"}
+{"event":"sendback","issue":169,"mr":178,"note":"cause=conflict: crates/core/src/constants.rs, crates/core/src/scene/node.rs, crates/engine/src/world.rs (with #177, the hierarchy)","t":"2026-11-01T11:32:29Z"}
+{"event":"sub.start","name":"gate","note":"#178 colliders, conflicts with audio resolved; capacity=3 free=17.9; kind=smoke (22 files changed, not only Markdown)","sub":"gate-pr178","t":"2026-11-01T12:07:03Z"}
+{"event":"merge","issue":169,"mr":178,"sub":"gate-pr178","t":"2026-11-01T12:07:37Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #178","sub":"gate-pr178","t":"2026-11-01T12:07:43Z"}"##,
+        ),
+    ];
+
+    /// #7 sent back after its worker left, then re-claimed by another worker on a new branch
+    /// (#83's fixture): claimed and worked on by worker-1, sent back at 01:30 when worker-1's
+    /// session had ended; worker-2 claims it at 02:00 with a new PR, works and submits; merged.
+    pub(crate) const RECLAIMED: [(&str, &str); 3] = [
+        (
+            "m-1",
+            r#"{"event":"session.start","machine":"m","name":"worker-1","role":"worker","t":"2026-11-01T01:00:00Z"}
+{"event":"claim","issue":7,"mr":20,"t":"2026-11-01T01:00:10Z"}
+{"event":"work","issue":7,"t":"2026-11-01T01:00:20Z"}
+{"event":"submit","issue":7,"mr":20,"t":"2026-11-01T01:20:00Z"}
+{"event":"session.stop","t":"2026-11-01T01:25:00Z"}"#,
+        ),
+        (
+            "m-2",
+            r#"{"event":"session.start","machine":"m","name":"worker-2","role":"worker","t":"2026-11-01T01:50:00Z"}
+{"event":"claim","issue":7,"mr":21,"t":"2026-11-01T02:00:00Z"}
+{"event":"work","issue":7,"t":"2026-11-01T02:00:10Z"}
+{"event":"submit","issue":7,"mr":21,"t":"2026-11-01T02:30:00Z"}"#,
+        ),
+        (
+            "m-c",
+            r#"{"event":"session.start","machine":"m","name":"coordinator","role":"coordinator","t":"2026-11-01T00:59:00Z"}
+{"event":"sendback","issue":7,"mr":20,"note":"cause=test","t":"2026-11-01T01:30:00Z"}
+{"event":"merge","issue":7,"mr":21,"t":"2026-11-01T03:00:00Z"}"#,
+        ),
+    ];
+
+    pub(crate) fn files(files: &[(&str, &str)]) -> Vec<swarmception_model::AgentFile> {
+        files.iter().map(|(instance, text)| swarmception_model::parse_file(instance, text)).collect()
+    }
+
+    #[test]
+    fn a_submit_straight_after_a_send_back_is_its_rework() {
+        let tickets = tickets(&Activity::of(&files(&SENT_BACK_169)));
+        let ticket = ticket(&tickets, 169);
+        let day = |t: &str| format!("2026-11-01T{t}Z");
+        let spans: Vec<_> = ticket.stretches.iter().map(|s| (s.phase, s.start.to_string(), s.end.to_string(), s.rework)).collect();
+        assert_eq!(
+            spans,
+            [
+                (Phase::Claimed, day("10:56:32"), day("10:56:34"), false),
+                (Phase::Working, day("10:56:34"), day("11:23:00"), false),
+                (Phase::Waiting, day("11:23:00"), day("11:32:29"), false),
+                (Phase::SentBack, day("11:32:29"), day("11:33:29"), false),
+                (Phase::Working, day("11:33:29"), day("11:36:00"), true),
+                (Phase::Waiting, day("11:36:00"), day("12:07:37"), false),
+            ],
+            "the send-back a minute's mark, alder's fix working again up to the second submit"
+        );
+        let rework = &ticket.stretches[4];
+        assert_eq!((rework.by.as_str(), rework.note.as_deref(), rework.open), ("christohersmini-314f61", Some(REWORK_NOTE), false));
+        assert_eq!(ticket.stretches[3].note.as_deref().map(|n| n.starts_with("cause=conflict")), Some(true), "the send-back keeps its cause");
+        assert_eq!(ticket.began.map(|t| t.to_string()), Some(day("10:56:34")), "work first began at the work event");
+        assert_eq!(ticket.finished.map(|t| t.to_string()), Some(day("11:36:00")));
+        assert_eq!(ticket.worker.as_deref(), Some("christohersmini-314f61"));
+    }
+
+    #[test]
+    fn a_send_back_stays_one_until_a_workers_submit_answers_it_and_a_quick_submit_keeps_it_whole() {
+        let worker = r#"{"event":"session.start","machine":"m","name":"worker-1","role":"worker","t":"2026-11-01T00:59:00Z"}
+{"event":"claim","issue":1,"t":"2026-11-01T01:00:00Z"}
+{"event":"work","issue":1,"t":"2026-11-01T01:00:05Z"}
+{"event":"submit","issue":1,"mr":9,"t":"2026-11-01T01:10:00Z"}
+{"event":"submit","issue":1,"mr":9,"t":"2026-11-01T01:20:30Z"}
+{"event":"claim","issue":2,"t":"2026-11-01T01:30:00Z"}
+{"event":"work","issue":2,"t":"2026-11-01T01:30:05Z"}
+{"event":"submit","issue":2,"mr":10,"t":"2026-11-01T01:40:00Z"}
+{"event":"claim","issue":3,"t":"2026-11-01T02:00:00Z"}
+{"event":"work","issue":3,"t":"2026-11-01T02:00:05Z"}
+{"event":"submit","issue":3,"mr":11,"t":"2026-11-01T02:10:00Z"}"#;
+        let coordinator = r#"{"event":"session.start","machine":"m","name":"coordinator","role":"coordinator","t":"2026-11-01T00:59:00Z"}
+{"event":"sendback","issue":1,"mr":9,"note":"cause=test","t":"2026-11-01T01:20:00Z"}
+{"event":"sendback","issue":2,"mr":10,"note":"cause=build","t":"2026-11-01T01:50:00Z"}
+{"event":"sub.start","name":"gate","sub":"gate-pr10","t":"2026-11-01T01:55:00Z"}
+{"event":"submit","issue":2,"mr":10,"sub":"gate-pr10","t":"2026-11-01T01:58:00Z"}
+{"event":"sub.stop","note":"rc=0","sub":"gate-pr10","t":"2026-11-01T01:59:00Z"}
+{"event":"sendback","issue":3,"mr":11,"note":"cause=clippy","t":"2026-11-01T02:20:00Z"}
+{"event":"sub.start","name":"gate","sub":"gate-late","t":"2026-11-01T02:40:00Z"}"#;
+        let tickets = tickets(&Activity::of(&files(&[("m-1", worker), ("m-c", coordinator)])));
+        let phases = |t: &Ticket| t.stretches.iter().map(|s| (s.phase, s.rework)).collect::<Vec<_>>();
+        assert_eq!(
+            phases(ticket(&tickets, 1)),
+            [(Phase::Claimed, false), (Phase::Working, false), (Phase::Waiting, false), (Phase::SentBack, false), (Phase::Waiting, false)],
+            "submitted again within the mark: the send-back runs to it"
+        );
+        let gated = ticket(&tickets, 2);
+        assert_eq!(gated.stretches[3].phase, Phase::SentBack);
+        assert!(gated.stretches.iter().all(|s| !s.rework), "a gate's submit is no worker's rework");
+        let pending = ticket(&tickets, 3);
+        assert_eq!(
+            pending.stretches.last().map(|s| (s.phase, s.open, s.rework)),
+            Some((Phase::SentBack, true, false)),
+            "nothing answered it yet: still sent back"
+        );
+    }
+
+    #[test]
+    fn a_ticket_re_claimed_by_another_worker_after_a_send_back_begins_anew() {
+        let tickets = tickets(&Activity::of(&files(&RECLAIMED)));
+        let ticket = ticket(&tickets, 7);
+        let spans: Vec<_> = ticket.stretches.iter().map(|s| (s.phase, s.by.as_str(), s.rework)).collect();
+        assert_eq!(
+            spans,
+            [
+                (Phase::Claimed, "m-1", false),
+                (Phase::Working, "m-1", false),
+                (Phase::Waiting, "m-1", false),
+                (Phase::SentBack, "m-c", false),
+                (Phase::Claimed, "m-2", false),
+                (Phase::Working, "m-2", false),
+                (Phase::Waiting, "m-2", false),
+            ]
+        );
+        assert_eq!(ticket.stretches[3].abandoned.as_ref().map(|a| a.holder.as_str()), Some("m-1"), "worker-1 had left: abandoned at the send-back");
+        assert_eq!((ticket.worker.as_deref(), ticket.pr), (Some("m-2"), Some(21)));
     }
 
     /// The events of mc-engine #58 (an architecture review whose output was new issues), then a

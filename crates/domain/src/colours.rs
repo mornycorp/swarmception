@@ -245,6 +245,69 @@ mod tests {
         assert_eq!(style_colour(Style::Merged, None), NO_TICKET);
     }
 
+    /// #83, the owner's: mc-engine #169 as its tracking branch has it (sent back for a conflict,
+    /// fixed and submitted again with no `work` logged), and a ticket sent back then re-claimed
+    /// by another worker on a new branch. Every bar, chip, brick, moment and details entry of the
+    /// ticket is in its own colour or a phase's fixed one, and both its runs of work in its own.
+    #[test]
+    fn a_tickets_colour_holds_across_a_send_back_and_a_re_claim() {
+        use crate::activity::Activity;
+        use crate::details::{Subject, details};
+        use crate::factory::{DEFAULT_RECENT, scene};
+        use crate::rows::{Grouping, RowsSpec, bars_where, rows};
+        use crate::tickets::tests::{RECLAIMED, SENT_BACK_169, files};
+        use swarmception_model::{Issues, Timestamp};
+
+        let fixed = [CLAIMED, WAITING, SENT_BACK, STOPPED];
+        for (fixture, issue, rework_at) in [(&SENT_BACK_169[..], 169, "2026-11-01T11:34:00Z"), (&RECLAIMED[..], 7, "2026-11-01T02:10:00Z")] {
+            let activity = Activity::of(&files(fixture));
+            let own = ticket_colour(issue);
+            for grouping in [Grouping::Flat, Grouping::Workers] {
+                let rows = rows(&activity, &[], RowsSpec { grouping, ..RowsSpec::default() });
+                let bars = bars_where(&rows, |_, bar| bar.ticket == Some(issue));
+                for (at, bar) in &bars {
+                    match bar.style {
+                        Style::Working | Style::Merged => assert_eq!(bar.colour, own, "#{issue} {at:?} {:?}", bar.style),
+                        _ => assert!(fixed.contains(&bar.colour), "#{issue} {at:?} {:?} in {:?}", bar.style, bar.colour),
+                    }
+                    for line in &bar.tooltip_lines {
+                        for word in ["working", "began"] {
+                            assert!(line.colour_of(word).is_none_or(|c| c == own), "#{issue}'s tooltip's {word} in {:?}", line.colour_of(word));
+                        }
+                    }
+                }
+                let working: Vec<_> = bars.iter().filter(|(_, b)| b.style == Style::Working).map(|(_, b)| b.colour).collect();
+                assert_eq!(working, [own, own], "#{issue}: both runs of work, in its colour ({grouping:?})");
+                assert_eq!(bars.iter().filter(|(_, b)| b.style == Style::Merged).count(), 1);
+            }
+
+            let (first, last) = activity.extent.unwrap_or_default();
+            for t in (first.0..=last.0 + 60).step_by(60).map(Timestamp) {
+                let scene = scene(&activity, &[], t, DEFAULT_RECENT);
+                let crates = scene.upcoming.iter().chain(&scene.shelf).chain(&scene.dock).chain(scene.benches.iter().flat_map(|b| &b.crates));
+                for chip in crates.filter(|c| c.issue == issue) {
+                    assert_eq!(chip.colour, own, "#{issue}'s chip at {t} ({:?})", chip.state);
+                }
+                for block in scene.shipping.blocks.iter().filter(|b| b.issue == Some(issue)) {
+                    assert_eq!(block.colour, own, "#{issue}'s brick at {t}");
+                }
+                for happening in scene.happenings.iter().filter(|h| h.issue == Some(issue)) {
+                    assert_eq!(happening.colour, Some(own), "#{issue}'s happening at {t}: {}", happening.text);
+                }
+            }
+            let at = Timestamp::parse(rework_at).unwrap_or_default();
+            let bench = scene(&activity, &[], at, DEFAULT_RECENT).benches.into_iter().flat_map(|b| b.crates).find(|c| c.issue == issue);
+            assert_eq!(bench.map(|c| (c.state, c.colour)), Some((crate::factory::CrateState::Working, own)), "#{issue} at work again at {rework_at}");
+            for moment in crate::moments::moments(&activity, &[]).iter().filter(|m| m.issue == Some(issue)) {
+                assert_eq!(moment.colour, own, "{}", moment.text);
+            }
+
+            let told = details(&activity, &[], &Issues::default(), &Subject::Ticket { issue });
+            let told = told.as_ref().map(|d| (d.colour, d.entries.iter().filter(|e| e.what == "working").map(|e| e.colour).collect::<Vec<_>>()));
+            assert_eq!(told, Some((own, vec![own, own])), "#{issue}'s details: its chip and both runs");
+        }
+    }
+
     #[test]
     fn the_phases_keep_their_hues() {
         let within = |colour: Rgb, from: f64, to: f64| (from..=to).contains(&hue_of(colour));
