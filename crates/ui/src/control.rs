@@ -33,8 +33,9 @@ use crate::{Panes, Shell, UiState};
 
 /// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
 /// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
-/// workers pane (#67); 6: opening a repository (`open`, #69).
-pub const INSPECT_VERSION: u32 = 6;
+/// workers pane (#67); 6: opening a repository (`open`, #69); 7: the gates pane's hours, both
+/// lanes (`gates.hours`, #75).
+pub const INSPECT_VERSION: u32 = 7;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -188,6 +189,9 @@ pub struct GatesInspect {
     pub figures: Vec<String>,
     /// The causes table's rows, `cause gate ready`.
     pub causes: Vec<String>,
+    /// Each hour's columns drawn (#75), `<start> gate <runs> ready <runs>`.
+    #[serde(default)]
+    pub hours: Vec<String>,
     /// The run under the pointer, `<sub>@<start>`.
     pub hovered: Option<String>,
     /// Why there is nothing to draw: `gates.list`'s refusal.
@@ -514,6 +518,14 @@ impl Shell {
             runs: drawn.runs.iter().map(|r| format!("{}@{}", r.sub, r.start)).collect(),
             figures: drawn.figures.clone(),
             causes: drawn.causes.clone(),
+            hours: drawn
+                .hour_columns
+                .chunks(2)
+                .filter_map(|pair| match pair {
+                    [gate, ready] => Some(format!("{} gate {} ready {}", gate.start, gate.runs, ready.runs)),
+                    _ => None,
+                })
+                .collect(),
             hovered: drawn.hovered.as_ref().map(|(sub, start)| format!("{sub}@{start}")),
             error: self.gates.error().map(str::to_owned),
         }

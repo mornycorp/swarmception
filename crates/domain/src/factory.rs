@@ -1317,7 +1317,8 @@ pub(crate) mod tests {
         assert!(late.happenings.iter().all(|h| !h.text.contains("gate-3")), "no result is no pass and no fail");
         // stats.get's counts: gate-2 passed; gate-1 and gate-3 never finished, gate-4 still runs.
         let stats = crate::stats::stats(&activity, &tickets(&activity), &[], crate::stats::Window::default());
-        assert_eq!((stats.gates.runs, stats.gates.passed, stats.gates.failed, stats.gates.no_result, stats.gates.pass_rate), (4, 1, 0, 3, Some(1.0)));
+        let gates = &stats.gates;
+        assert_eq!((gates.runs, gates.passed, gates.failed, gates.no_result, gates.running, gates.pass_rate), (4, 1, 0, 2, 1, Some(1.0)));
     }
 
     #[test]

@@ -205,9 +205,6 @@ impl StatsStrip {
 
     fn figures(&mut self, ui: &mut egui::Ui, stats: &Stats) {
         let quiet = short(stats.quiet_after_seconds);
-        let gates = &stats.gates;
-        let causes: Vec<String> = gates.causes.iter().map(|c| format!("{} {}", c.cause, c.count)).collect();
-        let ready = &stats.ready;
         let figures = [
             (
                 "claim → merge",
@@ -222,21 +219,7 @@ impl StatsStrip {
                 span(stats.median_dock_wait_seconds),
                 format!("The median wait at the dock, over the {} tickets landed: from a ticket's last submit to its merge (wall clock).", stats.landed),
             ),
-            (
-                "gates pass",
-                percent(gates.pass_rate),
-                format!(
-                    "The coordinator's gates that started in the window: {} passed of {} with a result ({} started, {} with none).\nPassed: rc=0, or a merge names the gate. Failed: another rc.\nFailures by cause: {}\nWorkers' own ready gates: {} passed of {} ({}).",
-                    gates.passed,
-                    gates.passed + gates.failed,
-                    gates.runs,
-                    gates.no_result,
-                    if causes.is_empty() { "none".to_owned() } else { causes.join(", ") },
-                    ready.passed,
-                    ready.passed + ready.failed,
-                    percent(ready.pass_rate)
-                ),
-            ),
+            ("gates pass", percent(stats.gates.pass_rate), gates_text(stats)),
             (
                 "sendbacks / landed",
                 rate(stats.sendbacks_per_landed),
@@ -266,6 +249,26 @@ impl StatsStrip {
             self.drawn.figures.push(format!("{label} {value}"));
         }
     }
+}
+
+/// How the gates' pass rate is made up, for its tooltip: the runs as the Gates band counts them
+/// (#75).
+fn gates_text(stats: &Stats) -> String {
+    let (gates, ready) = (&stats.gates, &stats.ready);
+    let causes: Vec<String> = gates.causes.iter().map(|c| format!("{} {}", c.cause, c.count)).collect();
+    format!(
+        "The coordinator's gates that started in the window: {} passed of {} with a result ({} started, {} with none, {} running, {} read from merges and send backs).\nPassed: rc=0, or a merge names the gate. Failed: another rc.\nFailures by cause: {}\nWorkers' own ready gates: {} passed of {} ({}).",
+        gates.passed,
+        gates.passed + gates.failed,
+        gates.runs,
+        gates.no_result,
+        gates.running,
+        gates.inferred,
+        if causes.is_empty() { "none".to_owned() } else { causes.join(", ") },
+        ready.passed,
+        ready.passed + ready.failed,
+        percent(ready.pass_rate)
+    )
 }
 
 /// The workers' utilisation, their working time ÷ their time on shift, all together.

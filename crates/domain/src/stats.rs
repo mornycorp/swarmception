@@ -15,13 +15,13 @@
 //!   active time and their ratio: a sparkline's points.
 //! - **Claim → merge** and **the wait at the dock** (the last submit → merge): medians over the
 //!   tickets landed in the window, wall-clock seconds.
-//! - **Gate runs**: the coordinator's gates ([`Sub::is_gate`]) and the workers' own `ready`
-//!   gates that started in the window. Each passed (`rc=0` in its `sub.stop` note, or no `rc`
-//!   but a `merge` names it as its `sub`), failed (another `rc`, by its note's `cause=…`;
-//!   `unstated` without one) or has no result (still running, or no `rc` and no merge: a gate
-//!   that never logged its stop ended at its coordinator's session's end or the next gate's
-//!   start, never finished, #42).
-//!   The pass rate is passed ÷ (passed + failed).
+//! - **Gate runs**: the coordinator's gates and the workers' own `ready` checks that started in
+//!   the window, as [`crate::gates`] defines a run and its result, once, for `gates.list` too
+//!   (#75): each passed (`rc=0`, or no `rc` but a merge naming it while it ran), failed (another
+//!   `rc`, by its note's `cause=…`; `unstated` without one), has no result (it ended without
+//!   saying, or never finished, #42) or is still running. A gate read from its merges and send
+//!   backs, with no `sub.start` logged, counts, and `inferred` says how many were. The pass rate
+//!   is passed ÷ (passed + failed).
 //! - **Sendbacks**: the `sendback` events in the window, and their count ÷ the tickets landed.
 //! - **Work in progress**: the mean number of tickets *working* (from `work` to its submit,
 //!   send-back, stop, release or merge) over the active time, and of tickets *in flight*
@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, Sub};
+use crate::gates::{Bounds, Figures, Lane, lane_figures};
 use crate::tickets::{Phase, Ticket};
 
 /// A gap between events longer than this, in seconds, is quiet: 15 minutes (owner, 2026-11-01,
@@ -56,21 +57,40 @@ pub struct Window {
     pub end: Option<Timestamp>,
 }
 
-/// How a run of gates went.
+/// How a lane of gate runs went: `gates.list`'s counts of it over the same window (#75).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Gates {
-    /// The gates that started in the window.
+    /// The runs that started in the window.
     pub runs: usize,
     pub passed: usize,
     pub failed: usize,
-    /// Still running, or ended with no `rc` and no merge naming them (a gate that never logged
-    /// its stop among them, #42).
+    /// Ended with no `rc` and no merge naming them (a gate that never logged its stop among
+    /// them, #42).
     pub no_result: usize,
+    /// Nothing ended them, and their session goes on.
+    pub running: usize,
+    /// Of the runs, those read from merges and send backs: no `sub.start` logged.
+    pub inferred: usize,
     /// Passed ÷ (passed + failed); none when neither.
     pub pass_rate: Option<f64>,
     /// The failures by their note's `cause=…` (`unstated` without one), most first.
     pub causes: Vec<Cause>,
+}
+
+impl From<&Figures> for Gates {
+    fn from(figures: &Figures) -> Self {
+        Self {
+            runs: figures.runs,
+            passed: figures.passed,
+            failed: figures.failed,
+            no_result: figures.no_result,
+            running: figures.running,
+            inferred: figures.inferred,
+            pass_rate: figures.pass_rate,
+            causes: figures.causes.clone(),
+        }
+    }
 }
 
 /// Failures of one cause.
@@ -169,7 +189,9 @@ pub fn stats(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge], wind
     let landed: Vec<&Ticket> = tickets.iter().filter(|t| t.merged.as_ref().is_some_and(|m| within(m.t))).collect();
     let (hours, hours_cut) = hourly(start, end, &active, &landed);
     let sendbacks = activity.issue_events.iter().filter(|e| matches!(e.kind, Kind::Sendback { .. }) && within(e.t)).count();
-    let subs = || activity.agents.iter().flat_map(|a| a.subs.iter().map(move |s| (a, s))).filter(|(_, s)| within(s.span.start));
+    let runs = crate::gates::runs(activity, tickets, merges);
+    let bounds = Bounds::of(activity, window);
+    let lane = |lane: Lane| Gates::from(&lane_figures(&runs, lane, bounds));
     Stats {
         start,
         end,
@@ -194,8 +216,8 @@ pub fn stats(activity: &Activity, tickets: &[Ticket], merges: &[MainMerge], wind
         sendbacks_per_landed: ratio(sendbacks, landed.len()),
         mean_working: mean_in(tickets, &active, &[Phase::Working]),
         mean_in_flight: mean_in(tickets, &active, &[Phase::Claimed, Phase::Working, Phase::Waiting, Phase::SentBack]),
-        gates: gates(subs().filter(|(_, s)| s.is_gate())),
-        ready: gates(subs().filter(|(_, s)| is_ready(s))),
+        gates: lane(Lane::Gate),
+        ready: lane(Lane::Ready),
         workers: worker_stats(&workers, tickets, &active, &landed),
     }
 }
@@ -258,28 +280,6 @@ fn mean_in(tickets: &[Ticket], active: &Intervals, phases: &[Phase]) -> Option<f
         .map(|t| Intervals::of(t.stretches.iter().filter(|s| phases.contains(&s.phase)).map(|s| (s.start.0, s.end.0))).intersect(active).measure())
         .fold(0, i64::saturating_add);
     fraction(total, active.measure())
-}
-
-fn gates<'a>(subs: impl Iterator<Item = (&'a Agent, &'a Sub)>) -> Gates {
-    let mut gates = Gates::default();
-    let mut causes: BTreeMap<String, usize> = BTreeMap::new();
-    for (agent, sub) in subs {
-        gates.runs += 1;
-        let merged = || agent.marks.iter().any(|m| m.event == "merge" && m.sub.as_deref() == Some(sub.sub.as_str()));
-        match sub.rc {
-            Some(0) => gates.passed += 1,
-            Some(_) => {
-                gates.failed += 1;
-                *causes.entry(sub.stop_note.as_deref().and_then(cause_of).unwrap_or_else(|| "unstated".into())).or_default() += 1;
-            }
-            None if !sub.span.open && merged() => gates.passed += 1,
-            None => gates.no_result += 1,
-        }
-    }
-    gates.pass_rate = ratio(gates.passed, gates.passed + gates.failed);
-    gates.causes = causes.into_iter().map(|(cause, count)| Cause { cause, count }).collect();
-    gates.causes.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.cause.cmp(&b.cause)));
-    gates
 }
 
 /// The cause a stop note names: `cause=<word>`, up to a `;` or a space.
@@ -579,7 +579,8 @@ mod tests {
         let files = [file("mini-cc", coordinator), file("mini-aa", worker)];
         let stats = whole(&files);
         let gates = &stats.gates;
-        assert_eq!((gates.runs, gates.passed, gates.failed, gates.no_result, gates.pass_rate), (5, 2, 2, 1, Some(0.5)), "gate-d passed by its merge");
+        assert_eq!((gates.runs, gates.passed, gates.failed, gates.no_result, gates.pass_rate), (5, 2, 2, 0, Some(0.5)), "gate-d passed by its merge");
+        assert_eq!((gates.running, gates.inferred), (1, 0), "gate-e: its session goes on");
         let causes: Vec<(&str, usize)> = gates.causes.iter().map(|c| (c.cause.as_str(), c.count)).collect();
         assert_eq!(causes, [("build", 1), ("unstated", 1)]);
         let ready = &stats.ready;

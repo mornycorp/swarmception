@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -65,7 +65,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   the swarm's statistics over a window (`Stats`): **tickets landed per active hour** (active:
   the time a worker has a session going, less its pauses and every gap of over 15 minutes with no
   event at all), its hourly series, the medians claim → merge and submit → merge, gate and
-  `ready` pass rates with failures by cause, sendbacks, work in progress and each worker's
+  `ready` pass rates with failures by cause (the runs `gates` defines, counted as `gates.list`
+  counts them, #75), sendbacks, work in progress and each worker's
   utilisation; the module's docs define each figure.
   `factory` is the swarm at one moment *t* as a factory (#18): each ticket a crate in its own
   colour (`colours`, as on the timeline), up next, on the shelf, at its worker's bench, at the dock, in a gate run or shipped; each
@@ -99,7 +100,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ticket's. `gates` (#61) is how the gate behaved over a window (`GatesList`): every run, the
   coordinator's gates (`factory::gate_runs`, inferred ones too) and the workers' `ready` checks
   in two `Lane`s, each with its start, end, duration, kind, `GateResult` (passed, failed with its
-  cause, no result, running; as `stats.get` judges them), the PRs and tickets it carried, its
+  cause, no result, running). **One definition of a gate run** (#75): `gates::runs` reads them
+  and `gates::figures` counts them, for `gates.list` and `stats.get` (`Stats::gates` and `ready`,
+  `From<&Figures>`) alike, so one window gives one count from both; a gate that logged no
+  `sub.start`, read from the merges and send backs naming it, counts, and each lane's
+  `inferred` says how many did. Each run has the PRs and tickets it carried, its
   merges (with their commits onto main) and send backs, the run it reran (`gate-43b` of
   `gate-43`, `-rerun`, the same id again), its colour, its tooltip lines and its details'
   `Subject`; each lane's `Figures` over the runs that started in the window (pass rate, median
@@ -247,7 +252,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   median), then the runs along time under the timeline's rows (`TimelinePane::axis`: the window's
   ends across the screen, right of the label column), a lane of the coordinator's gate runs and
   one of the `ready` checks, each run a bar as long as it took in its result's colour (overlaps
-  side by side), the gate's runs per hour stacked by result under them, and in the left column
+  side by side), both lanes' runs per hour under them (#75: each hour's column under its hour,
+  stacked by result, mirrored about one baseline, the gate's up and the `ready` checks' down, each
+  on its own scale; `GatesDrawn::hour_columns`, `ui.inspect`'s `gates.hours`), and in the left column
   the lanes' names and the failures by cause, gate and ready. Hovering a run gives its tooltip
   and lights its tickets' bars; clicking it makes it the details' subject (a `ready` check's:
   its ticket). Without the timeline it shows the whole run on its own axis; before the timeline
@@ -477,6 +484,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | One definition of a gate run (#75): `gates::runs` and `gates::figures`, counted by `gates.list` and `stats.get` alike (`Stats::gates` gains `running` and `inferred`, its `noResult` no longer counting running runs; `Figures::inferred`); the Gates band draws both lanes' hours, mirrored (`GatesDrawn::hour_columns`), `ui.inspect` version 7 with `gates.hours` |
 | 2026-11-02 | minor | Opening a repository from the app (#69): the source's `probe`, `repo.open`'s refusals before anything changes, `repo.recent` / `repo.clearRecent`, `Session::opens`; File ▸ Open… (AppKit's open panel, ⌘O) and Open Recent, the shell switching state per repository, `recent.json`, `ui.inspect` version 6 with `open`, `--menu`; every live check that reads again refreshes the issues |
 | 2026-11-02 | minor | Model and effort compared per worker (#67): the domain's `workers`, `workers.compare`, the Workers pane as a window (View ▸ Workers, `--panes …,workers`, `--hover-worker`), `Hover::Worker`, `UiState` version 7, `ui.inspect` version 5 with `workers` |
 | 2026-11-02 | minor | A gates pane (#61): the domain's `gates`, `gates.list`, the Gates pane under the timeline (View ▸ Gates, `--panes …,gates`, `--hover-gate`), `TimelinePane::light_hover` and `axis`, `UiState` version 5, `ui.inspect` version 3 with `gates` |

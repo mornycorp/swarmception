@@ -196,6 +196,56 @@ fn the_pane_draws_what_gates_list_returns_under_the_timeline() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// Both lanes' hours (#75): each hour's gate runs and `ready` checks drawn as `gates.list`
+/// counts them, mirrored about one baseline, each as tall as its runs on its lane's scale, under
+/// its hour on the timeline; `ui.inspect` reads them.
+#[test]
+fn both_lanes_hours_are_drawn_as_gates_list_counts_them() {
+    let dir = repo();
+    let (_ctx, mut shell) = loaded(&dir);
+    let list = answer(&mut shell);
+    let drawn = shell.gates().drawn().clone();
+    let per_hour: Vec<(String, usize, usize)> = list.hours.iter().map(|h| (h.start.to_string(), h.gate.runs, h.ready.runs)).collect();
+    assert_eq!(per_hour, [("2026-10-31T03:00:00Z".to_owned(), 2, 2), ("2026-10-31T04:00:00Z".to_owned(), 1, 0)]);
+    assert_eq!(drawn.hour_columns.len(), 2 * list.hours.len(), "two columns an hour");
+    let (x0, x1) = drawn.axis.expect("drawn");
+    let span = list.end.0.saturating_sub(list.start.0) as f32;
+    let x = |t: i64| x0 + (x1 - x0) * (t.clamp(list.start.0, list.end.0) - list.start.0) as f32 / span;
+    let mut units = [Vec::new(), Vec::new()];
+    for (hour, pair) in list.hours.iter().zip(drawn.hour_columns.chunks(2)) {
+        let [gate, ready] = pair else { panic!("{pair:?}") };
+        for (column, lane, figures) in [(gate, Lane::Gate, &hour.gate), (ready, Lane::Ready, &hour.ready)] {
+            assert_eq!((column.start, column.lane), (hour.start, lane));
+            assert_eq!(
+                (column.runs, column.passed, column.failed, column.no_result),
+                (figures.runs, figures.passed, figures.failed, figures.no_result),
+                "{lane:?} {}",
+                hour.start
+            );
+            // Under its hour on the timeline.
+            assert!(
+                column.rect.left() >= x(hour.start.0) - 0.5 && column.rect.right() <= x(hour.start.0 + 3_600) + 0.5,
+                "{lane:?} {}: {:?}",
+                hour.start,
+                column.rect
+            );
+            if figures.runs == 0 {
+                assert!(column.rect.height().abs() < 0.01, "none tall with none");
+            } else {
+                units[usize::from(lane == Lane::Ready)].push(column.rect.height() / figures.runs as f32);
+            }
+        }
+        assert_eq!((gate.rect.left(), gate.rect.right()), (ready.rect.left(), ready.rect.right()), "one column an hour");
+        assert!((ready.rect.top() - gate.rect.bottom() - 2.0).abs() < 0.01, "mirrored about the baseline: gate up, ready down");
+    }
+    for lane in &units {
+        assert!(!lane.is_empty() && lane.iter().all(|u| (u - lane[0]).abs() < 0.01 && *u > 1.0), "one scale a lane: {units:?}");
+    }
+    let inspect = shell.inspect();
+    assert_eq!(inspect.gates.hours, ["2026-10-31T03:00:00Z gate 2 ready 2", "2026-10-31T04:00:00Z gate 1 ready 0"]);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 #[test]
 fn hovering_a_run_lights_its_tickets_and_a_click_tells_its_story() {
     let dir = repo();
