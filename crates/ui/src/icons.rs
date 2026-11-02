@@ -7,6 +7,8 @@ pub const WORKERS: &str = "\u{f0c0}";
 pub const TICKETS: &str = "\u{f3ff}";
 pub const FLAT: &str = "\u{f03a}";
 pub const COLLAPSE: &str = "\u{f422}";
+/// crop-alt: Collapse to Window (#74), the rows cut to what the window holds.
+pub const COLLAPSE_WINDOW: &str = "\u{f565}";
 pub const FIT: &str = "\u{f31e}";
 pub const TIMELINE: &str = "\u{f550}";
 pub const BRANCH: &str = "\u{f126}";

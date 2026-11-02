@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use swarmception_domain::timeline::Link;
-use swarmception_domain::{Grouping, RowsSpec};
+use swarmception_domain::{Collapse, Grouping, RowsSpec};
 use swarmception_engine::{Github, Session};
 
 use swarmception_domain::details::Subject;
@@ -56,7 +56,7 @@ pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use gates::{GatesDrawn, GatesPane, HourDrawn, RunDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
-pub use timeline::{Hover, Lit, Looking, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
+pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimelinePane, TimelineView};
 pub use workers::{
     Column as WorkersColumn, Place as WorkersPlace, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView,
     cells as worker_cells,
@@ -495,7 +495,10 @@ impl Shell {
             MenuAction::Gates => self.ui.panes.gates = !self.ui.panes.gates,
             MenuAction::Workers => self.ui.panes.workers = !self.ui.panes.workers,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
-            MenuAction::Collapse => self.set_rows(SetRowsParams { collapse: Some(!self.spec.collapse), ..SetRowsParams::default() }),
+            MenuAction::Collapse(collapse) => {
+                let collapse = if self.spec.collapse == collapse { Collapse::Off } else { collapse };
+                self.set_rows(SetRowsParams { collapse: Some(collapse), ..SetRowsParams::default() });
+            }
             MenuAction::Fit => self.timeline.fit(),
             MenuAction::Live => self.set_live(SetLiveParams { on: Some(!self.live.on), interval_seconds: None }),
         }
@@ -557,6 +560,7 @@ impl Shell {
     /// Draws the window's frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.sync();
+        self.collapse_to_window(ui.ctx());
         // Woken for the live watch's next check (#54), which the next frame's poll starts.
         if let Some(wait) = self.engine.live_wait(std::time::Instant::now()) {
             ui.ctx().request_repaint_after(wait);
@@ -600,6 +604,18 @@ impl Shell {
         self.reveal_details(ui.ctx());
         self.light_timeline(ui.ctx());
         self.keep(ui.ctx());
+    }
+
+    /// Collapsed to the window (#74): the timeline's rows follow it once it settles, before the
+    /// frame draws them; a frame asked for when it should look again.
+    fn collapse_to_window(&mut self, ctx: &egui::Context) {
+        if !self.ui.panes.timeline {
+            return;
+        }
+        let held = ctx.input(|i| i.pointer.any_down());
+        if let Some(wait) = self.timeline.collapse_to_window(&mut self.engine, std::time::Instant::now(), held) {
+            ctx.request_repaint_after(wait);
+        }
     }
 
     /// What the details are of, following the selection (#47): a bar newly chosen on the
@@ -952,7 +968,14 @@ impl Shell {
             ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("Tickets packed onto shared rows, in the order they began");
             ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / its rows");
             ui.separator();
-            ui.toggle_value(&mut spec.collapse, icons::COLLAPSE).on_hover_text("Collapse: leave out rows with nothing in them");
+            let mut collapse = |ui: &mut egui::Ui, mode: Collapse, icon: &str, hover: &str| {
+                let on = spec.collapse == mode;
+                if ui.selectable_label(on, icon).on_hover_text(hover).clicked() {
+                    spec.collapse = if on { Collapse::Off } else { mode };
+                }
+            };
+            collapse(ui, Collapse::Empty, icons::COLLAPSE, "Collapse: leave out rows with no events at all");
+            collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, "Collapse to the window: leave out rows with nothing in the visible window, as it settles");
             if spec != self.spec {
                 self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
             }
@@ -1292,7 +1315,7 @@ mod tests {
                 gates: true,
                 workers: false,
                 grouping: Grouping::Flat,
-                collapse: false,
+                collapse: Collapse::Off,
                 live: false,
                 recent: 0
             }
@@ -1306,19 +1329,26 @@ mod tests {
         shell.run_menu(&ctx, MenuAction::Timeline);
         shell.run_menu(&ctx, MenuAction::Factory);
         shell.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
-        shell.run_menu(&ctx, MenuAction::Collapse);
+        shell.run_menu(&ctx, MenuAction::Collapse(Collapse::Empty));
         let state = shell.menu_state();
         assert!(!state.timeline);
         assert!(!state.factory);
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
-        assert_eq!(state.checked(MenuAction::Collapse), Some(true));
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Empty)), Some(true));
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Window)), Some(false));
         assert!(!shell.ui_state().panes.timeline);
         // What the menu shows is what `rows.get` returns.
         let spec = shell.engine().call::<GetRows>(NoParams {}).unwrap();
         assert_eq!((spec.grouping, spec.collapse), (state.grouping, state.collapse));
 
-        shell.run_menu(&ctx, MenuAction::Collapse);
-        assert!(!shell.menu_state().collapse);
+        // To the window (#74): the one item checked; choosing the checked one turns it off.
+        shell.run_menu(&ctx, MenuAction::Collapse(Collapse::Window));
+        let state = shell.menu_state();
+        assert_eq!(shell.engine().call::<GetRows>(NoParams {}).unwrap().collapse, Collapse::Window);
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Empty)), Some(false));
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Window)), Some(true));
+        shell.run_menu(&ctx, MenuAction::Collapse(Collapse::Window));
+        assert_eq!(shell.menu_state().collapse, Collapse::Off);
 
         // No repository: Reload is an error the status bar shows, never a panic.
         shell.run_menu(&ctx, MenuAction::Reload);

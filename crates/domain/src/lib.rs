@@ -31,6 +31,6 @@ pub mod tooltip;
 pub mod workers;
 
 pub use activity::Activity;
-pub use rows::{Grouping, Node, RowsSpec};
+pub use rows::{Collapse, Grouping, Node, RowsSpec};
 pub use stats::{Stats, Window, stats};
 pub use tickets::{Phase, Ticket, tickets};

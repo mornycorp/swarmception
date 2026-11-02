@@ -6,7 +6,7 @@
 //! Open Recent, #69), View lists the panes, the timeline, the factory, the details, the gates and
 //! the workers, and Live.
 
-use swarmception_domain::Grouping;
+use swarmception_domain::{Collapse, Grouping};
 use swarmception_engine::repo_cmds::{MAX_RECENT, RecentRepo};
 
 /// One menu item.
@@ -39,8 +39,9 @@ pub enum MenuAction {
     Workers,
     /// View ▸ Flat or By Worker: `rows.set` with that grouping.
     Grouping(Grouping),
-    /// View ▸ Collapse Empty Rows: `rows.set` with collapse toggled.
-    Collapse,
+    /// View ▸ Collapse Empty Rows and Collapse to Window (#74): `rows.set` with that collapse,
+    /// or with none when it is the one on. `Collapse(Off)` is no item of the menus.
+    Collapse(Collapse),
     /// View ▸ Fit: the widget's `view.fit`.
     Fit,
     /// View ▸ Live: `live.set` toggled, watching the swarm (#54).
@@ -50,7 +51,7 @@ pub enum MenuAction {
 impl MenuAction {
     /// Every item of the menus themselves, in menu order (Open Recent's own are
     /// [`MenuAction::recent_items`]).
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::Open,
         Self::Recent,
         Self::Reload,
@@ -63,7 +64,8 @@ impl MenuAction {
         Self::Workers,
         Self::Grouping(Grouping::Flat),
         Self::Grouping(Grouping::Workers),
-        Self::Collapse,
+        Self::Collapse(Collapse::Empty),
+        Self::Collapse(Collapse::Window),
         Self::Fit,
         Self::Live,
     ];
@@ -79,7 +81,7 @@ impl MenuAction {
     }
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 13] = [
+    pub const VIEW: [Option<Self>; 14] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
@@ -89,7 +91,8 @@ impl MenuAction {
         Some(Self::Grouping(Grouping::Flat)),
         Some(Self::Grouping(Grouping::Workers)),
         None,
-        Some(Self::Collapse),
+        Some(Self::Collapse(Collapse::Empty)),
+        Some(Self::Collapse(Collapse::Window)),
         Some(Self::Fit),
         None,
         Some(Self::Live),
@@ -113,7 +116,9 @@ impl MenuAction {
             Self::Workers => "view.workersPane",
             Self::Grouping(Grouping::Flat) => "view.flat",
             Self::Grouping(Grouping::Workers) => "view.workers",
-            Self::Collapse => "view.collapse",
+            Self::Collapse(Collapse::Empty) => "view.collapse",
+            Self::Collapse(Collapse::Window) => "view.collapseWindow",
+            Self::Collapse(Collapse::Off) => "view.collapseOff",
             Self::Fit => "view.fit",
             Self::Live => "view.live",
         }
@@ -144,7 +149,9 @@ impl MenuAction {
             Self::Workers => "Workers",
             Self::Grouping(Grouping::Flat) => "Flat",
             Self::Grouping(Grouping::Workers) => "By Worker",
-            Self::Collapse => "Collapse Empty Rows",
+            Self::Collapse(Collapse::Empty) => "Collapse Empty Rows",
+            Self::Collapse(Collapse::Window) => "Collapse to Window",
+            Self::Collapse(Collapse::Off) => "Every Row",
             Self::Fit => "Fit",
             Self::Live => "Live",
         }
@@ -168,7 +175,8 @@ impl MenuAction {
             Self::Workers => icons::WORKERS,
             Self::Grouping(Grouping::Flat) => icons::FLAT,
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
-            Self::Collapse => icons::COLLAPSE,
+            Self::Collapse(Collapse::Empty | Collapse::Off) => icons::COLLAPSE,
+            Self::Collapse(Collapse::Window) => icons::COLLAPSE_WINDOW,
             Self::Fit => icons::FIT,
             Self::Live => icons::LIVE,
         }
@@ -231,7 +239,7 @@ pub struct MenuState {
     pub gates: bool,
     pub workers: bool,
     pub grouping: Grouping,
-    pub collapse: bool,
+    pub collapse: Collapse,
     /// The live watch is on (#54).
     pub live: bool,
     /// How many repositories Open Recent lists (#69, `repo.recent`).
@@ -256,7 +264,7 @@ impl MenuState {
             | MenuAction::Gates
             | MenuAction::Workers
             | MenuAction::Grouping(_)
-            | MenuAction::Collapse
+            | MenuAction::Collapse(_)
             | MenuAction::Live => true,
         }
     }
@@ -271,7 +279,7 @@ impl MenuState {
             MenuAction::Gates => Some(self.gates),
             MenuAction::Workers => Some(self.workers),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
-            MenuAction::Collapse => Some(self.collapse),
+            MenuAction::Collapse(collapse) => Some(self.collapse == collapse),
             MenuAction::Live => Some(self.live),
             MenuAction::Open
             | MenuAction::Recent
@@ -343,7 +351,7 @@ mod tests {
             gates: false,
             workers: true,
             grouping: Grouping::Workers,
-            collapse: false,
+            collapse: Collapse::Window,
             live: true,
             recent: 2,
         };
@@ -361,7 +369,9 @@ mod tests {
         assert_eq!(state.checked(MenuAction::Workers), Some(true));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Flat)), Some(false));
         assert_eq!(state.checked(MenuAction::Grouping(Grouping::Workers)), Some(true));
-        assert_eq!(state.checked(MenuAction::Collapse), Some(false));
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Empty)), Some(false));
+        assert_eq!(state.checked(MenuAction::Collapse(Collapse::Window)), Some(true));
+        assert!(state.enabled(MenuAction::Collapse(Collapse::Window)));
         assert_eq!(state.checked(MenuAction::Live), Some(true));
         assert!(state.enabled(MenuAction::Live), "on or off whatever is being read");
 

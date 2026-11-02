@@ -34,8 +34,9 @@ use crate::{Panes, Shell, UiState};
 /// [`Inspect`]'s shape. 2: where the state is kept (`saved`, #53); 3: the gates pane (#61); 4:
 /// how the panes share the window (`layout`) and the timeline's rows in view (#68); 5: the
 /// workers pane (#67); 6: opening a repository (`open`, #69); 7: the gates pane's hours, both
-/// lanes (`gates.hours`, #75); 8: where the workers' window was drawn (`workers.rect`, #76).
-pub const INSPECT_VERSION: u32 = 8;
+/// lanes (`gates.hours`, #75); 8: where the workers' window was drawn (`workers.rect`, #76); 9:
+/// the rows collapsed to the window (`timeline.leftOut`, `timeline.collapseUs`, #74).
+pub const INSPECT_VERSION: u32 = 9;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -123,6 +124,14 @@ pub struct TimelineInspect {
     /// The rows at least partly on screen last frame, top to bottom, by key (#68).
     #[serde(default)]
     pub in_view: Vec<String>,
+    /// Collapsed to the window (#74): the rows and groups the settled window leaves out, by key,
+    /// top to bottom (`rows.window`'s `leftOut`), which the pane hides.
+    #[serde(default)]
+    pub left_out: Vec<String>,
+    /// How long the last collapse to the window took, `rows.window` and hiding the rows, in
+    /// microseconds (#74).
+    #[serde(default)]
+    pub collapse_us: Option<u64>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -271,9 +280,9 @@ pub enum StepTo {
     LastEvent,
 }
 
-/// `ui.set`'s params: each part left out stays as it is. They apply in this order: the panes,
-/// their folds, the workers pane, speed and steps; `at`; follow and play; the ticket; the step;
-/// the details; the window.
+/// `ui.set`'s params: each part left out stays as it is. They apply in this order: the rows'
+/// collapse; the panes, their folds, the workers pane, speed and steps; `at`; follow and play;
+/// the ticket; the step; the details; the window.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -309,8 +318,11 @@ pub struct UiSet {
     /// The details pane shows nothing.
     #[serde(default)]
     pub clear_details: bool,
-    /// The timeline's window, as clock times, as much of it as its extent holds.
+    /// The timeline's window, as clock times, as much of it as its extent holds. Collapsed to
+    /// the window, the rows follow it on the next frame, not once it settles: it is a jump.
     pub window: Option<SpanAt>,
+    /// Which rows Collapse leaves out (#74), as `rows.set` sets it: `off`, `empty` or `window`.
+    pub collapse: Option<swarmception_domain::Collapse>,
 }
 
 /// A span of times, each in seconds since the epoch or `YYYY-MM-DDTHH:MM:SSZ`.
@@ -514,6 +526,8 @@ impl Shell {
             playhead_item: selection.playhead,
             load_ms: self.timeline.load_time().map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
             in_view: self.timeline.rows_in_view(),
+            left_out: self.timeline.left_out().to_vec(),
+            collapse_us: self.timeline.collapse_time().map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
         };
         let details = self.details_inspect();
         let gates = self.gates_inspect();
@@ -587,6 +601,9 @@ impl Shell {
                 message: format!("workers.place: ({}, {}) is over {} points from the window's corner", place.x, place.y, crate::WorkersPlace::MOST),
             });
         }
+        if let Some(collapse) = set.collapse {
+            self.engine.call::<swarmception_engine::rows_cmds::Set>(swarmception_engine::rows_cmds::SetParams { collapse: Some(collapse), grouping: None })?;
+        }
         self.sync();
         self.apply_view(set, at);
         self.apply_selection(set);
@@ -599,6 +616,7 @@ impl Shell {
         self.details.sync(&mut self.engine, &self.ui.details);
         if let Some((start, end)) = window {
             self.timeline.show_span(&mut self.engine, start, end);
+            self.timeline.settle_now();
         }
         Ok(())
     }

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (`ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -47,7 +47,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   sent back, stopped); a claimed, working or sent back stretch ends where its holder's session
   ended, the ticket *abandoned* (#28: `Ticket::abandoned`, the bar's tooltip says whose session
   ended when, and the factory puts it on the shelf then). `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
-  by worker, collapsed), under two rows at the top, the merges onto `main` and the tickets'
+  by worker, collapsed: `Collapse` off, `empty` (no events at all) or `window`, #74, which `true`
+  and `false` still read as), under two rows at the top, the merges onto `main` and the tickets'
   merges, each a 10 s span from its time (`MERGE_SECONDS`), all Ranges rows (`Node::Group` or
   `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
   its colour and its tooltip, as plain text (`tooltip`) and as styled lines (`tooltip_lines`,
@@ -146,6 +147,9 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `repo.clearRecent` (#69: the repositories opened, newest first, ten at most, each with its
   name and whether it is still there; a front end hands back what it kept with
   `Session::remember_all`), `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,
+  `rows.window` (#74: `{start?, end?, keep?}`; collapsed to the window, the rows and groups a
+  window leaves out, `rows::left_out`: a row none of whose bars overlaps it unless `keep` names
+  it, a group with no row left in place of its rows; and those it shows, top to bottom),
   `timeline.timeAt`, `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
   ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
@@ -175,7 +179,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Open… (⌘O), Open Recent (#69), Reload, Fetch and Reload, Quit; View:
-  the panes, the grouping, Collapse, Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
+  the panes, the grouping, Collapse Empty Rows and Collapse to Window (#74), Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
   in-window bar draws and `Shell::run_menu` runs; on macOS the app puts it in the system menu
   bar instead (`apps/app/src/mac_menu.rs`, muda), the same items through the same `run_menu`,
   their marks following `Shell::menu_state`; the toolbar (Font Awesome 5's solid face,
@@ -183,8 +187,15 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the view
   (#54): a window at the timeline's end follows the new end at its width (the whole swarm shown
   stays the whole swarm), any other stays put; the selection and focus carried to the same bars
-  (`timeline.carryBars`), the playhead to the same time, the highlight lit again on the new rows;
-  and drives the widget through its own commands (`view.fit`, `state.set`). The toolbar's Live
+  (`timeline.carryBars`), the playhead to the same time, the highlight lit again on the new rows.
+  Collapsed to the window (#74, `TimelinePane::collapse_to_window`), it hides what `rows.window`
+  leaves out (the widget's `tracks.set` `hidden`, never a row the person hid) once the window has
+  held still 250 ms with no button held (`SETTLE`; at once after `ui.set`'s window, a reload or a
+  change of selection), so nothing reloads: the selection, highlight, details and the rows' own
+  states stay; the rows holding the selection are kept, a selection made on rows the window left
+  out shows them first (the widget selects only shown rows), and the hidden flags it set are left
+  out of the saved state; `ui.inspect`'s `timeline.leftOut` and `collapseUs` say what and at what
+  cost. It drives the widget through its own commands (`view.fit`, `state.set`). The toolbar's Live
   toggle (and View ▸ Live, ⌘L) is `live.set`, its interval beside it while on; the status bar says
   live and when it last checked, paused, or that the last check failed and when it tries again,
   the why on hover; the shell asks for a frame when the next check is due. On every load it fixes
@@ -342,7 +353,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`channel`), the headless handler (`session`), MCP over stdio (`mcp`) and a typed client
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
-- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse`,
+- **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse [off|empty|window]`,
   `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate`, `--hover-worker`,
   `--menu file|file.recent` (#69: the window's own menu bar, File clicked open and the pointer on
   Open Recent, for a screenshot), `--step`, `--steps`, `--size`, `--zoom` (the UI's

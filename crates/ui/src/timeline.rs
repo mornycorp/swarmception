@@ -10,6 +10,12 @@
 //! playhead to the same time, and the highlight (the hovered ticket's, else the details'
 //! subject's) is lit again on the new rows ([`TimelinePane::light`]).
 //!
+//! Collapsed to the window (#74), the pane hides the rows `rows.window` says the window leaves
+//! out (the widget's `tracks.set` `hidden`), once the window settles ([`SETTLE`] after it last
+//! moved, with no button held): the rows follow a pan and a zoom without flickering while they
+//! go on. Nothing is loaded again, so the selection, focus, highlight and the rows' own states
+//! stay as they were; a row holding the selection is kept, so it isn't lost.
+//!
 //! What the owner fixed (#35) the pane sets by command on every load, and the widget's toolbar
 //! leaves out: the `Time` scale, the absolute origin, the minimap always and a click selecting
 //! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
@@ -26,13 +32,15 @@ use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, Tick
 use swarmception_engine::live_cmds::{CarryBars, CarryParams};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
+use swarmception_engine::rows_cmds::{WindowParams, WindowRows};
+use swarmception_engine::stats_cmds::At;
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
 use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
-use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams};
+use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams, SetTrack, SetTrackParams};
 
 use timeline_engine::highlight_cmds::HighlightParams;
 use timeline_engine::ranges_cmds::{Clear as ClearRanges, FocusParams, FocusTrack, RangeParams, Toggle as ToggleRange};
@@ -60,6 +68,35 @@ pub const TOOLBAR: [ToolbarControl; 7] = [
     ToolbarControl::ZoomFit,
     ToolbarControl::Measurement,
 ];
+
+/// How long the window holds still, with no button held, before the rows collapsed to it follow
+/// (#74): a drag, a wheel's zoom or the zoom buttons' clicks move the rows once, after.
+pub const SETTLE: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// What the rows were last collapsed to (#74): the rows' generation, the window as clock times
+/// (none off the `Time` scale) and the rows kept for the selection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Collapsed {
+    generation: Option<u64>,
+    window: Option<(Timestamp, Timestamp)>,
+    keep: Vec<String>,
+}
+
+/// The rows collapsed to the window (#74), as the pane keeps them.
+#[derive(Debug, Clone, Default)]
+struct WindowRowsState {
+    /// The rows the pane hid, by key: never one the person hid themselves.
+    hidden: std::collections::BTreeSet<String>,
+    /// The rows and groups `rows.window` last left out, top to bottom.
+    left_out: Vec<String>,
+    /// The window last seen (the widget's positions) and since when it has been there; none
+    /// before the first look, or after a jump that settles at once (`ui.set`'s window).
+    seen: Option<(SpanWire, std::time::Instant)>,
+    /// What they were last collapsed to.
+    applied: Option<Collapsed>,
+    /// How long the last collapse took: `rows.window` and the widget's `tracks.set`s.
+    cost: Option<std::time::Duration>,
+}
 
 /// Where the timeline is looking, as clock times on the `Time` scale (none on another scale).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -222,6 +259,8 @@ pub struct TimelinePane {
     axis: Option<(f32, f32)>,
     /// How long the last load took, its view put back.
     load_time: Option<std::time::Duration>,
+    /// The rows collapsed to the window (#74).
+    window_rows: WindowRowsState,
 }
 
 impl Default for TimelinePane {
@@ -242,6 +281,7 @@ impl Default for TimelinePane {
             toolbar_height: 0.0,
             axis: None,
             load_time: None,
+            window_rows: WindowRowsState::default(),
         }
     }
 }
@@ -382,6 +422,7 @@ impl TimelinePane {
         let focus = kept.selection.focus.as_ref();
         let focused = carry(focus.and_then(|f| f.range.map(|range| BarRef { track: f.track.clone(), range })).into_iter().collect());
         let playhead = kept.playhead.and_then(|position| engine.call::<TimeAt>(TimeAtParams { position }).ok()).map(|t| t.time);
+        self.show_rows(selected.iter().map(|bar| bar.track.as_str()));
         let session = self.widget.session();
         for bar in selected {
             let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
@@ -420,6 +461,9 @@ impl TimelinePane {
         if let Some(mut saved) = view.widget {
             saved.playhead = None;
             let _ = session.call::<Restore>(RestoreParams { saved: Some(saved), state: None });
+            // The rows' states are the saved ones now, which hold none of the window's (#74).
+            self.window_rows.hidden.clear();
+            self.window_rows.applied = None;
         }
         Self::fix_view(session);
         match view.window {
@@ -451,6 +495,15 @@ impl TimelinePane {
         let session = self.widget.session();
         let mut widget = session.call::<Save>(NoParams {}).ok()?;
         widget.playhead = None;
+        // The rows the window left out (#74) aren't the person's: they come back with the window.
+        for key in &self.window_rows.hidden {
+            if let Some(state) = widget.tracks.get_mut(key) {
+                state.hidden = false;
+                if *state == timeline_engine::track_state::TrackState::default() {
+                    widget.tracks.remove(key);
+                }
+            }
+        }
         let state = session.call::<Get>(NoParams {}).ok()?.timeline?;
         let mut at = |position: i64| engine.call::<TimeAt>(TimeAtParams { position }).ok().map(|t| t.time);
         let window = if state.scale == TIME { at(state.window.start).zip(at(state.window.end)) } else { None };
@@ -558,9 +611,11 @@ impl TimelinePane {
         if !self.has_data {
             return;
         }
-        let session = self.widget.session();
-        let _ = session.call::<ClearRanges>(NoParams {});
+        let _ = self.widget.session().call::<ClearRanges>(NoParams {});
         let Some(Ok(found)) = issue.map(|issue| engine.call::<TicketBars>(TicketParams { issue })) else { return };
+        // Only a shown row's bars can be selected: those the window left out come back (#74).
+        self.show_rows(found.bars.iter().map(|bar| bar.track.as_str()));
+        let session = self.widget.session();
         for bar in found.bars {
             let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
         }
@@ -730,6 +785,111 @@ impl TimelinePane {
                 .flat_map(|t| &t.ranges)
                 .any(|r| r.range <= bar.range && bar.range < r.range.saturating_add(r.count.max(1)))
         })
+    }
+
+    /// Collapsed to the window (#74), hides the rows `rows.window` says the window leaves out
+    /// and shows again those it no longer does, once the window has held still for [`SETTLE`]
+    /// with no button `held` (a drag, a wheel's zoom), or at once when the rows' generation or
+    /// the selection moved under a still window. A row holding the selection is kept. Collapsed otherwise, the rows the pane hid come back. How long until it should
+    /// look again, while a window waits to settle.
+    pub fn collapse_to_window(&mut self, engine: &mut Session, now: std::time::Instant, held: bool) -> Option<std::time::Duration> {
+        if !self.has_data {
+            return None;
+        }
+        let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
+        let rows = &mut self.window_rows;
+        let since = match rows.seen {
+            Some((window, since)) if window == state.window => since,
+            Some(_) => {
+                rows.seen = Some((state.window, now));
+                now
+            }
+            // The first look, or a jump: settled at once.
+            None => {
+                let settled = now.checked_sub(SETTLE).unwrap_or(now);
+                rows.seen = Some((state.window, settled));
+                settled
+            }
+        };
+        let keep: Vec<String> = state.selected_ranges.iter().filter(|(_, ranges)| !ranges.is_empty()).map(|(key, _)| key.clone()).collect();
+        let mut at = |position: i64| engine.call::<TimeAt>(TimeAtParams { position }).ok().map(|t| t.time);
+        let window = if state.scale == TIME { at(state.window.start).zip(at(state.window.end)) } else { None };
+        let wanted = Collapsed { generation: self.loaded, window, keep };
+        if self.window_rows.applied.as_ref() == Some(&wanted) {
+            return None;
+        }
+        let waited = now.saturating_duration_since(since);
+        if held || waited < SETTLE {
+            return Some(SETTLE.saturating_sub(waited).max(std::time::Duration::from_millis(16)));
+        }
+        let started = std::time::Instant::now();
+        let params = WindowParams {
+            start: wanted.window.map(|(start, _)| At::Seconds(start.0)),
+            end: wanted.window.map(|(_, end)| At::Seconds(end.0)),
+            keep: wanted.keep.clone(),
+        };
+        let left_out = engine.call::<WindowRows>(params).map(|found| found.left_out).unwrap_or_default();
+        self.hide_rows(&state.tracks, &left_out);
+        let rows = &mut self.window_rows;
+        rows.left_out = left_out;
+        rows.applied = Some(wanted);
+        rows.cost = Some(started.elapsed());
+        None
+    }
+
+    /// Hides the rows `left_out` names that the person hasn't hidden themselves (`tracks`, the
+    /// widget's rows' states), and shows again those the pane hid that it no longer names.
+    fn hide_rows(&mut self, tracks: &std::collections::BTreeMap<String, timeline_engine::track_state::TrackState>, left_out: &[String]) {
+        let hidden = &self.window_rows.hidden;
+        let wanted: std::collections::BTreeSet<String> =
+            left_out.iter().filter(|key| hidden.contains(*key) || !tracks.get(*key).is_some_and(|s| s.hidden)).cloned().collect();
+        let session = self.widget.session();
+        for key in hidden.difference(&wanted) {
+            let _ = session.call::<SetTrack>(SetTrackParams { key: key.clone(), hidden: Some(false), ..SetTrackParams::default() });
+        }
+        for key in wanted.difference(hidden) {
+            let _ = session.call::<SetTrack>(SetTrackParams { key: key.clone(), hidden: Some(true), ..SetTrackParams::default() });
+        }
+        self.window_rows.hidden = wanted;
+    }
+
+    /// Shows again the rows of `tracks` the window left out (#74), and the groups holding them
+    /// (a row's key is its groups' keys and its own, `/` between: `w/<machine>/<worker>/<n>`),
+    /// so their bars can be selected (the widget selects only a shown row's); the window looks
+    /// again on the next frame, keeping them while they hold the selection.
+    fn show_rows<'a>(&mut self, tracks: impl Iterator<Item = &'a str>) {
+        let tracks: Vec<&str> = tracks.collect();
+        let holds =
+            |hidden: &String| tracks.iter().any(|track| track.strip_prefix(hidden.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')));
+        let shown: Vec<String> = self.window_rows.hidden.iter().filter(|key| holds(key)).cloned().collect();
+        if shown.is_empty() {
+            return;
+        }
+        let session = self.widget.session();
+        for key in shown {
+            let _ = session.call::<SetTrack>(SetTrackParams { key: key.clone(), hidden: Some(false), ..SetTrackParams::default() });
+            self.window_rows.hidden.remove(&key);
+        }
+        self.window_rows.applied = None;
+    }
+
+    /// Collapses the rows to the window on the next look, without waiting for it to settle:
+    /// after a jump (`ui.set`'s window), which no drag goes on from.
+    pub fn settle_now(&mut self) {
+        self.window_rows.seen = None;
+    }
+
+    /// The rows and groups the window leaves out, collapsed to it (#74), by key, top to bottom;
+    /// those the pane hides (`ui.inspect`'s `timeline.leftOut`).
+    #[must_use]
+    pub fn left_out(&self) -> &[String] {
+        &self.window_rows.left_out
+    }
+
+    /// How long the last collapse to the window took (#74): `rows.window` and hiding the rows.
+    #[must_use]
+    pub const fn collapse_time(&self) -> Option<std::time::Duration> {
+        self.window_rows.cost
     }
 
     /// What the widget highlights: by row key, the ranges (`state.get`'s `highlight`).

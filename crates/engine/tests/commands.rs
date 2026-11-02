@@ -270,3 +270,47 @@ fn the_factorys_key_moments_and_a_step_through_them() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
+    use swarmception_domain::{Collapse, RowsSpec};
+    use swarmception_engine::rows_cmds::WindowResult;
+    let dir = repo();
+    let mut session = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let window = |session: &mut Session, params: &str| -> WindowResult { call(session, "rows.window", params) };
+    let early = r#"{"start":"2026-10-31T03:00:00Z","end":"2026-10-31T03:05:00Z"}"#;
+
+    // Not collapsed to the window: it leaves out nothing.
+    let all = window(&mut session, early);
+    assert_eq!((all.collapse, all.left_out.len()), (Collapse::Off, 0));
+    assert_eq!(all.shown, ["main", "merged", "tickets/1"]);
+    let spec: RowsSpec = call(&mut session, "rows.set", r#"{"collapse":true}"#);
+    assert_eq!(spec.collapse, Collapse::Empty, "true still reads, as empty");
+    assert!(window(&mut session, early).left_out.is_empty());
+
+    let spec: RowsSpec = call(&mut session, "rows.set", r#"{"collapse":"window"}"#);
+    assert_eq!(spec.collapse, Collapse::Window);
+    let list: ListResult = call(&mut session, "rows.list", "");
+    let keys: Vec<&str> = list.rows.iter().map(swarmception_domain::Node::key).collect();
+    assert_eq!(keys, ["merged", "tickets/1"], "the rows themselves are the empty collapse's: no merges onto main");
+    // #7 claimed at 03:01, merged at 03:45.
+    let found = window(&mut session, early);
+    assert_eq!((found.shown, found.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned()]));
+    assert_eq!(found.start.map(|t| t.to_string()).as_deref(), Some("2026-10-31T03:00:00Z"));
+    let found = window(&mut session, r#"{"start":"2026-10-31T03:44:00Z","end":"2026-10-31T03:50:00Z"}"#);
+    assert!(found.left_out.is_empty(), "waiting for merge until 03:45, merged then: {found:?}");
+    // 04:50 to 05:00, in seconds since the epoch.
+    let late = r#"{"start":1793422200,"end":1793422800}"#;
+    assert_eq!(window(&mut session, late).left_out, ["merged", "tickets/1"], "after the merge, nothing");
+    let kept = window(&mut session, r#"{"start":1793422200,"end":1793422800,"keep":["tickets/1"]}"#);
+    assert_eq!((kept.shown, kept.left_out), (vec!["tickets/1".to_owned()], vec!["merged".to_owned()]), "a row kept for the selection stays");
+    assert!(window(&mut session, "{}").left_out.is_empty(), "no window: nothing left out");
+
+    // Refused: a window ending before it starts, half a window, a time that isn't one.
+    for bad in [r#"{"start":1793422800,"end":1793422200}"#, r#"{"start":1793422800}"#, r#"{"start":"teatime","end":1}"#, r#"{"window":1}"#] {
+        assert!(session.execute("rows.window", bad).is_err(), "{bad}");
+    }
+    std::fs::remove_dir_all(dir).ok();
+}
