@@ -25,6 +25,8 @@ schemars = "1"
 serde_path_to_error = "0.1"
 egui = "0.37"
 eframe = "0.37"
+# Screenshots as PNG (#60): already in the lock through egui's text rasterizer (epaint, glifo).
+png = "0.18"
 # The macOS system menu bar (owner-approved, 2026-10-31, #3); no GTK on Linux.
 muda = { version = "0.21.2", default-features = false }
 # AppKit from Rust, as winit and muda already lock it: window tabbing off (#9).

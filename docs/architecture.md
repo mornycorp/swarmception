@@ -296,7 +296,8 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
 
 - **The CLI** (`swarmception-cli`) runs the engine headless: list the commands, run one or a script of them
   (`swarmception-cli run …`), serve the control protocol, serve MCP. It is how an agent checks a change
-  without a window, and the smoke gate's headless run.
+  without a window, and the smoke gate's headless run. It is also the window's client (#60):
+  `send` and `mcp --control`, below.
 - **The control channel** (#46, L4 `swarmception-automation`, after swarm-timeline's
   `timeline-automation`, whose line reader, token, loopback bind and limits it reuses):
   `swarmception --repo <r> --control [<port>] [--control-file <path>]` listens on 127.0.0.1 (any
@@ -311,14 +312,20 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   ```
 
   `command` is an engine command's id (`engine.commands` lists them with their schemas); the
-  window's own `ui.commands`, `ui.inspect` (`swarmception_ui::control::Inspect`: the shell's
+  window's own `ui.commands` (the window's commands, then the widget's as `timeline.<id>`, each
+  with its params' and result's schemas; the widget's registry says nothing of read-only, so
+  none of its is), `ui.inspect` (`swarmception_ui::control::Inspect`: the shell's
   `UiState`, and what the panes show: the factory's *t*, where it came from, the key moment, what
   each station drew last frame, the timeline's scale, window, playhead, selected ranges and
   highlighted ones),
   `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
   selected, a step, the details' subject or none (#55), the window; `ui.inspect`'s `details`
-  report its subject, title, error and bars) and `ui.screenshot` (`{"path": "<file>.ppm"}`, taken a few frames
-  later so a `ui.set` has settled, answered with its size once saved); or `timeline.<id>`, the
+  report its subject, title, error and bars), `ui.loaded` (`{"within": <s>}`, at most 19:
+  answered with `ui.inspect`'s answer once nothing is loading, the issues are in and the
+  timeline has its data, or the read failed, or there is no repository; a `ui` error after
+  `within`) and `ui.screenshot` (`{"path": "<file>.png"}`, PNG, or a binary PPM for `.ppm`;
+  taken a few frames later so a `ui.set` has settled, answered with its size once saved;
+  `swarmception_ui::shot`); or `timeline.<id>`, the
   timeline widget's own command forwarded (`timeline.view.fit`, `timeline.state.get`,
   `timeline.ui.inspect`; `timeline.engine.commands` lists them: the engine's own `timeline.*` ids
   have one dot). The errors are `ProtocolError`, tagged `problem`: `bad_request`, `too_long`,
@@ -331,8 +338,26 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   the same protocol on its own session; `ui.*` and `timeline.<id>` are `no_ui` there.
 - **MCP:** `swarmception-cli [--repo <r>] mcp` serves every engine command as an MCP tool over
   stdio (newline-delimited JSON-RPC 2.0: `initialize`, `tools/list`, `tools/call`, `ping`), named
-  with `_` for `.` (`factory_at`); a command's error is the tool's `isError` with the engine's
-  error as its text.
+  with `_` for `.` (`factory_at`, `timeline_view_fit`: no id has a `_`, which a test checks); a
+  command's error is the tool's `isError` with its `ProtocolError` as its text (the engine's as
+  `{"problem":"engine","error":…}`). `mcp::serve` runs over any `Handler`: the headless session,
+  or a window's.
+- **MCP through the window** (#60): `swarmception-cli mcp --control <file>`, the file the app's
+  `--control-file` (or `serve`'s) wrote, lists `engine.commands` and `ui.commands` as tools, with
+  their schemas, and runs each call in that window over its control channel
+  (`client::Remote`): `ui_set`, `ui_inspect`, `ui_loaded`, `ui_screenshot` (which writes the PNG
+  itself), `timeline_view_fit`, `factory_at` on the window's session. A relative screenshot path
+  is the MCP server's directory, not the window's. A connection the window closed (ten idle
+  minutes) is opened again; a window gone is the tool's `unavailable` error.
+- **The CLI client** (#60): `swarmception-cli send --control <file> <id> [<params JSON>]` sends one
+  request and prints its result; `send --control <file> --script <file.jsonl>` sends a script
+  (`script::Step` a line, `{"command": <id>, "params": {…}}`; blank lines and `#` lines skipped),
+  printing each result as a line and stopping at the first error, which goes to stderr with its
+  `ProtocolError` as JSON. Exit codes: 0 every request answered; 1 the window answered with an
+  error; 2 bad usage or a script that doesn't read (nothing sent); 3 no window to reach (no
+  control file, nothing listening, no answer in time). `scripts/screenshots.jsonl` takes the
+  screenshots a PR needs, and `scripts/screenshots.sh <clone> [<out dir>]` starts the app with
+  `--control`, sends it that script and closes it.
 
 ## Never crash
 
@@ -359,6 +384,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Automation reaches the window (#60): `mcp --control` (tools through a running window, over `client::Remote`), `send` and its scripts (`script`), `ui.screenshot` and `--screenshot` as PNG (`swarmception_ui::shot`), `ui.commands` listing the widget's commands, `ui.loaded`; an MCP tool's error is its `ProtocolError`; `scripts/screenshots.{jsonl,sh}` |
 | 2026-11-02 | minor | The state survives a restart (#53): `saved` (`AppState` version 1, `StateStore`, `Keeper`), `UiState` version 4 with the panes' sizes, the timeline pane's `TimelineView`, `ui.inspect` version 2 with `saved`; `--state-dir`, `--fresh` |
 | 2026-11-02 | minor | Watching a live swarm (#54): `live.get` / `live.set` / `live.check`, the source's one-trip `fetch` and `heads`, a reload that keeps or follows the view and carries the selection (`timeline.carryBars`), Live in the toolbar, View menu and status bar; `ui.inspect`'s `timeline.loadMs` |
 | 2026-11-02 | minor | The details pane and the timeline select together (#55): `details.get`'s `timeline` (the subject's bars), highlighted with one owner (a factory hover wins while it lasts) and brought into view; `ui.set`'s `details`, `ui.inspect`'s `details` and `timeline.lit` |

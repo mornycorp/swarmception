@@ -20,5 +20,10 @@ muda = { workspace = true }
 objc2 = { workspace = true }
 objc2-app-kit = { workspace = true }
 
+[dev-dependencies]
+# A screenshot's PNG read back (#60); `ui.set`'s schema, as MCP lists it.
+png = { workspace = true }
+schemars = { workspace = true }
+
 [lints]
 workspace = true

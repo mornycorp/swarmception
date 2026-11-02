@@ -1,14 +1,22 @@
 //! A typed client of the control channel: what tests and agents written in Rust drive a server
-//! with, reading each reply as its result type.
+//! with, reading each reply as its result type ([`Client`]); and [`Remote`], a [`Handler`] that
+//! runs each request on a server through a client, which `swarmception-cli send` and
+//! `mcp --control` drive a window with.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::path::Path;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::protocol::{PROTOCOL_VERSION, ProtocolError, Reply, Request};
+use crate::protocol::{Handler, PROTOCOL_VERSION, ProtocolError, Reply, Request};
+use crate::tcp::Listening;
+
+/// How long a [`Remote`] waits for a reply: longer than the window takes to answer
+/// (`channel::ANSWER_WITHIN`), so the window's own timeout is the one a caller reads.
+pub const REPLY_WITHIN: Duration = Duration::from_secs(30);
 
 /// Why a call came back with no result.
 #[derive(Debug)]
@@ -82,9 +90,30 @@ impl Client {
     /// [`ClientError`]: the connection, the server's error, or a reply that isn't a `T`.
     pub fn call<T: DeserializeOwned>(&mut self, command: &str, params: &impl Serialize) -> Result<T, ClientError> {
         let params = serde_json::to_value(params).map_err(|e| ClientError::BadReply(e.to_string()))?;
+        self.send(command, Some(params))
+    }
+
+    /// Runs `command` with `params`, JSON text (empty for none), and answers its result as JSON
+    /// text: for a caller that passes results on rather than reading them.
+    ///
+    /// # Errors
+    ///
+    /// [`ClientError`]: the connection, the server's error, params that aren't JSON (a
+    /// `bad_request`, sent nowhere) or a reply that isn't.
+    pub fn request(&mut self, command: &str, params: &str) -> Result<String, ClientError> {
+        let params = if params.trim().is_empty() {
+            None
+        } else {
+            Some(serde_json::from_str(params).map_err(|e| ClientError::Protocol(ProtocolError::BadRequest { message: format!("params: {e}") }))?)
+        };
+        let result: serde_json::Value = self.send(command, params)?;
+        Ok(result.to_string())
+    }
+
+    fn send<T: DeserializeOwned>(&mut self, command: &str, params: Option<serde_json::Value>) -> Result<T, ClientError> {
         let id = self.next;
         self.next = self.next.wrapping_add(1);
-        let request = Request { v: PROTOCOL_VERSION, token: self.token.clone(), id, command: command.to_owned(), params: Some(params) };
+        let request = Request { v: PROTOCOL_VERSION, token: self.token.clone(), id, command: command.to_owned(), params };
         let line = serde_json::to_string(&request).map_err(|e| ClientError::BadReply(e.to_string()))?;
         let reply: Reply<T> = serde_json::from_str(&self.send_line(&line)?).map_err(|e| ClientError::BadReply(e.to_string()))?;
         match (reply.result, reply.error) {
@@ -92,5 +121,137 @@ impl Client {
             (Some(result), None) => Ok(result),
             (None, None) => Err(ClientError::BadReply("neither a result nor an error".into())),
         }
+    }
+}
+
+/// A server reached through a [`Client`]: each request runs there, as if handled here. It
+/// connects on the first request; a connection the server closed meanwhile (after ten idle
+/// minutes) is opened again and the request sent once more, since the server read none of it.
+/// A `ui.screenshot`'s relative path is made this process's ([`own_paths`]).
+pub struct Remote {
+    listening: Listening,
+    within: Duration,
+    client: Option<Client>,
+}
+
+impl Remote {
+    /// A remote of the server `listening` names, each reply waited for at most `within`.
+    #[must_use]
+    pub const fn new(listening: Listening, within: Duration) -> Self {
+        Self { listening, within, client: None }
+    }
+
+    /// A remote of the server whose control file is `path` (`--control-file`), each reply
+    /// waited for at most [`REPLY_WITHIN`].
+    ///
+    /// # Errors
+    ///
+    /// The file's error ([`crate::tcp::read_listening`]).
+    pub fn from_file(path: &Path) -> io::Result<Self> {
+        Ok(Self::new(crate::tcp::read_listening(path)?, REPLY_WITHIN))
+    }
+
+    /// Where the server listens.
+    #[must_use]
+    pub const fn listening(&self) -> &Listening {
+        &self.listening
+    }
+
+    /// Runs one request on the open connection, opening one first; a connection that failed
+    /// is dropped.
+    fn once(&mut self, command: &str, params: &str) -> Result<String, ClientError> {
+        let client = match &mut self.client {
+            Some(client) => client,
+            none => none.insert(Client::connect(self.listening.address, &self.listening.token, self.within)?),
+        };
+        let result = client.request(command, params);
+        if matches!(result, Err(ClientError::Io(_) | ClientError::BadReply(_))) {
+            self.client = None;
+        }
+        result
+    }
+}
+
+impl std::fmt::Debug for Remote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Remote").field("address", &self.listening.address).finish_non_exhaustive()
+    }
+}
+
+/// Whether `error` says the server closed the connection before reading a request: sent again,
+/// it runs once.
+fn closed(error: &ClientError) -> bool {
+    use io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset, UnexpectedEof};
+    matches!(error, ClientError::Io(e) if matches!(e.kind(), UnexpectedEof | ConnectionReset | BrokenPipe | ConnectionAborted))
+}
+
+impl Handler for Remote {
+    fn handle(&mut self, command: &str, params: &str) -> Result<String, ProtocolError> {
+        let params = own_paths(command, params);
+        let reused = self.client.is_some();
+        let result = match self.once(command, &params) {
+            Err(error) if reused && closed(&error) => self.once(command, &params),
+            other => other,
+        };
+        let at = self.listening.address;
+        result.map_err(|error| match error {
+            ClientError::Protocol(error) => error,
+            ClientError::Io(e) => ProtocolError::Unavailable { message: format!("the server at {at}: {e}") },
+            ClientError::BadReply(m) => ProtocolError::Unavailable { message: format!("the server at {at}: a reply that doesn't read: {m}") },
+        })
+    }
+}
+
+/// `ui.screenshot`'s params as a client sends them: the window checks the rest.
+#[derive(Debug, Clone, PartialEq, Serialize, serde::Deserialize)]
+pub struct ScreenshotPath {
+    pub path: String,
+    #[serde(flatten)]
+    pub rest: serde_json::Map<String, serde_json::Value>,
+}
+
+/// `params` with a `ui.screenshot`'s relative `path` made absolute against this process's
+/// working directory, since the window's may be another; any other request's as they are, and
+/// params that don't read as a screenshot's for the window to refuse.
+#[must_use]
+pub fn own_paths(command: &str, params: &str) -> String {
+    if command != "ui.screenshot" {
+        return params.to_owned();
+    }
+    let (Ok(mut shot), Ok(here)) = (serde_json::from_str::<ScreenshotPath>(params), std::env::current_dir()) else {
+        return params.to_owned();
+    };
+    if Path::new(&shot.path).is_absolute() {
+        return params.to_owned();
+    }
+    shot.path = here.join(&shot.path).display().to_string();
+    serde_json::to_string(&shot).unwrap_or_else(|_| params.to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_screenshots_relative_path_is_made_this_processs() {
+        let here = std::env::current_dir().unwrap();
+        let made: ScreenshotPath = serde_json::from_str(&own_paths("ui.screenshot", r#"{"path":"shots/a.png","x":1}"#)).unwrap();
+        assert_eq!(made.path, here.join("shots/a.png").display().to_string());
+        assert_eq!(made.rest.len(), 1, "the rest is kept for the window to refuse");
+        let absolute = serde_json::json!({ "path": here.join("a.png").display().to_string() }).to_string();
+        assert_eq!(own_paths("ui.screenshot", &absolute), absolute);
+        for (command, params) in [("ui.set", r#"{"path":"a.png"}"#), ("ui.screenshot", ""), ("ui.screenshot", "{not json"), ("ui.screenshot", r#"{"path":7}"#)]
+        {
+            assert_eq!(own_paths(command, params), params, "{command} {params}");
+        }
+    }
+
+    #[test]
+    fn a_server_that_isnt_there_is_unavailable() {
+        let (listener, listening) = crate::tcp::bind(0, None).unwrap();
+        drop(listener);
+        let mut remote = Remote::new(listening, Duration::from_secs(2));
+        assert!(matches!(remote.handle("engine.commands", ""), Err(ProtocolError::Unavailable { .. })));
+        assert!(matches!(remote.handle("ui.screenshot", r#"{"path":"a.png"}"#), Err(ProtocolError::Unavailable { .. })));
     }
 }

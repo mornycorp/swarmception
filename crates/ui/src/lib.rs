@@ -22,6 +22,7 @@ pub mod fonts;
 pub mod icons;
 pub mod menu;
 pub mod saved;
+pub mod shot;
 mod timeline;
 
 use std::path::Path;

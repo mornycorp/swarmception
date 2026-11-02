@@ -2,7 +2,7 @@
 //! `tracking` branch and `main`.
 //!
 //! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes <list>]
-//! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>]`: `--repo` is any
+//! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>]`: `--repo` is any
 //! directory in a swarm's clone (the current directory if not given); `--panes` the panes shown
 //! (`timeline`, `factory`, `details`, comma-separated); `--details <what>` shows the details of
 //! a ticket (`47`, `#47`), a gate run (`gate:<sub>[@<time>]`), a session
@@ -14,7 +14,7 @@
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
-//! agents can check the drawing by eye. `--control [<port>]` serves the control channel on
+//! agents can check the drawing by eye: PNG when the path ends in `.png`, else a binary PPM. `--control [<port>]` serves the control channel on
 //! loopback (any free port when none is given; [`control`]): it prints where and its token as one
 //! JSON line, and `--control-file <path>` writes that line to a file too. On macOS the menus are in the system menu bar
 //! ([`mac_menu`]); elsewhere the window draws its own.
@@ -105,7 +105,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse] [--panes timeline,factory,details] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -436,7 +436,7 @@ impl Screenshot {
         if !self.requested && self.frames >= self.settle {
             let (path, saved) = (self.path.clone(), Arc::clone(&self.saved));
             ctx.request_screenshot(move |image| {
-                if let Err(e) = save_ppm(&path, &image) {
+                if let Err(e) = swarmception_ui::shot::save(&path, &image) {
                     eprintln!("swarmception: can't save {}: {e}", path.display());
                 }
                 saved.store(true, Ordering::Release);
@@ -445,17 +445,6 @@ impl Screenshot {
         }
         ctx.request_repaint();
     }
-}
-
-/// `image` as a binary PPM.
-fn save_ppm(path: &std::path::Path, image: &egui::ColorImage) -> std::io::Result<()> {
-    use std::io::Write;
-    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
-    write!(out, "P6\n{} {}\n255\n", image.size[0], image.size[1])?;
-    for pixel in &image.pixels {
-        out.write_all(&[pixel.r(), pixel.g(), pixel.b()])?;
-    }
-    out.flush()
 }
 
 #[cfg(test)]
