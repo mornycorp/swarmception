@@ -9,6 +9,7 @@ use swarmception_domain::Grouping;
 use swarmception_domain::details::Subject;
 use swarmception_engine::Github;
 use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams};
+use swarmception_engine::live_cmds::{Get as GetLive, SetParams as SetLiveParams};
 use swarmception_model::Timestamp;
 use swarmception_ui::control::{Answer, Inspect};
 use swarmception_ui::saved::{self, Keeping, StateStore};
@@ -153,6 +154,9 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     assert!(settled <= 1, "the first frames' state, written once: {settled}");
     first.run_menu(&ctx, MenuAction::Factory);
     first.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
+    // Live (#54) turned off by the person, checking every 2 min when on.
+    assert!(first.live().default, "nobody chose yet");
+    first.set_live(SetLiveParams { on: Some(false), interval_seconds: Some(120) });
     // #9's details first (the timeline brings its bars into view, #55), then a window without
     // them: restored, the window stays where it was left, not moved to the subject's bars.
     first.select(Subject::Ticket { issue: 9 });
@@ -189,6 +193,8 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     assert!(!after.state.panes.factory && after.state.sizes.details.is_some());
     assert_eq!(after.state.details.subject, Some(Subject::Ticket { issue: 9 }));
     assert_eq!(second.menu_state().grouping, Grouping::Workers, "the rows by worker, through rows.set");
+    let live = second.engine().call::<GetLive>(swarmception_engine::engine_cmds::NoParams {}).unwrap();
+    assert_eq!((live.on, live.default, live.interval_seconds), (false, false, 120), "Live as the person left it, through live.set");
     assert_eq!(after.timeline.window, before.timeline.window, "the window it was left at, not moved to the details subject's bars");
     assert_eq!((after.timeline.playhead, before.timeline.playhead), (Some(submit), Some(submit)), "the playhead, by its time");
     assert_eq!(rulers(&mut second), rulers_before, "the widget's own state, through state.save and state.restore");
@@ -219,6 +225,7 @@ fn a_view_that_followed_the_end_follows_the_swarm_on() {
     move_on(&dir);
     let (_ctx, mut second) = started(&dir, &store);
     let window = second.inspect().timeline.window.unwrap();
+    assert!(second.live().default, "Live nobody chose stays the default's");
     let new_end = end_of(&mut second);
     assert!(new_end.0 >= Timestamp::parse("2026-10-31T08:00:00Z").unwrap().0, "{new_end}");
     assert_eq!((window.start, window.end), (hour_before(new_end), new_end), "the new end, as wide");

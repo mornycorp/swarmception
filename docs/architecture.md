@@ -206,7 +206,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
   moments it steps by, what the details are of; version 4) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
-  size and place, and the timeline's `TimelineView`: the widget's own `state.save` without its
+  size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
   playhead's time) per repository (`repo_key`: its canonical top level), in
   `<dir>/state/<name>-<FNV-1a of the path>.json` under the platform's app-data directory

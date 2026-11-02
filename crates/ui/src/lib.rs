@@ -215,6 +215,19 @@ impl Shell {
             self.timeline.restore_view(view.clone());
         }
         self.window_place = state.window;
+        self.restore_live(state.live);
+    }
+
+    /// Live as the person left it (#54), through `live.set`; an interval this build refuses is
+    /// left at its default, the choice of on or off kept.
+    fn restore_live(&mut self, live: saved::LiveChoice) {
+        if live == saved::LiveChoice::default() {
+            return;
+        }
+        let params = SetLiveParams { on: live.on, interval_seconds: live.interval_seconds };
+        if self.engine.call::<SetLive>(params).is_err() && live.on.is_some() {
+            self.set_live(SetLiveParams { on: live.on, interval_seconds: None });
+        }
     }
 
     /// The state as it would be saved now; none when the shell keeps none. The factory's *t*
@@ -231,6 +244,10 @@ impl Shell {
             rows: self.spec,
             window: self.window_place,
             timeline: self.timeline.view_state(&mut self.engine),
+            live: self.engine.call::<GetLive>(NoParams {}).map_or_else(
+                |_| saved::LiveChoice::default(),
+                |live| saved::LiveChoice { on: (!live.default).then_some(live.on), interval_seconds: Some(live.interval_seconds) },
+            ),
             ..saved::AppState::new(&repo)
         })
     }

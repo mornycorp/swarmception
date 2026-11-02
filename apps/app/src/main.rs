@@ -20,7 +20,7 @@
 //! ([`mac_menu`]); elsewhere the window draws its own.
 //!
 //! The state survives a restart (#53, `swarmception_ui::saved`): the panes and their sizes, the
-//! rows, the factory's settings, what the details are of, the timeline's view and the window's
+//! rows, the factory's settings, what the details are of, Live, the timeline's view and the window's
 //! size and place, per repository, in `--state-dir <dir>`, else `$SWARMCEPTION_STATE_DIR`, else
 //! the platform's app-data directory (`~/Library/Application Support/swarmception` on macOS);
 //! read at the start, written when it changes and on quit. The command line goes over it;

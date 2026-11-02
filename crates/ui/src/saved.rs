@@ -53,13 +53,35 @@ pub struct AppState {
     pub window: Option<WindowPlace>,
     /// The timeline's view: the widget's own saved state and the window as clock times.
     pub timeline: Option<TimelineView>,
+    /// Live (#54) as the person left it.
+    #[serde(default)]
+    pub live: LiveChoice,
+}
+
+/// The live watch (#54) as the person left it: on or off only when they chose it (`live.get`
+/// says whether it is still the default), and its interval; restored through `live.set`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct LiveChoice {
+    /// None: nobody chose, so the default applies (on when the swarm is active).
+    pub on: Option<bool>,
+    /// Seconds between checks.
+    pub interval_seconds: Option<u64>,
 }
 
 impl AppState {
     /// A fresh state for `repo`: every section at its default.
     #[must_use]
     pub fn new(repo: &Path) -> Self {
-        Self { version: APP_STATE_VERSION, repo: repo.display().to_string(), ui: UiState::default(), rows: RowsSpec::default(), window: None, timeline: None }
+        Self {
+            version: APP_STATE_VERSION,
+            repo: repo.display().to_string(),
+            ui: UiState::default(),
+            rows: RowsSpec::default(),
+            window: None,
+            timeline: None,
+            live: LiveChoice::default(),
+        }
     }
 }
 
@@ -207,6 +229,8 @@ struct Sections {
     window: Option<serde_json::Value>,
     #[serde(default)]
     timeline: Option<serde_json::Value>,
+    #[serde(default)]
+    live: Option<serde_json::Value>,
 }
 
 /// The shell's state's sections, read as [`Sections`] are.
@@ -258,6 +282,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         rows: section(sections.rows, "rows", &mut skipped),
         window: section(sections.window, "window", &mut skipped),
         timeline: section(sections.timeline, "timeline", &mut skipped),
+        live: section(sections.live, "live", &mut skipped),
     };
     let version = sections.version.unwrap_or(0);
     let newer =
