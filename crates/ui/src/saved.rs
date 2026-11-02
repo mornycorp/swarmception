@@ -375,6 +375,15 @@ fn section<T: DeserializeOwned + Default>(value: Option<serde_json::Value>, name
     }
 }
 
+/// The factory's section without the time of its own an older state kept (#85, `t` up to
+/// version 8 of the shell's state): the timeline's playhead, saved with the timeline, is its time.
+fn without_time(mut factory: serde_json::Value) -> serde_json::Value {
+    if let Some(fields) = factory.as_object_mut() {
+        fields.remove("t");
+    }
+    factory
+}
+
 /// The state in `text`, saved for `repo`, and a note on what was left out; an error saying why
 /// none of it reads.
 fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
@@ -388,7 +397,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
     let ui = ui.map_or_else(UiState::default, |ui| UiState {
         version: UI_STATE_VERSION,
         panes: section::<Panes>(ui.panes, "panes", &mut skipped),
-        factory: section::<FactoryView>(ui.factory, "factory", &mut skipped),
+        factory: section::<FactoryView>(ui.factory.map(without_time), "factory", &mut skipped),
         details: section::<DetailsView>(ui.details, "details", &mut skipped),
         sizes: section::<PaneSizes>(ui.sizes, "sizes", &mut skipped),
         folded: section::<crate::layout::Folded>(ui.folded, "folded", &mut skipped),
@@ -649,6 +658,13 @@ mod tests {
         let two = load(r#"{"version": 2, "repo": "/r/swarm", "rows": {"collapse": "window"}}"#);
         assert_eq!(two.state.unwrap().rows.collapse, swarmception_domain::Collapse::Window);
         assert_eq!((state.ui.sizes, state.window, older.note), (PaneSizes::default(), None, None));
+        // Version 8 of the shell's state kept the factory's own time (#85): it reads on without it,
+        // its other settings kept, nothing said.
+        let eight = load(
+            r#"{"version": 2, "repo": "/r/swarm", "ui": {"version": 8, "factory": {"follow": false, "playing": false, "speed": "hour", "t": 1793000000, "ticket": 7, "steps": "merges"}}}"#,
+        );
+        let factory = FactoryView { follow: false, speed: crate::Speed::Hour, ticket: Some(7), steps: crate::Steps::Merges, ..FactoryView::default() };
+        assert_eq!((eight.state.unwrap().ui.factory, eight.note), (factory, None));
 
         // A newer one: its new sections skipped, a section that changed shape left out, the rest kept.
         let newer = load(
@@ -681,9 +697,9 @@ mod tests {
         assert_eq!((keeper.inspect().writes, store.load(repo).state.as_ref()), (1, Some(&state)));
         assert!(keeper.observe(state.clone(), 9.0).is_none(), "unchanged: nothing to write");
         assert_eq!(keeper.inspect().writes, 1);
-        // Changing every frame (play): written within MOST seconds all the same.
+        // Changing every frame: written within MOST seconds all the same.
         for (n, t) in (0..).zip([10.0, 11.0, 12.0, 13.0, 14.0, 15.0]) {
-            state.ui.factory.t = Some(swarmception_model::Timestamp(n));
+            state.ui.factory.ticket = Some(n);
             keeper.observe(state.clone(), t);
         }
         assert_eq!(keeper.inspect().writes, 2);

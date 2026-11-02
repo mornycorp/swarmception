@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -223,7 +223,25 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   compact figures, each tooltip saying how it is computed), asked again only when the window or
   the data moves on. Clicking an hour's bar (#31) zooms the timeline's window to that hour
   (`TimelinePane::show_span`: `timeline.placeAt`'s positions, clamped to the extent, through the
-  widget's `state.set`) and puts the factory's *t* and the playhead at its last second.
+  widget's `state.set`) and puts the playhead (the factory following) at its last second; the
+  strip keeps its own range (#85: `StatsStrip::keep`, not the window the click made) with the
+  hour marked under its bar, until the timeline's window moves off that one (`ui.set`'s `hour`
+  does as the click).
+  **The timeline is the source of truth** (#85, the owner's): the factory has no clock of its
+  own. Its header puts its buttons first at fixed places (play and speed, ⏮ / ⏭ and what they
+  step by, Follow; the combo boxes a fixed width, truncating; `HeaderDrawn`), then the words in
+  a small label: the moment a step landed on, else where *t* comes from. *t* is the timeline's
+  playhead, else its window's end; not following, the last time it showed (`held at …`). Play,
+  steps, `--at`, `ui.set`'s `at` and an hour's click move the playhead; the playhead stands on an
+  item (a time a bar names), so the time put is kept precisely while the playhead stays on that
+  item, and the playhead's own time once it moves (`FactoryPane::put`, `Looking::playhead_item`).
+  What is selected follows the timeline (#85): the details' subject (a bar chosen on the
+  timeline, a gate run chosen in the Gates band or a gate run's row, a click in the factory) is
+  the factory's selection (`factory_paint::Selected`): a ticket's chip at whichever station holds
+  it and its brick (its journey traced too), a merge's brick (`Block::commit`), a gate run's line
+  in the gate's list, each ringed in the selection's colour and brought into view (a list cut
+  short shows it in place of its last; main's wall scrolls to a newly selected brick); a click on
+  a grey brick selects its merge.
   The factory pane, under the timeline, draws what `factory.at` returns, its stations left to
   right and the key along the bottom in one row (two when narrow); the benches are short strips
   (name, model and helper on one line, the status under it) in more columns when many workers
@@ -241,13 +259,13 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   four times the median's), a strip along its foot with its life's segments in
   their phase colours, a red corner when it was sent back (the count in it from two), shrinking
   to the smallest size and then scrolling with the wheel, the newest rows first; a merge onto
-  main no ticket names is a small grey brick marked `!<pr>`; its *t* follows the timeline (the pointer, else the playhead,
-  else the window's end) or plays through the window, the playhead following, or steps (#33):
-  ⏮ / ⏭, and ← / → while the factory has the keyboard (a press in it takes it, as one on the
-  timeline takes it there), put *t* at the key moment `factory.step` returns for the kinds
-  chosen beside them (`FactoryView::steps`: every moment, or only claims, work, submits, gate
-  runs, send backs or merges), the moment named beside the clock and the playhead following;
-  shift-click, Home and End go to the first and last event.
+  main no ticket names is a small grey brick marked `!<pr>`; its *t* is the timeline's (above),
+  play runs the playhead through the window, and steps (#33): ⏮ / ⏭, and ← / → while the factory
+  has the keyboard (a press in it takes it, as one on the timeline takes it there), put the
+  playhead at the key moment `factory.step` returns for the kinds chosen beside them
+  (`FactoryView::steps`: every moment, or only claims, work, submits, gate runs, send backs or
+  merges), the moment named in the header; shift-click, Home and End go to the first and last
+  event.
   Right-clicking a bar (the widget's host items) or a chip offers Open Issue and Open PR: the
   shell runs `ticket.urls` and hands the page to egui's `open_url`. Bars always carry titles (#34);
   the status bar says how many issues came and from where,
@@ -319,10 +337,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   drag by the person is kept once they let go (moved, its size the same); `ui.set`'s `workers`
   also opens or closes it and sets its sort (as a header's first click, `WorkersView::sort_by`)
   and its window of time; `ui.inspect`'s `workers.rect` is where it was drawn.
-  `UiState` (the panes shown and their sizes, the factory's follow, play, speed, *t* and the
-  moments it steps by, what the details are of; version 5: the gates pane, #61; version 6: the
-  folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run and
-  sort, #67; version 8: its window's place, #76) is serde data. `saved` (#53) keeps the
+  `UiState` (the panes shown and their sizes, the factory's follow, play, speed, traced ticket
+  and the moments it steps by, what the details are of; version 5: the gates pane, #61; version 6:
+  the folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run
+  and sort, #67; version 8: its window's place, #76; version 9: no factory *t*, #85, an older
+  state's `t` dropped as it reads) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the
@@ -453,11 +472,13 @@ then spent seven slices typing them ([lessons.md](lessons.md) §1).
   window's own `ui.commands` (the window's commands, then the widget's as `timeline.<id>`, each
   with its params' and result's schemas; the widget's registry says nothing of read-only, so
   none of its is), `ui.inspect` (`swarmception_ui::control::Inspect`: the shell's
-  `UiState`, and what the panes show: the factory's *t*, where it came from, the key moment, what
-  each station drew last frame, the timeline's scale, window, playhead, selected ranges and
+  `UiState`, and what the panes show: the factory's *t* (the time it shows), where it came
+  from, the key moment, what it has selected and where it drew it, its header's words and its
+  strip's range (version 11, #85), what each station drew last frame, the timeline's scale, window, playhead, selected ranges and
   highlighted ones),
   `ui.set` (`UiSet`: panes, speed, steps, `at`, follow, playing, a ticket traced and its bars
-  selected, a step, the details' subject or none (#55), the window; `workers` (#76: `open`,
+  selected, a step, the details' subject or none (#55), the window, an hour of the strip's (#85);
+  `workers` (#76: `open`,
   `sort`, `ascending`, `wholeRun`, `place` within ±16384 points, `defaultPlace`); `ui.inspect`'s
   `details` report its subject, title, error and bars), `ui.loaded` (`{"within": <s>}`, at most 19:
   answered with `ui.inspect`'s answer once nothing is loading, the issues are in and the
@@ -530,6 +551,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | The Factory follows the timeline (#85): no clock of its own (its *t* the playhead's, a time put on it kept while the playhead stays on its item; `UiState` version 9 without `t`), its header's buttons first at fixed places, the details' subject selected in it and brought into view (`Selected`, `Block::commit`), the strip keeping its range after an hour's click (`ui.set`'s `hour`); `ui.inspect` version 11 |
 | 2026-11-02 | minor | Gate runs and ready checks as rows on the timeline (#84): the domain's Gate runs and Ready checks rows under the merges rows (`Style::GateRun`, `Style::ReadyCheck`, `Bar::run`, `RunBar`, `TOP_KEYS`), `gates.list`'s runs a bar each; `bar_subject` and a gate run's `OnTimeline` read them; `timeline.bar`, `timeline.runBars`; the timeline's hovered run lights its tickets (`TimelinePane::hovered`); the Gates band keeps its figures, causes and hours, its lanes gone; `ui.inspect` version 10 (`timeline.hoveredRun`; `gates.runs` gone, `gates.hovered` an hour) |
 | 2026-11-02 | minor | A submit straight after a send-back is its rework, drawn as working in the ticket's colour after a minute's sent-back mark (#83) |
 | 2026-11-02 | minor | `ui.set` reaches the Workers window (#76: `workers`, its place in `WorkersView` and `UiState` version 8, `ui.inspect` version 8 with `workers.rect`); MCP answers a screenshot's PNG as an image up to `IMAGE_MOST` (`mcp::Content`, `image_too_large`, `image_unreadable`); Open… off macOS through the desktop's picker as a child process (`picker`, `Picked`) |

@@ -109,6 +109,8 @@ pub struct Looking {
     pub hover: Option<Timestamp>,
     /// The start of the playhead's item.
     pub playhead: Option<Timestamp>,
+    /// The playhead's item (#85: a time put on the playhead holds while it stays on that item).
+    pub playhead_item: Option<u64>,
     /// The window's start and end.
     pub window: Option<(Timestamp, Timestamp)>,
 }
@@ -635,6 +637,7 @@ impl TimelinePane {
         Some(Looking {
             hover: state.hover.and_then(&mut at),
             playhead: state.playhead_span.and_then(|s| at(s.start)),
+            playhead_item: state.playhead,
             window: at(state.window.start).zip(at(state.window.end)),
         })
     }

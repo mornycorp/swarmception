@@ -49,9 +49,9 @@ use swarmception_engine::rows_cmds::{Get as GetRows, Set as SetRows, SetParams a
 use swarmception_engine::session::Job;
 
 pub use details::{DetailsDrawn, DetailsPane, DetailsView, params as details_params};
-pub use factory::{FactoryPane, FactoryView, Jump, Source as FactorySource, Speed, Steps};
+pub use factory::{FactoryPane, FactoryView, HeaderDrawn, Jump, Source as FactorySource, Speed, Steps};
 pub use factory_chip::{Look, Size, look};
-pub use factory_paint::{Drawn, Marks};
+pub use factory_paint::{Drawn, Marks, Selected as FactorySelected};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
 pub use gates::{GatesDrawn, GatesPane, HourDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
@@ -65,8 +65,9 @@ pub use workers::{
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
 /// details pane and what it is about; 4: the panes' sizes (#53); 5: the gates pane and its
 /// height (#61); 6: the folded panes (#68); 7: the workers pane, its window and its sort (#67);
-/// 8: where the workers' window is (#76).
-pub const UI_STATE_VERSION: u32 = 8;
+/// 8: where the workers' window is (#76); 9: the factory keeps no time of its own (#85: the
+/// factory's `t` is gone, and an older state's is dropped as it reads).
+pub const UI_STATE_VERSION: u32 = 9;
 
 /// The panes the View menu shows or hides.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -247,9 +248,6 @@ impl Shell {
         self.followed.1 = self.ui.factory.ticket;
         // Its subject was in view as it was left: the restored window stays, not moved to it.
         self.revealed.clone_from(&self.ui.details.subject);
-        if !self.ui.factory.follow {
-            self.playhead_to = self.ui.factory.t;
-        }
         self.set_rows(SetRowsParams { grouping: Some(state.rows.grouping), collapse: Some(state.rows.collapse) });
         if let Some(view) = &state.timeline {
             self.timeline.restore_view(view.clone());
@@ -270,15 +268,12 @@ impl Shell {
         }
     }
 
-    /// The state as it would be saved now; none when the shell keeps none. The factory's *t*
-    /// only when it isn't following the timeline, and play off.
+    /// The state as it would be saved now; none when the shell keeps none. Play off; the
+    /// factory's time is the timeline's playhead's, saved with the timeline (#85).
     pub fn app_state(&mut self) -> Option<saved::AppState> {
         let repo = self.keeper.as_ref()?.repo().to_path_buf();
         let mut ui = self.ui.clone();
         ui.factory.playing = false;
-        if ui.factory.follow {
-            ui.factory.t = None;
-        }
         Some(saved::AppState {
             ui,
             rows: self.spec,
@@ -382,11 +377,10 @@ impl Shell {
         &self.factory
     }
 
-    /// Puts the factory at `t`, not following the timeline, and the timeline's playhead there.
-    pub const fn set_factory_at(&mut self, t: swarmception_model::Timestamp) {
-        self.ui.factory.t = Some(t);
-        self.ui.factory.follow = false;
-        self.ui.factory.playing = false;
+    /// Puts the timeline's playhead at `t` (once it has data), and the factory, following it, at
+    /// `t` (#85: the timeline is the factory's time); play off.
+    pub fn set_factory_at(&mut self, t: swarmception_model::Timestamp) {
+        self.factory.put(&mut self.ui.factory, t);
         self.playhead_to = Some(t);
     }
 
@@ -634,16 +628,7 @@ impl Shell {
     fn follow(&mut self, ctx: &egui::Context) {
         let before = self.ui.details.subject.clone();
         self.follow_timeline();
-        let traced = self.ui.factory.ticket;
-        if traced != self.followed.1 {
-            self.followed.1 = traced;
-            if let Some(issue) = traced {
-                self.select(Subject::Ticket { issue });
-            }
-        }
-        if let Some((sub, at)) = self.factory.drawn().run_clicked.clone().filter(|_| self.ui.panes.factory) {
-            self.select(Subject::Gate { sub, at: Some(at) });
-        }
+        self.follow_factory();
         if let Some(subject) = self.workers.drawn().chosen.clone().filter(|_| self.ui.panes.workers) {
             self.select(subject);
         }
@@ -656,9 +641,42 @@ impl Shell {
             }
         }
         if self.ui.details.subject != before {
+            self.trace_subject();
             self.details.sync(&mut self.engine, &self.ui.details);
             ctx.request_repaint();
         }
+    }
+
+    /// What was chosen in the factory: a ticket newly traced (a chip clicked), a gate run's line
+    /// or a merge's brick clicked (#85).
+    fn follow_factory(&mut self) {
+        let traced = self.ui.factory.ticket;
+        if traced != self.followed.1 {
+            self.followed.1 = traced;
+            if let Some(issue) = traced {
+                self.select(Subject::Ticket { issue });
+            }
+        }
+        if !self.ui.panes.factory {
+            return;
+        }
+        if let Some((sub, at)) = self.factory.drawn().run_clicked.clone() {
+            self.select(Subject::Gate { sub, at: Some(at) });
+        }
+        if let Some(commit) = self.factory.drawn().merge_clicked.clone() {
+            self.select(Subject::Merge { commit });
+        }
+    }
+
+    /// A new selection traced in the factory (#85): a ticket's journey traced, whoever chose it
+    /// (a bar on the timeline, a chip, the details), and none for anything else; followed already,
+    /// so it chooses nothing again.
+    fn trace_subject(&mut self) {
+        self.ui.factory.ticket = match &self.ui.details.subject {
+            Some(Subject::Ticket { issue }) => Some(*issue),
+            _ => None,
+        };
+        self.followed.1 = self.ui.factory.ticket;
     }
 
     /// A bar newly chosen on the timeline: the details of what `details.get` reads it as (its
@@ -677,14 +695,17 @@ impl Shell {
     }
 
     /// The hour starting at `start`, its bar clicked in the factory's sparkline (#31): the
-    /// timeline's window on it, and the factory's *t* and the timeline's playhead at its last
-    /// second, so the factory shows what the hour ended with.
+    /// timeline's window on it, and its playhead (the factory following it) at the hour's last
+    /// second, so the factory shows what the hour ended with; the strip keeps its range, the hour
+    /// marked (#85).
     fn show_hour(&mut self, start: swarmception_model::Timestamp) {
         let end = swarmception_model::Timestamp(start.0.saturating_add(3_600));
         let t = swarmception_model::Timestamp(end.0.saturating_sub(1));
+        self.factory.keep_strip(start);
         self.timeline.show_span(&mut self.engine, start, end);
-        self.ui.factory.t = Some(t);
+        self.set_factory_at(t);
         self.timeline.put_playhead(&mut self.engine, t);
+        self.playhead_to = None;
     }
 
     /// The timeline's highlight, apart from the person's selection: the ticket hovered in the
@@ -904,19 +925,22 @@ impl Shell {
         ctx.request_repaint();
     }
 
-    /// The factory's time this frame (a step, play, the timeline or neither), the timeline's
-    /// playhead where a step, play or `--at` put it, and the scene at that time.
+    /// The factory's time this frame (#85: the timeline's playhead, which a step, play or `--at`
+    /// moves first), what it has selected (the details' subject), and the scene at that time.
     fn step_factory(&mut self, ctx: &egui::Context) {
-        let looking = self.timeline.looking(&mut self.engine);
         let jumped = self.factory.jump(&mut self.engine, &mut self.ui.factory);
-        let to = self.factory.step(ctx, &mut self.ui.factory, looking);
         if jumped.is_some() {
             ctx.request_repaint();
         }
-        if let Some(t) = jumped.or(to).or_else(|| self.playhead_to.filter(|_| self.timeline.has_data())) {
+        if let Some(t) = jumped.or_else(|| self.playhead_to.filter(|_| self.timeline.has_data())) {
             self.timeline.put_playhead(&mut self.engine, t);
             self.playhead_to = None;
         }
+        let looking = self.timeline.looking(&mut self.engine);
+        if let Some(t) = self.factory.step(ctx, &mut self.engine, &mut self.ui.factory, looking) {
+            self.timeline.put_playhead(&mut self.engine, t);
+        }
+        self.factory.select(self.ui.details.subject.as_ref().and_then(factory_paint::Selected::of));
         let recent = factory::recent(&self.ui.factory, looking);
         self.factory.sync(&mut self.engine, &self.ui.factory, recent);
         self.factory.sync_stats(&mut self.engine, looking);

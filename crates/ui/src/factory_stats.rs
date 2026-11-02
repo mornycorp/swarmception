@@ -4,7 +4,9 @@
 //!
 //! Left to right: **landed per active hour**, large, with "N landed · H active h" beside it; a
 //! sparkline of the hourly series, the hour holding the factory's *t* marked, each bar clickable
-//! (#31: the shell zooms the timeline's window to that hour and puts *t* in it); then, compact, the
+//! (#31: the shell zooms the timeline's window to that hour and puts its playhead in it; #85: the
+//! strip keeps its own range, not the window that click made, the clicked hour marked under its
+//! bar, until the timeline's window moves on); then, compact, the
 //! median claim → merge, the median wait at the dock, the gates' pass rate (failures by cause in
 //! its tooltip), sendbacks per landed, the mean tickets working and in flight, and the workers'
 //! utilisation (each worker in its tooltip). Every figure's tooltip says how it is computed.
@@ -34,12 +36,26 @@ pub struct StripDrawn {
     /// Where each bar was drawn, its hour's start: for a test to click one.
     pub hours: Vec<(Timestamp, Rect)>,
     /// The hour whose bar was clicked this frame, its start: the shell moves the timeline's
-    /// window to it and the factory's *t* with it (#31).
+    /// window to it and the timeline's playhead with it (#31).
     pub chosen: Option<Timestamp>,
+    /// The bar of the hour clicked last, while the strip keeps its range (#85): marked.
+    pub clicked: Option<usize>,
 }
 
 /// What a strip was asked for: the window, and the engine's revision.
 type Asked = (Option<(Timestamp, Timestamp)>, (u64, u64));
+
+/// A window of the timeline's, as clock times; none for the whole run.
+type Window = Option<(Timestamp, Timestamp)>;
+
+/// The range the strip keeps after a click on an hour (#85), and the window that click made:
+/// while the timeline shows that window, the strip stays on its range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Kept {
+    range: Window,
+    /// The timeline's window the click made, seen on the first frame after it.
+    made: Option<Window>,
+}
 
 /// The statistics for the window, and when they were asked.
 #[derive(Debug, Default)]
@@ -49,6 +65,10 @@ pub struct StatsStrip {
     /// How many times `stats.get` ran: the test that it isn't asked every frame reads it.
     asks: u64,
     drawn: StripDrawn,
+    /// Its range kept after a click on an hour (#85).
+    kept: Option<Kept>,
+    /// The hour clicked last, its start, marked while the range is kept.
+    clicked: Option<Timestamp>,
 }
 
 /// A rate to one decimal; a dash for none.
@@ -98,8 +118,49 @@ impl StatsStrip {
         &self.drawn
     }
 
-    /// Asks `stats.get` for `window` (the whole run when none) when it or the engine moved on.
+    /// Keeps the strip's range (#85) after a click on the hour starting at `hour`, which moves the
+    /// timeline's window to that hour: the strip stays on the range it showed, the hour marked,
+    /// until the timeline's window moves off the one the click made.
+    pub fn keep(&mut self, hour: Timestamp) {
+        let range = self.kept.map_or_else(|| self.asked.and_then(|(window, _)| window), |kept| kept.range);
+        self.kept = Some(Kept { range, made: None });
+        self.clicked = Some(hour);
+    }
+
+    /// Whether it keeps its range after a click on an hour, rather than the timeline's window.
+    #[must_use]
+    pub const fn kept(&self) -> bool {
+        self.kept.is_some()
+    }
+
+    /// The hour clicked, its start, marked while the range is kept.
+    #[must_use]
+    pub const fn clicked(&self) -> Option<Timestamp> {
+        self.clicked
+    }
+
+    /// The window the strip shows for the timeline's `window` (#85): its kept range while the
+    /// timeline shows the window an hour's click made, else the timeline's.
+    fn range(&mut self, window: Window) -> Window {
+        let Some(kept) = self.kept else { return window };
+        match kept.made {
+            None => {
+                self.kept = Some(Kept { made: Some(window), ..kept });
+                kept.range
+            }
+            Some(made) if made == window => kept.range,
+            Some(_) => {
+                self.kept = None;
+                self.clicked = None;
+                window
+            }
+        }
+    }
+
+    /// Asks `stats.get` for the timeline's `window` (the whole run when none), or the range it
+    /// keeps (#85), when that or the engine moved on.
     pub fn sync(&mut self, engine: &mut Session, window: Option<(Timestamp, Timestamp)>) {
+        let window = self.range(window);
         let asked = Some((window, engine.revision()));
         if self.asked == asked {
             return;
@@ -159,6 +220,7 @@ impl StatsStrip {
         let (rect, response) = ui.allocate_exact_size(vec2(width, 30.0), Sense::click());
         let painter = ui.painter_at(rect);
         let weak = ui.visuals().weak_text_color();
+        let chosen = ui.visuals().selection.stroke.color;
         painter.rect_stroke(rect, 2.0, Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color), StrokeKind::Inside);
         let max = stats.hours.iter().filter_map(|h| h.landed_per_active_hour).fold(0.0_f64, f64::max);
         let step = rect.width() / n.max(1) as f32;
@@ -178,6 +240,7 @@ impl StatsStrip {
             if Some(i) == marked {
                 painter.rect_stroke(bar.expand2(vec2(0.5, 1.5)), 1.0, Stroke::new(1.0, WORKING), StrokeKind::Outside);
             }
+            self.mark_clicked(&painter, (i, hour.start), bar, (rect.bottom(), chosen));
             self.drawn.hours.push((hour.start, bar));
         }
         if n == 0 {
@@ -196,11 +259,28 @@ impl StatsStrip {
         let response = if hovered.is_some() { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response };
         let lines: Vec<String> = hovered.map_or_else(
             || vec!["Landed per active hour".to_owned(), "Each clock hour (UTC) of the window; the hour holding the factory's t is marked.".to_owned()],
-            |hour| vec![format!("{} UTC", clock(hour.start)), hour_text(hour), "Click: the timeline and the factory to this hour".to_owned()],
+            |hour| {
+                vec![
+                    format!("{} UTC", clock(hour.start)),
+                    hour_text(hour),
+                    "Click: the timeline to this hour, its playhead at its end; the strip keeps its range".to_owned(),
+                ]
+            },
         );
         crate::factory_tip::show(response, &lines);
         self.drawn.bars = n;
         self.drawn.marked = marked;
+    }
+
+    /// The hour clicked (#85), the `n`th bar starting at `start` drawn at `bar`, while the strip
+    /// keeps its range: a foot in `colour` (the selection's) under it, down to `bottom`.
+    fn mark_clicked(&mut self, painter: &egui::Painter, (n, start): (usize, Timestamp), bar: Rect, (bottom, colour): (f32, egui::Color32)) {
+        if Some(start) != self.clicked {
+            return;
+        }
+        let foot = Rect::from_min_max(pos2(bar.left() - 0.5, bottom - 2.5), pos2(bar.right() + 0.5, bottom));
+        painter.rect_filled(foot, 0.0, colour);
+        self.drawn.clicked = Some(n);
     }
 
     fn figures(&mut self, ui: &mut egui::Ui, stats: &Stats) {
