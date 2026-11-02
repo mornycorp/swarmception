@@ -422,6 +422,7 @@ impl TimelinePane {
         let focus = kept.selection.focus.as_ref();
         let focused = carry(focus.and_then(|f| f.range.map(|range| BarRef { track: f.track.clone(), range })).into_iter().collect());
         let playhead = kept.playhead.and_then(|position| engine.call::<TimeAt>(TimeAtParams { position }).ok()).map(|t| t.time);
+        self.show_rows(selected.iter().map(|bar| bar.track.as_str()));
         let session = self.widget.session();
         for bar in selected {
             let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
@@ -610,9 +611,11 @@ impl TimelinePane {
         if !self.has_data {
             return;
         }
-        let session = self.widget.session();
-        let _ = session.call::<ClearRanges>(NoParams {});
+        let _ = self.widget.session().call::<ClearRanges>(NoParams {});
         let Some(Ok(found)) = issue.map(|issue| engine.call::<TicketBars>(TicketParams { issue })) else { return };
+        // Only a shown row's bars can be selected: those the window left out come back (#74).
+        self.show_rows(found.bars.iter().map(|bar| bar.track.as_str()));
+        let session = self.widget.session();
         for bar in found.bars {
             let _ = session.call::<ToggleRange>(RangeParams { track: bar.track, range: bar.range });
         }
@@ -848,6 +851,25 @@ impl TimelinePane {
             let _ = session.call::<SetTrack>(SetTrackParams { key: key.clone(), hidden: Some(true), ..SetTrackParams::default() });
         }
         self.window_rows.hidden = wanted;
+    }
+
+    /// Shows again the rows of `tracks` the window left out (#74), and the groups holding them
+    /// (a row's key is its groups' keys and its own, `/` between: `w/<machine>/<worker>/<n>`),
+    /// so their bars can be selected (the widget selects only a shown row's); the window looks
+    /// again on the next frame, keeping them while they hold the selection.
+    fn show_rows<'a>(&mut self, tracks: impl Iterator<Item = &'a str>) {
+        let tracks: Vec<&str> = tracks.collect();
+        let holds = |hidden: &String| tracks.iter().any(|track| track.strip_prefix(hidden.as_str()).is_some_and(|rest| rest.is_empty() || rest.starts_with('/')));
+        let shown: Vec<String> = self.window_rows.hidden.iter().filter(|key| holds(key)).cloned().collect();
+        if shown.is_empty() {
+            return;
+        }
+        let session = self.widget.session();
+        for key in shown {
+            let _ = session.call::<SetTrack>(SetTrackParams { key: key.clone(), hidden: Some(false), ..SetTrackParams::default() });
+            self.window_rows.hidden.remove(&key);
+        }
+        self.window_rows.applied = None;
     }
 
     /// Collapses the rows to the window on the next look, without waiting for it to settle:

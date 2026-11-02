@@ -213,6 +213,13 @@ fn the_selection_highlight_and_details_survive_rows_coming_and_going() {
     left_out.extend(tickets(4, WORKERS));
     assert_eq!(shell.inspect().timeline.left_out, left_out);
     assert_eq!(drawn(&mut shell), tickets(1, 3));
+
+    // Selected again while the window leaves its rows out: they come back to hold it.
+    let inspect = set(&mut shell, r#"{"ticket": 22}"#);
+    assert_eq!(inspect.timeline.selected, before.selected, "selected on rows the window had left out");
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.inspect().timeline.left_out, tickets(4, WORKERS - 1));
+    assert_eq!(drawn(&mut shell), rows_window(&mut shell).shown);
     std::fs::remove_dir_all(dir).ok();
 }
 
