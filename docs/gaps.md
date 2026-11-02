@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 8: collapse to the window, the loose ends of M2 and M3) · **Target:** M3
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 9: the owner's review: colours, gate rows, the Factory follows, folding quiet time) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,11 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| 1 | [G24 Loose ends from the owner's review](#g24-loose-ends-from-the-owners-review) | open | | 3–5 h |
+| — | [G20 A ticket keeps its colour across a send-back](#g20-a-ticket-keeps-its-colour-across-a-send-back) | done | #83 | |
+| — | [G21 Gate runs and ready checks on the timeline](#g21-gate-runs-and-ready-checks-on-the-timeline) | done | #84 | |
+| — | [G22 The Factory follows the timeline](#g22-the-factory-follows-the-timeline) | done | #85 | |
+| — | [G23 Fold the timeline's quiet time](#g23-fold-the-timelines-quiet-time) | done | #86, swarm-timeline#191 | |
 | — | [G6 Collapse to the window](#g6-collapse-to-the-window) | done | #74 | |
 | — | [G19 Loose ends from M2 and M3](#g19-loose-ends-from-m2-and-m3) | done | #75–#77, swarm-core#12 | |
 | — | [G9 Swarm analytics panes](#g9-swarm-analytics-panes) | done | #18, #20, #22, #31–#33, #42, #61, #67 | |
@@ -177,6 +182,69 @@ marked **Human:** with what is needed.
   `crates/ui/tests/workers_pane.rs`, `apps/app/src/picker.rs`, `apps/cli/tests/automation.rs`;
   screenshots checked 2026-11-02.
 
+## G20 A ticket keeps its colour across a send-back
+
+- **Done** (#83, PR #87): the owner saw mc-engine's #169 change colour after a send-back. The
+  colour never changed: a worker's fix after a send-back logs no `work`, only the next `submit`,
+  so the whole fix read as *sent back* (red). A worker's submit straight after a send-back now
+  makes that stretch rework, in the ticket's colour, the send-back keeping a 60 s red mark; the
+  stretch is said to be inferred. A gate's submit is never rework; a re-claim starts anew. Every
+  sent-back ticket on mc-engine had it (#52, #68, #71, #96, #120, #134, #169).
+- **Left:** the rework's start is inferred: swarm-core could log `work` when a worker picks up a
+  send-back ([G24](#g24-loose-ends-from-the-owners-review)).
+- **Evidence:** `crates/domain/src/tickets.rs`,
+  `colours::tests::a_tickets_colour_holds_across_a_send_back_and_a_re_claim` (#169's real
+  events); screenshots checked 2026-11-02.
+
+## G21 Gate runs and ready checks on the timeline
+
+- **Done** (#84, PR #88): two timeline rows under *Tickets merged*, **Gate runs** and **Ready
+  checks**, a bar per run coloured by result, labelled with its tickets and a failure's cause
+  (`#83 · build/clippy`); they pan, zoom, select (Details tells the story), highlight and
+  collapse like any row; a hover lights the run's tickets. `timeline.bar`, `timeline.runBars`.
+  The Gates band lost its lanes and keeps its figures, causes and hours.
+- **Measured:** mc-engine's 136 gate runs and 147 ready checks equal `gates.list`'s (2026-11-02).
+- **Left:** the widget sizes a row's lanes over the whole run, so Ready checks is four lanes tall
+  everywhere ([G24](#g24-loose-ends-from-the-owners-review)).
+- **Evidence:** `crates/domain/src/gates.rs`, `crates/engine/tests/gates.rs`,
+  `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02.
+
+## G22 The Factory follows the timeline
+
+- **Done** (#85, PR #89): the timeline is the source of truth (owner). The Factory's header puts
+  its buttons first at fixed places, the words after; it has no clock of its own (the timeline's
+  playhead, or the window's end; held and said so when not following); play, steps and an hour's
+  click move the playhead. Selecting on the timeline selects in the Factory: a ticket's chip and
+  brick, a merge's brick, a gate run in the Gate list, brought into view. The strip keeps its
+  range after an hour's click, the hour marked. Hovering the timeline no longer moves the Factory.
+- **Left:** ready checks aren't in the Factory's Gate list; a run ending after the Factory's time
+  isn't drawn selected ([G24](#g24-loose-ends-from-the-owners-review)).
+- **Evidence:** `crates/ui/src/factory*.rs`, `crates/ui/tests/factory_pane.rs`; screenshots
+  checked 2026-11-02.
+
+## G23 Fold the timeline's quiet time
+
+- **Done** (#86, PR #90; swarm-timeline#191, PR #192, pinned at efdf212): the widget folds
+  quiet stretches (or a host's ranges) into 12 px zig-zag markers; every mapping goes through the
+  folded axis, the ruler jumps over a fold and labels its edges, a marker's tooltip says what was
+  folded (`quiet 12 h 19 min`, `22:33 → 10:53`). Here: a toolbar checkbox *Fold quiet time*, View
+  ▸ Fold Quiet Time, `ui.set {foldQuiet, foldAfterSeconds}`, saved; 15 min unless set (the quiet
+  gap of `stats.get`); it holds through Collapse and reloads; the Gates band's hours follow the
+  folded axis.
+- **Left:** the scroller stays linear and the minimap draws no markers; the Factory strip keeps
+  its own even axis ([G24](#g24-loose-ends-from-the-owners-review)).
+- **Evidence:** swarm-timeline `crates/core/src/fold.rs`, `crates/engine/tests/fold.rs`;
+  `crates/ui/tests/fold_quiet.rs`; screenshots checked 2026-11-02.
+
+## G24 Loose ends from the owner's review
+
+- **Missing:** a row's lanes sized over the visible window (Ready checks stands four lanes tall:
+  a widget change); ready checks in the Factory's Gate list; swarm-core logging `work` when a
+  worker picks up a send-back, so rework isn't inferred; the minimap marking folds;
+  `issues::in_the_background_the_issues_land_through_poll` runs ~10 s of its 20 s limit under
+  load (failed twice in a worker's `ready`).
+- **Estimate:** 3–5 agent-hours, part in swarm-timeline and swarm-core.
+
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
@@ -328,6 +396,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-02 | minor | Batch 9: the owner's review: G20–G23 done (#83–#86, swarm-timeline#191); G24 new |
 | 2026-11-02 | minor | Batch 8: G6, G19 done (#74–#77, swarm-core#12); no gaps open |
 | 2026-11-02 | minor | Batch 7: G8, G9, G17, G18 done (#67–#69); G19 new; M3 built |
 | 2026-11-02 | minor | Batch 6: G13, G15 done (#60, #62); G9 grew (#61, a gates pane); G18 new; focus G9, G18, G17 |
