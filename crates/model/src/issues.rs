@@ -3,11 +3,15 @@
 //! JSON: what `gh api --paginate repos/<owner>/<name>/issues?state=all` prints, the REST API's
 //! issues, which lists the pull requests too (flagged by `pull_request`), one page's array after
 //! another. An item that doesn't read is left out and counted; text is capped. An issue's pull
-//! request is the newest whose body closes it (`Closes #17`, `fixes #17`, …).
+//! request is the newest whose body closes it (`Closes #17`, `fixes #17`, …) or whose head branch
+//! is the issue's (`17-…`, as swarm-core's `claim` names them; [`branch_issue`]), the branches
+//! read from the pulls endpoint ([`parse_pulls`]).
 //!
 //! [`IssueCache`] is how they are kept on disk per repository: versioned JSON
 //! ([`ISSUES_VERSION`]); a cache from an older or newer build still reads, keeping every issue
-//! that reads.
+//! that reads. It records when it was fetched, when it was last fetched in full, and the
+//! validator (`ETag`, `Last-Modified`) of its last incremental request, and takes in what changed
+//! since ([`IssueCache::merge`], #62).
 
 use std::collections::BTreeMap;
 
@@ -16,8 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::Timestamp;
 
-/// [`IssueCache`]'s shape. 1: the first.
-pub const ISSUES_VERSION: u32 = 1;
+/// [`IssueCache`]'s shape. 1: the first. 2: each one's `updated` and a pull request's `branch`;
+/// the cache's `full` and `validator` (#62).
+pub const ISSUES_VERSION: u32 = 2;
 /// The most issues and pull requests kept.
 pub const MAX_ISSUES: usize = 100_000;
 /// The most labels kept on one.
@@ -87,12 +92,34 @@ pub struct Issue {
     pub author: Option<String>,
     pub created: Option<Timestamp>,
     pub closed: Option<Timestamp>,
+    /// When it last changed on GitHub: what an incremental fetch asks from (`since`).
+    pub updated: Option<Timestamp>,
     /// Its page.
     pub url: String,
     /// A pull request's: the issues its body closes, in order.
     pub closes: Vec<u64>,
-    /// An issue's: its pull request, the newest that closes it.
+    /// A pull request's: its head branch, from the pulls endpoint.
+    pub branch: Option<String>,
+    /// An issue's: its pull request, the newest that closes it or is on its branch.
     pub pr: Option<PrRef>,
+}
+
+impl Issue {
+    /// The issues this pull request is for: those its body closes, and its branch's.
+    fn targets(&self) -> impl Iterator<Item = u64> + '_ {
+        self.closes.iter().copied().chain(self.branch.as_deref().and_then(branch_issue))
+    }
+}
+
+/// The issue a branch is for, as swarm-core's `claim` names them: `<n>-<slug>`.
+#[must_use]
+pub fn branch_issue(branch: &str) -> Option<u64> {
+    let (number, rest) = branch.split_once('-')?;
+    let digits = !number.is_empty() && number.len() <= 19 && number.bytes().all(|b| b.is_ascii_digit());
+    if !digits || rest.is_empty() {
+        return None;
+    }
+    number.parse().ok().filter(|n| *n > 0)
 }
 
 /// The issues and pull requests, by number.
@@ -103,14 +130,14 @@ pub struct Issues {
 
 impl Issues {
     /// `issues` by number (the last of a number kept), each issue's pull request linked: the
-    /// newest pull request whose body closes it.
+    /// newest pull request whose body closes it or whose head branch is the issue's.
     #[must_use]
     pub fn new(issues: Vec<Issue>) -> Self {
-        let mut by_number: BTreeMap<u64, Issue> = issues.into_iter().take(MAX_ISSUES).map(|i| (i.number, i)).collect();
+        let mut by_number: BTreeMap<u64, Issue> = issues.into_iter().take(MAX_ISSUES).map(|i| (i.number, Issue { pr: None, ..i })).collect();
         let mut links: BTreeMap<u64, PrRef> = BTreeMap::new();
         for pr in by_number.values().filter(|i| i.kind == IssueKind::PullRequest) {
-            for closed in &pr.closes {
-                links.insert(*closed, PrRef { number: pr.number, title: pr.title.clone(), state: pr.state, url: pr.url.clone() });
+            for target in pr.targets() {
+                links.insert(target, PrRef { number: pr.number, title: pr.title.clone(), state: pr.state, url: pr.url.clone() });
             }
         }
         for (number, pr) in links {
@@ -197,6 +224,7 @@ struct RawIssue {
     user: Option<RawUser>,
     created_at: Option<String>,
     closed_at: Option<String>,
+    updated_at: Option<String>,
     html_url: Option<String>,
     body: Option<String>,
     pull_request: Option<RawPull>,
@@ -264,8 +292,10 @@ impl RawIssue {
             author: self.user.and_then(|u| u.login).map(|l| cut(&l, MAX_FIELD)),
             created: self.created_at.as_deref().and_then(Timestamp::parse),
             closed: self.closed_at.as_deref().and_then(Timestamp::parse),
+            updated: self.updated_at.as_deref().and_then(Timestamp::parse),
             url: cut(self.html_url.as_deref().unwrap_or_default(), MAX_FIELD),
             closes,
+            branch: None,
             pr: None,
         })
     }
@@ -293,6 +323,44 @@ pub fn parse_issues(text: &str) -> Result<Parsed, IssuesError> {
         }
     }
     Ok(parsed)
+}
+
+/// A pull request of the pulls endpoint as it comes: its number and head branch.
+#[derive(Deserialize)]
+struct RawPullHead {
+    number: Option<u64>,
+    head: Option<RawHead>,
+}
+
+#[derive(Deserialize)]
+struct RawHead {
+    #[serde(rename = "ref")]
+    branch: Option<String>,
+}
+
+/// Reads what `gh api [--paginate] repos/<owner>/<name>/pulls?state=all` printed: each pull
+/// request's head branch, by number. Items that don't read are left out.
+///
+/// # Errors
+///
+/// [`IssuesError`] when the text isn't JSON arrays at all.
+pub fn parse_pulls(text: &str) -> Result<BTreeMap<u64, String>, IssuesError> {
+    let mut branches = BTreeMap::new();
+    for page in serde_json::Deserializer::from_str(text).into_iter::<Vec<serde_json::Value>>() {
+        let page = page.map_err(|e| IssuesError(e.to_string()))?;
+        for item in page {
+            if branches.len() >= MAX_ISSUES {
+                break;
+            }
+            let Ok(RawPullHead { number: Some(number), head: Some(RawHead { branch: Some(branch) }) }) = serde_json::from_value(item) else {
+                continue;
+            };
+            if number > 0 && !branch.is_empty() {
+                branches.insert(number, cut(&branch, MAX_FIELD));
+            }
+        }
+    }
+    Ok(branches)
 }
 
 /// The issues `body` closes, as GitHub reads its keywords: `close`, `closes`, `closed`, `fix`,
@@ -329,7 +397,24 @@ pub struct IssueCache {
     pub repo: String,
     /// When they were fetched.
     pub fetched: Option<Timestamp>,
+    /// When they were last fetched in full (every page), not only what changed.
+    #[serde(default)]
+    pub full: Option<Timestamp>,
+    /// The last incremental request's validator, to ask GitHub whether anything changed since.
+    #[serde(default)]
+    pub validator: Option<Validator>,
     pub issues: Vec<Issue>,
+}
+
+/// What GitHub said of an incremental request (`since`), to send back with the same request
+/// (`If-None-Match`, `If-Modified-Since`): a `304 Not Modified` then means nothing changed.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Validator {
+    /// The request's `since`: the validator is good for that request only.
+    pub since: Option<Timestamp>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
 }
 
 /// A cache as it may come from any build: every field optional, each issue read alone.
@@ -342,14 +427,45 @@ struct RawCache {
     #[serde(default)]
     fetched: Option<Timestamp>,
     #[serde(default)]
+    full: Option<Timestamp>,
+    #[serde(default)]
+    validator: Option<serde_json::Value>,
+    #[serde(default)]
     issues: Vec<serde_json::Value>,
 }
 
 impl IssueCache {
-    /// A cache of `issues`, `repo`'s, fetched at `fetched`.
+    /// A cache of `issues`, `repo`'s, fetched in full at `fetched`.
     #[must_use]
     pub fn new(repo: &str, fetched: Option<Timestamp>, issues: Vec<Issue>) -> Self {
-        Self { version: ISSUES_VERSION, repo: repo.to_owned(), fetched, issues }
+        let issues = issues.into_iter().take(MAX_ISSUES).map(|i| Issue { pr: None, ..i }).collect();
+        Self { version: ISSUES_VERSION, repo: repo.to_owned(), fetched, full: fetched, validator: None, issues }
+    }
+
+    /// When the newest of them last changed on GitHub.
+    #[must_use]
+    pub fn newest(&self) -> Option<Timestamp> {
+        self.issues.iter().filter_map(|i| i.updated).max()
+    }
+
+    /// Takes in what changed, fetched at `fetched`: each one replaces the one of its number (a
+    /// pull request keeping the branch it had when the change has none), a new one is added;
+    /// the rest stay. How many were new or different.
+    pub fn merge(&mut self, fetched: Timestamp, changed: Vec<Issue>) -> usize {
+        let mut by_number: BTreeMap<u64, Issue> = std::mem::take(&mut self.issues).into_iter().map(|i| (i.number, i)).collect();
+        let mut moved = 0;
+        for issue in changed {
+            let old = by_number.get(&issue.number);
+            let branch = issue.branch.clone().or_else(|| old.filter(|o| o.kind == issue.kind).and_then(|o| o.branch.clone()));
+            let issue = Issue { branch, pr: None, ..issue };
+            if old != Some(&issue) && (old.is_some() || by_number.len() < MAX_ISSUES) {
+                moved += 1;
+                by_number.insert(issue.number, issue);
+            }
+        }
+        self.issues = by_number.into_values().collect();
+        self.fetched = Some(fetched);
+        moved
     }
 
     /// Reads a cache: one from an older or newer build too, keeping every issue that reads (an
@@ -361,7 +477,8 @@ impl IssueCache {
     pub fn read(text: &str) -> Result<Self, IssuesError> {
         let raw: RawCache = serde_json::from_str(text).map_err(|e| IssuesError(format!("the cache: {e}")))?;
         let issues = raw.issues.into_iter().take(MAX_ISSUES).filter_map(|v| serde_json::from_value::<Issue>(v).ok()).filter(|i| i.number > 0).collect();
-        Ok(Self { version: raw.version, repo: raw.repo, fetched: raw.fetched, issues })
+        let validator = raw.validator.and_then(|v| serde_json::from_value::<Validator>(v).ok());
+        Ok(Self { version: raw.version, repo: raw.repo, fetched: raw.fetched, full: raw.full, validator, issues })
     }
 
     /// The cache as JSON text.
@@ -481,5 +598,97 @@ mod tests {
         assert!(older.issues.is_empty());
         assert!(IssueCache::read(r#"{"issues":[]}"#).is_err(), "no version: not a cache");
         assert!(IssueCache::read("garbage").is_err());
+    }
+
+    #[test]
+    fn a_first_version_cache_reads_with_nothing_of_the_second() {
+        let v1 = r#"{"version":1,"repo":"o/n","fetched":5,"issues":[{"number":3,"kind":"pullRequest","title":"t","closes":[2]}]}"#;
+        let cache = IssueCache::read(v1).unwrap();
+        assert_eq!((cache.version, cache.full, cache.validator.as_ref()), (1, None, None));
+        assert_eq!((cache.issues[0].updated, cache.issues[0].branch.as_deref()), (None, None));
+        assert_eq!(cache.newest(), None);
+        let odd = IssueCache::read(r#"{"version":2,"validator":"not one","issues":[]}"#).unwrap();
+        assert_eq!(odd.validator, None, "a validator that doesn't read is none");
+    }
+
+    #[test]
+    fn branches_name_their_issue() {
+        assert_eq!(branch_issue("62-issues-fetched-incrementally"), Some(62));
+        assert_eq!(branch_issue("7-x"), Some(7));
+        assert_eq!(branch_issue("progress-5"), None);
+        assert_eq!(branch_issue("62"), None, "a claim's branch has its title after the number");
+        assert_eq!(branch_issue("62-"), None);
+        assert_eq!(branch_issue("0-zero"), None);
+        assert_eq!(branch_issue("-3-x"), None);
+        assert_eq!(branch_issue("99999999999999999999-big"), None);
+        assert_eq!(branch_issue("feature/62-x"), None);
+    }
+
+    #[test]
+    fn the_pulls_endpoint_gives_each_head_branch() {
+        let pages = r#"[{"number":26,"head":{"ref":"17-issue-titles","sha":"abc"},"body":"x"},{"number":27,"head":{}},{"head":{"ref":"x"}},"odd"]
+            [{"number":30,"head":{"ref":"18-later"}},{"number":31,"head":{"ref":""}}]"#;
+        let branches = parse_pulls(pages).unwrap();
+        assert_eq!(branches.into_iter().collect::<Vec<_>>(), [(26, "17-issue-titles".to_owned()), (30, "18-later".to_owned())]);
+        assert!(parse_pulls(r#"{"message":"Not Found"}"#).is_err());
+        assert!(parse_pulls("").unwrap().is_empty());
+    }
+
+    fn pull(number: u64, branch: Option<&str>, closes: &[u64]) -> Issue {
+        Issue {
+            number,
+            kind: IssueKind::PullRequest,
+            title: format!("PR {number}"),
+            branch: branch.map(str::to_owned),
+            closes: closes.to_vec(),
+            ..Issue::default()
+        }
+    }
+
+    fn issue(number: u64) -> Issue {
+        Issue { number, title: format!("issue {number}"), ..Issue::default() }
+    }
+
+    #[test]
+    fn an_issues_pr_is_on_its_branch_too() {
+        let issues = Issues::new(vec![
+            issue(5),
+            issue(6),
+            issue(7),
+            pull(10, Some("5-the-fix"), &[]),
+            pull(11, Some("6-first"), &[]),
+            pull(12, None, &[6]),
+            pull(13, Some("7-x"), &[99]),
+        ]);
+        assert_eq!(issues.pr_of(5, None).map(|p| p.number), Some(10), "by its branch alone");
+        assert_eq!(issues.pr_of(6, None).map(|p| p.number), Some(12), "the newest of its branch's and the one closing it");
+        assert_eq!(issues.pr_of(7, None).map(|p| p.number), Some(13), "a branch's, though its body closes another");
+        let stale = Issue { pr: Some(PrRef { number: 1, title: String::new(), state: IssueState::Open, url: String::new() }), ..issue(8) };
+        assert_eq!(Issues::new(vec![stale]).pr_of(8, None), None, "a link that was is gone");
+    }
+
+    #[test]
+    fn a_merge_takes_in_what_changed_and_keeps_the_rest() {
+        let at = |s: i64| Some(Timestamp(s));
+        let mut cache = IssueCache::new(
+            "o/n",
+            at(100),
+            vec![Issue { updated: at(50), ..issue(1) }, Issue { updated: at(60), ..pull(2, Some("1-fix"), &[]) }, Issue { updated: at(40), ..issue(3) }],
+        );
+        assert_eq!((cache.full, cache.newest()), (at(100), at(60)));
+        let changed = vec![
+            Issue { updated: at(60), ..pull(2, None, &[]) },
+            Issue { title: "renamed".into(), state: IssueState::Closed, updated: at(70), ..issue(3) },
+            Issue { updated: at(80), ..pull(4, Some("3-other"), &[]) },
+        ];
+        assert_eq!(cache.merge(Timestamp(200), changed), 2, "#3 changed and #4 is new; #2 is as it was");
+        assert_eq!((cache.fetched, cache.full, cache.newest()), (at(200), at(100), at(80)), "fetched now; in full still at the first");
+        assert_eq!(cache.issues.iter().map(|i| i.number).collect::<Vec<_>>(), [1, 2, 3, 4]);
+        assert_eq!(cache.issues[1].branch.as_deref(), Some("1-fix"), "a pull request keeps its branch");
+        assert_eq!((cache.issues[2].title.as_str(), cache.issues[2].state), ("renamed", IssueState::Closed));
+        let issues = Issues::new(cache.issues.clone());
+        assert_eq!((issues.pr_of(1, None).map(|p| p.number), issues.pr_of(3, None).map(|p| p.number)), (Some(2), Some(4)));
+        assert_eq!(cache.merge(Timestamp(300), Vec::new()), 0);
+        assert_eq!(cache.issues.len(), 4);
     }
 }

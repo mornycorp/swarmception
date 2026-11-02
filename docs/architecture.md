@@ -33,8 +33,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   UTC time a `Timestamp` with its own calendar arithmetic. A line that doesn't read is a
   `LineError` with its number; lines and notes are capped. `issues` (#17): a repository's GitHub
   issues and pull requests parsed from what `gh api --paginate …/issues?state=all` prints (an item
-  that doesn't read is skipped and counted; an issue's PR is the newest whose body closes it), and
-  `IssueCache`, their versioned JSON on disk, which reads from an older or newer build too.
+  that doesn't read is skipped and counted; an issue's PR is the newest whose body closes it or
+  whose head branch is the issue's, `<n>-…`), the pulls' head branches, and `IssueCache`, their
+  versioned JSON on disk, which reads from an older or newer build too and merges in what changed
+  (#62).
 - **L1 `swarmception-domain`**: `activity` reads each instance's sessions (split at its pauses),
   its work on issues, its helper sub-agents (a gate's `rc`, the PRs its note names) and its marks,
   and applies what another instance ends (`of` on `session.stop` and `release`), and keeps every
@@ -105,7 +107,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (#17): the `origin` remote read as GitHub's `owner/name`, the issues fetched with `gh api
   --paginate` (the same runner as git: a deadline, a cap, no prompts), and a cache per repository
   in the user's cache directory (`~/Library/Caches/swarmception/issues/<owner>--<name>.json` on
-  macOS), written whole or not at all. No remote on GitHub, no `gh`, no network: a `GithubError`.
+  macOS), written whole or not at all. `refresh` (#62) fetches every page (and the pulls', for
+  their branches) only with no cache, one of another version or one a week past its last full
+  fetch; else one page of what changed since the newest change it holds (`since=`), sent with the
+  same request's ETag so a `304` costs nothing, merged in. No remote on GitHub, no `gh`, no
+  network: a `GithubError`, and the cache as it was.
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
   `repo.open`, `repo.reload`, `repo.fetch`, `repo.status`, `rows.get`, `rows.set`, `rows.list`,

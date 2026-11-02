@@ -1,7 +1,8 @@
 //! The repository's GitHub issues (#17), read on a load as a front end loads: through a `gh` of
 //! the test's own (a script printing `gh api`'s pages, or failing), a cache in a temporary
 //! directory, and a real repository whose tracking branch holds one ticket. No network, and no
-//! browser: `ticket.urls` answers the pages, a front end opens them.
+//! browser: `ticket.urls` answers the pages, a front end opens them. A load with a cache asks
+//! only for what changed since (#62), the fake `gh` answering that request apart.
 
 use std::path::{Path, PathBuf};
 
@@ -9,7 +10,7 @@ use swarmception_domain::Node;
 use swarmception_engine::EngineError;
 use swarmception_engine::Session;
 use swarmception_engine::error::Unavailable;
-use swarmception_engine::issues::IssuesSource;
+use swarmception_engine::issues::{IssuesSource, RefreshKind};
 use swarmception_engine::issues_cmds::TicketUrlsResult;
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::ListResult;
@@ -58,22 +59,39 @@ fn repo(remote: Option<&str>) -> PathBuf {
 /// `gh api`'s pages for `o/n`: #7, the PR #8 that closes it, and an issue the swarm never held.
 const PAGES: &str = r#"[
   {"number":7,"title":"Seven: the ticket's own title","state":"closed","labels":[{"name":"type::task"}],"user":{"login":"owner"},
-   "created_at":"2026-10-31T02:00:00Z","closed_at":"2026-10-31T03:45:00Z","html_url":"https://github.com/o/n/issues/7"},
+   "created_at":"2026-10-31T02:00:00Z","closed_at":"2026-10-31T03:45:00Z","updated_at":"2026-10-31T03:45:00Z","html_url":"https://github.com/o/n/issues/7"},
   {"number":8,"title":"The fix for seven","state":"closed","body":"Closes #7","html_url":"https://github.com/o/n/pull/8",
-   "pull_request":{"merged_at":"2026-10-31T03:45:00Z"}}
+   "updated_at":"2026-10-31T03:45:00Z","pull_request":{"merged_at":"2026-10-31T03:45:00Z"}}
 ]
 [
-  {"number":12,"title":"Never held","state":"open","html_url":"https://github.com/o/n/issues/12"}
+  {"number":12,"title":"Never held","state":"open","updated_at":"2026-10-31T04:00:00Z","html_url":"https://github.com/o/n/issues/12"}
 ]"#;
 
-/// A `gh` that prints `PAGES`, or fails saying `fail`.
+/// The pulls' pages: each one's head branch.
+const PULLS: &str = r#"[{"number":8,"head":{"ref":"7-seven"}},{"number":13,"head":{"ref":"12-never-held"}}]"#;
+
+/// What changed since, as `gh api --include` prints it: #12 renamed, and a new PR #13 on #12's
+/// branch, its body closing nothing.
+const SINCE: &str = "HTTP/2.0 200 OK\nEtag: W/\"e1\"\r\n\r\n[\
+  {\"number\":12,\"title\":\"Held at last\",\"state\":\"open\",\"updated_at\":\"2026-11-01T09:00:00Z\",\"html_url\":\"https://github.com/o/n/issues/12\"},\
+  {\"number\":13,\"title\":\"Twelve's fix\",\"state\":\"open\",\"body\":\"\",\"updated_at\":\"2026-11-01T10:00:00Z\",\
+   \"html_url\":\"https://github.com/o/n/pull/13\",\"pull_request\":{}}]";
+
+/// A `gh` that prints `PAGES` for the issues, `PULLS` for the pulls, `SINCE` for what changed and
+/// a 304 for a request with an ETag (each call's arguments a line of `args`), or fails saying
+/// `fail`.
 #[cfg(unix)]
 fn fake_gh(dir: &Path, fail: Option<&str>) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     std::fs::write(dir.join("pages.json"), PAGES).unwrap();
+    std::fs::write(dir.join("pulls.json"), PULLS).unwrap();
+    std::fs::write(dir.join("since.txt"), SINCE).unwrap();
+    let d = dir.display();
     let body = match fail {
         Some(why) => format!("#!/bin/sh\necho '{why}' >&2\nexit 1\n"),
-        None => format!("#!/bin/sh\ncat '{}/pages.json'\n", dir.display()),
+        None => format!(
+            "#!/bin/sh\necho \"$@\" >> '{d}/args'\ncase \"$*\" in\n  *If-None-Match*) echo 'gh: HTTP 304' >&2; exit 1 ;;\n  *since=*) cat '{d}/since.txt' ;;\n  *pulls*) cat '{d}/pulls.json' ;;\n  *) cat '{d}/pages.json' ;;\nesac\n"
+        ),
     };
     let gh = dir.join("gh");
     std::fs::write(&gh, body).unwrap();
@@ -232,4 +250,116 @@ fn in_the_background_the_issues_land_through_poll() {
     assert_eq!(bars_of(&mut session, 7)[0].label, "#7 Seven: the ticket's own title");
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(tools).ok();
+}
+
+/// The cache's file, as JSON to change.
+fn cache_json(cache: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(cache.join("issues/o--n.json")).unwrap()).unwrap()
+}
+
+fn write_cache_json(cache: &Path, json: &serde_json::Value) {
+    std::fs::write(cache.join("issues/o--n.json"), json.to_string()).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_load_with_a_cache_merges_what_changed_since() {
+    let dir = repo(Some("https://github.com/o/n.git"));
+    let tools = temp("gh-since");
+    let cache = temp("cache-since");
+    let mut session = Session::new();
+    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    let status = open(&mut session, &dir);
+    let refresh = status.issues.refresh.unwrap();
+    assert_eq!((refresh.kind, refresh.why.as_deref()), (RefreshKind::Full, Some("no cache")));
+    assert_eq!(cache_json(&cache)["version"], 2);
+    let urls: TicketUrlsResult = call(&mut session, "ticket.urls", r#"{"issue":12}"#);
+    assert_eq!((urls.title.as_deref(), urls.pr), (Some("Never held"), None));
+
+    // A reload: only what changed since, merged into the cache.
+    let status: StatusResult = call(&mut session, "repo.reload", "");
+    let refresh = status.issues.refresh.unwrap();
+    assert_eq!((refresh.kind, refresh.came, refresh.changed), (RefreshKind::Incremental, 2, 2), "{refresh:?}");
+    assert_eq!((status.issues.source, status.issues.issues, status.issues.pulls), (Some(IssuesSource::Github), 4, 2));
+    let urls: TicketUrlsResult = call(&mut session, "ticket.urls", r#"{"issue":12}"#);
+    assert_eq!((urls.title.as_deref(), urls.pr), (Some("Held at last"), Some(13)), "#13 is #12's by its branch");
+    assert_eq!(bars_of(&mut session, 7)[0].label, "#7 Seven: the ticket's own title", "what didn't change stays");
+    let kept = cache_json(&cache);
+    assert_eq!(kept["issues"].as_array().map(Vec::len), Some(4), "the merge cached");
+    assert_eq!(kept["validator"]["etag"], "W/\"e1\"");
+
+    // Another session from the cache: the same issues before GitHub answers, then nothing new.
+    let mut later = Session::new();
+    later.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    let status = open(&mut later, &dir);
+    assert_eq!((status.issues.refresh.unwrap().kind, status.issues.issues), (RefreshKind::Incremental, 4));
+    // The newest change is where it was: the same request, sent with its ETag, says nothing changed.
+    let status: StatusResult = call(&mut later, "repo.reload", "");
+    assert_eq!((status.issues.refresh.unwrap().kind, status.issues.issues), (RefreshKind::Unchanged, 4));
+    assert!(std::fs::read_to_string(tools.join("args")).unwrap().lines().last().unwrap().contains("If-None-Match: W/\"e1\""));
+    assert_eq!(call::<TicketUrlsResult>(&mut later, "ticket.urls", r#"{"issue":12}"#).pr, Some(13));
+    for path in [dir, tools, cache] {
+        std::fs::remove_dir_all(path).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stale_old_or_corrupt_cache_is_fetched_in_full() {
+    let dir = repo(Some("https://github.com/o/n.git"));
+    let tools = temp("gh-full");
+    let cache = temp("cache-full");
+    let github = Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) };
+    let load = |why: &str| {
+        let mut session = Session::new();
+        session.set_github(github.clone());
+        let status = open(&mut session, &dir);
+        let refresh = status.issues.refresh.clone().unwrap();
+        assert_eq!((refresh.kind, refresh.why.as_deref()), (RefreshKind::Full, Some(why)), "{:?}", status.issues);
+        assert_eq!((status.issues.issues, status.issues.error.as_deref()), (3, None));
+    };
+    load("no cache");
+    let fresh = cache_json(&cache);
+
+    let mut stale = fresh.clone();
+    stale["full"] = serde_json::json!(fresh["full"].as_i64().unwrap() - 8 * 24 * 3600);
+    write_cache_json(&cache, &stale);
+    load("a week since the last full fetch");
+
+    let mut older = fresh;
+    older["version"] = serde_json::json!(1);
+    write_cache_json(&cache, &older);
+    load("the cache is version 1");
+    assert_eq!(cache_json(&cache)["version"], 2, "written again as this version");
+
+    std::fs::write(cache.join("issues/o--n.json"), "{ not a cache").unwrap();
+    load("no cache");
+    assert!(cache_json(&cache)["issues"].is_array(), "the corrupt cache replaced");
+    for path in [dir, tools, cache] {
+        std::fs::remove_dir_all(path).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_gh_error_leaves_the_cache_as_it_was() {
+    let dir = repo(Some("https://github.com/o/n.git"));
+    let tools = temp("gh-error");
+    let cache = temp("cache-error");
+    let mut session = Session::new();
+    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    let _ = open(&mut session, &dir);
+    let before = std::fs::read(cache.join("issues/o--n.json")).unwrap();
+
+    let mut failing = Session::new();
+    failing.set_github(Github { gh: fake_gh(&tools, Some("HTTP 502: Bad Gateway")), cache_dir: Some(cache.clone()) });
+    let status = open(&mut failing, &dir);
+    assert_eq!((status.issues.source, status.issues.issues, status.issues.refresh.as_ref()), (Some(IssuesSource::Cache), 3, None), "the cache's, as it was");
+    assert!(status.issues.error.as_deref().is_some_and(|e| e.contains("Bad Gateway")), "{:?}", status.issues);
+    let status: StatusResult = call(&mut failing, "repo.reload", "");
+    assert_eq!(status.issues.issues, 3);
+    assert_eq!(std::fs::read(cache.join("issues/o--n.json")).unwrap(), before, "the cache untouched");
+    for path in [dir, tools, cache] {
+        std::fs::remove_dir_all(path).ok();
+    }
 }
