@@ -2,13 +2,13 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Swarmception roadmap
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 10: the review's loose ends, the Factory's benches, debug-build markers) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 11: a ticket in its own colour, failures survive packing, G25's small ends) · **Target:** M3
 
 One page: the stage, the headline numbers and what's next. Detail lives in
 [docs/gaps.md](docs/gaps.md), milestones in [docs/roadmap.md](docs/roadmap.md)
 ([docs/progress-docs.md](docs/progress-docs.md) rule 8).
 
-**Stage:** M1 built (the tickets' timeline, packed rows, clock time, the macOS menu bar; batch 1), with the owner to pass it. Batch 2 added issue titles and links, a colour per ticket, and early M3 work: the Factory pane and statistics. Batch 3 revised the Factory from the owner's review (the wall, stepping by moment), took colour scheme B, cut the timeline's toolbar to what Swarmception needs, and ended abandoned tickets and gates. Batch 4 built most of M2: a Details pane that tells the story of what is selected, and the control channel and MCP so an agent can drive the app; the widget gained a highlight apart from the selection and durations in hours and minutes. Batch 5 finished M2, with the owner to pass it: the state is kept across runs, the app watches a live swarm (a fetch every 30 s, the view following the end), and what the Details pane shows is highlighted on the timeline. Batch 6 began M3 with a Gates band (every gate run and ready check along the timeline, with pass rates and causes), and finished the automation (MCP through the running window, PNG screenshots, a scripting client) and an incremental issue fetch (0.5 s a reload on mc-engine). Batch 7 finished M3 with a Workers pane (model and effort compared, with sample sizes), made the panes share the window (the timeline keeps its rows; bands fold), and added File ▸ Open and Open Recent. Batch 8 closed the last gaps: Collapse to the window, both Gates lanes per hour, one definition of a gate run, a failed ready check's cause (swarm-core#12), and the Workers window and screenshots over automation. Batch 9 took the owner's review: a ticket's rework after a send-back in its own colour, gate runs and ready checks as timeline rows, the Factory following the timeline (no clock of its own, selection from the timeline), and folding the timeline's quiet time (swarm-timeline#191). Batch 10 tied off the review's loose ends: a row's lanes sized over the visible window (swarm-timeline#197), the minimap marking folds, ready checks in the Factory's Gate list, a send-back's rework logged by swarm-core's `prwatch` (swarm-core#14), tests that wait on the session rather than the clock, and two of the owner's bugs (the Factory's benches with dozens of workers; debug-build markers over the bars). M1, M2 and M3 are built and wait on the owner; one gap of small ends is open (G25).
+**Stage:** M1 built (the tickets' timeline, packed rows, clock time, the macOS menu bar; batch 1), with the owner to pass it. Batch 2 added issue titles and links, a colour per ticket, and early M3 work: the Factory pane and statistics. Batch 3 revised the Factory from the owner's review (the wall, stepping by moment), took colour scheme B, cut the timeline's toolbar to what Swarmception needs, and ended abandoned tickets and gates. Batch 4 built most of M2: a Details pane that tells the story of what is selected, and the control channel and MCP so an agent can drive the app; the widget gained a highlight apart from the selection and durations in hours and minutes. Batch 5 finished M2, with the owner to pass it: the state is kept across runs, the app watches a live swarm (a fetch every 30 s, the view following the end), and what the Details pane shows is highlighted on the timeline. Batch 6 began M3 with a Gates band (every gate run and ready check along the timeline, with pass rates and causes), and finished the automation (MCP through the running window, PNG screenshots, a scripting client) and an incremental issue fetch (0.5 s a reload on mc-engine). Batch 7 finished M3 with a Workers pane (model and effort compared, with sample sizes), made the panes share the window (the timeline keeps its rows; bands fold), and added File ▸ Open and Open Recent. Batch 8 closed the last gaps: Collapse to the window, both Gates lanes per hour, one definition of a gate run, a failed ready check's cause (swarm-core#12), and the Workers window and screenshots over automation. Batch 9 took the owner's review: a ticket's rework after a send-back in its own colour, gate runs and ready checks as timeline rows, the Factory following the timeline (no clock of its own, selection from the timeline), and folding the timeline's quiet time (swarm-timeline#191). Batch 10 tied off the review's loose ends: a row's lanes sized over the visible window (swarm-timeline#197), the minimap marking folds, ready checks in the Factory's Gate list, a send-back's rework logged by swarm-core's `prwatch` (swarm-core#14), tests that wait on the session rather than the clock, and two of the owner's bugs (the Factory's benches with dozens of workers; debug-build markers over the bars). M1, M2 and M3 are built and wait on the owner; Batch 11 drew each ticket in its own colour all along, its stages as a strip along its foot and its send-backs and merge as marks (swarm-timeline#205, #206: the owner's, on mc-engine's #169), kept failures visible when bars pack, read a gate's failure as a send-back, and fixed a test slowed by macOS's first-exec check. One gap of small ends is open (G28).
 
 ## Headline numbers
 
@@ -19,20 +19,21 @@ doc that holds the detail. Measured beats estimated: say which.
 |---|---|---|
 | Scorecard rows done | 8 of 8 (M1); 4 of 4 (M2); 6 of 6 (M3), measured | [docs/scorecard.md](docs/scorecard.md) |
 | Gaps open | 1 | [docs/gaps.md](docs/gaps.md) |
-| Tickets landed per active hour | mc-engine 5.8 (120 in 20.7 h), swarm-timeline 10.0 (92 in 9.19 h), Swarmception 6.4 (46 in 7.24 h), measured 2026-11-03 (`stats.get`) | [G9](docs/gaps.md#g9-swarm-analytics-panes) |
-| Tests | 370, measured 2026-11-03 (`cargo nextest run --workspace`) | [docs/scorecard.md](docs/scorecard.md) |
+| Tickets landed per active hour | mc-engine 5.7 (123 in 21.7 h), swarm-timeline 9.3 (94 in 10.1 h), Swarmception 6.5 (49 in 7.55 h), measured 2026-11-03 (`stats.get`) | [G9](docs/gaps.md#g9-swarm-analytics-panes) |
+| Tests | 383, measured 2026-11-03 (`cargo nextest run --workspace`) | [docs/scorecard.md](docs/scorecard.md) |
 | Rows for swarm-timeline's 84 tickets | 12 flat, measured 2026-10-31 (82 before #5) | [docs/scorecard.md](docs/scorecard.md) |
 
 ## What's next
 
 The same ranked list as [docs/roadmap.md › Current focus](docs/roadmap.md#current-focus).
 
-1. **Small ends after batch 10** ([G25](docs/gaps.md#g25-small-ends-after-batch-10))
+1. **Small ends after batch 11** ([G28](docs/gaps.md#g28-small-ends-after-batch-11))
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 11: stage, landed per active hour, tests; focus G28 |
 | 2026-11-03 | minor | Batch 10: stage, landed per active hour (Swarmception's own too), tests; focus G25 |
 | 2026-11-02 | minor | Batch 9: stage, gaps open, landed per active hour, tests; focus G24 |
 | 2026-11-02 | minor | Batch 8: stage (no gaps open), gaps open, landed per active hour, tests; focus emptied |
