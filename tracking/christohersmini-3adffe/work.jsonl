@@ -2,3 +2,4 @@
 {"event":"release","issue":92,"note":"taken over by worker-43 on the coordinator's word: PR #93 idle since 08:43, swarm-timeline#194 merged","of":"mxv9wfm7rr-dbed58","t":"2026-11-03T10:20:06Z"}
 {"event":"claim","issue":92,"mr":93,"t":"2026-11-03T10:20:13Z"}
 {"event":"work","issue":92,"mr":93,"t":"2026-11-03T10:20:18Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-066f9be","t":"2026-11-03T10:24:57Z"}
