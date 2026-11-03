@@ -272,7 +272,7 @@ impl Shell {
         self.followed.1 = self.ui.factory.ticket;
         // Its subject was in view as it was left: the restored window stays, not moved to it.
         self.revealed.clone_from(&self.ui.details.subject);
-        self.set_rows(SetRowsParams { grouping: Some(state.rows.grouping), collapse: Some(state.rows.collapse) });
+        self.set_rows(SetRowsParams { grouping: Some(state.rows.grouping), collapse: Some(state.rows.collapse), merge_marks: Some(state.rows.merge_marks) });
         if let Some(view) = &state.timeline {
             self.timeline.restore_view(view.clone());
         }
@@ -468,6 +468,7 @@ impl Shell {
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
             fold_quiet: self.ui.fold.on,
+            merge_marks: self.spec.merge_marks,
             live: self.live.on,
             recent: u8::try_from(self.recent().len()).unwrap_or(u8::MAX),
         }
@@ -521,6 +522,7 @@ impl Shell {
                 self.set_rows(SetRowsParams { collapse: Some(collapse), ..SetRowsParams::default() });
             }
             MenuAction::FoldQuiet => self.set_fold(!self.ui.fold.on),
+            MenuAction::MergeMarks => self.set_rows(SetRowsParams { merge_marks: Some(!self.spec.merge_marks), ..SetRowsParams::default() }),
             MenuAction::Fit => self.timeline.fit(),
             MenuAction::Live => self.set_live(SetLiveParams { on: Some(!self.live.on), interval_seconds: None }),
         }
@@ -1009,7 +1011,7 @@ impl Shell {
             collapse(ui, Collapse::Empty, icons::COLLAPSE, "Collapse: leave out rows with no events at all");
             collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, "Collapse to the window: leave out rows with nothing in the visible window, as it settles");
             if spec != self.spec {
-                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse) });
+                self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse), merge_marks: Some(spec.merge_marks) });
             }
             let mut fold = self.ui.fold.on;
             let minutes = self.ui.fold.after_seconds.unwrap_or(swarmception_domain::stats::QUIET) / 60;
@@ -1346,6 +1348,7 @@ mod tests {
                 grouping: Grouping::Flat,
                 collapse: Collapse::Off,
                 fold_quiet: false,
+                merge_marks: false,
                 live: false,
                 recent: 0
             }

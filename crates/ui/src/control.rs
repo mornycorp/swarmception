@@ -644,7 +644,10 @@ impl Shell {
             });
         }
         if let Some(collapse) = set.collapse {
-            self.engine.call::<swarmception_engine::rows_cmds::Set>(swarmception_engine::rows_cmds::SetParams { collapse: Some(collapse), grouping: None })?;
+            self.engine.call::<swarmception_engine::rows_cmds::Set>(swarmception_engine::rows_cmds::SetParams {
+                collapse: Some(collapse),
+                ..swarmception_engine::rows_cmds::SetParams::default()
+            })?;
         }
         if let Some(seconds) = set.fold_after_seconds {
             self.ui.fold.after_seconds = Some(seconds);

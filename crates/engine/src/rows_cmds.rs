@@ -36,6 +36,9 @@ pub struct SetParams {
     pub grouping: Option<Grouping>,
     /// `off`, `empty` or `window` (#74); `true` and `false` still read, as `empty` and `off`.
     pub collapse: Option<Collapse>,
+    /// Merged tickets' bars end in a green dot (#127); off by default.
+    #[serde(rename = "mergeMarks")]
+    pub merge_marks: Option<bool>,
 }
 
 /// `rows.set`: the tickets flat or by worker, collapsed how. Bars always carry their tickets'
@@ -51,7 +54,11 @@ impl Command for Set {
     type Result = RowsSpec;
 
     fn run(session: &mut Session, params: SetParams) -> Result<RowsSpec, EngineError> {
-        let spec = RowsSpec { grouping: params.grouping.unwrap_or(session.spec.grouping), collapse: params.collapse.unwrap_or(session.spec.collapse) };
+        let spec = RowsSpec {
+            grouping: params.grouping.unwrap_or(session.spec.grouping),
+            collapse: params.collapse.unwrap_or(session.spec.collapse),
+            merge_marks: params.merge_marks.unwrap_or(session.spec.merge_marks),
+        };
 
         if spec != session.spec {
             session.spec = spec;

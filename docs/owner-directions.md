@@ -46,6 +46,7 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 | Date | Decision | Why | Where |
 |---|---|---|---|
+| 2026-11-03 | Ticket bars: a sent-back ticket shows the factory's red corner (with the count); merge dots are off by default but can be turned on (the bar ending at its merge says it); a red dot marks a ticket abandoned or cancelled | the owner's | #127 |
 | 2026-11-03 | No Gates band: "We can remove the 'Gate' dock/window; it isn't useful." Kept: `gates.list`, `stats.get`, the Factory's figures and Gate list, the details' gate subjects | the owner's | #128 |
 | 2026-11-03 | No Gate runs or Ready checks rows on the timeline (reverses #84's): a gate run that merges sits at the end of its tickets and is already their *in the gate* stretch; a failure is already a send-back on its tickets. Kept: the Gates band's figures, the Factory's Gate list (a click tells a run's story), `gates.list`, the details' gate subjects | the owner's | #117 |
 | 2026-11-03 | A stage is drawn and named in one colour everywhere: its strip's (`Stage::colour`), in the tooltip, the widget's segment line and the details' story | the owner's | #117 |

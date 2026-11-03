@@ -9,6 +9,8 @@ pub const FLAT: &str = "\u{f03a}";
 pub const COLLAPSE: &str = "\u{f422}";
 /// compress-arrows-alt: Fold Quiet Time (#86), the stretches where nothing happened folded away.
 pub const FOLD: &str = "\u{f78c}";
+/// check-circle: View ▸ Merge Marks (#127), a dot where a ticket merged.
+pub const MERGE_MARKS: &str = "\u{f058}";
 /// crop-alt: Collapse to Window (#74), the rows cut to what the window holds.
 pub const COLLAPSE_WINDOW: &str = "\u{f565}";
 pub const FIT: &str = "\u{f31e}";

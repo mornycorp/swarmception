@@ -276,6 +276,37 @@ fn the_factorys_key_moments_and_a_step_through_them() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// #127: a merged ticket's bar ends in a green dot only when `rows.set` asks (`mergeMarks`); the
+/// choice holds while the rest changes.
+#[test]
+fn merge_marks_are_off_until_rows_set_asks_for_them() {
+    use swarmception_domain::RowsSpec;
+    use swarmception_domain::rows::MarkKind;
+    let dir = repo();
+    let mut session = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let merge_marks = |session: &mut Session| {
+        let list: ListResult = call(session, "rows.list", "");
+        list.rows
+            .iter()
+            .flat_map(swarmception_domain::Node::leaves)
+            .flat_map(|n| if let swarmception_domain::Node::Ranges { bars, .. } = n { bars.clone() } else { Vec::new() })
+            .flat_map(|b| b.marks)
+            .filter(|m| m.kind == MarkKind::Merged)
+            .count()
+    };
+    assert_eq!(merge_marks(&mut session), 0, "off by default");
+    let spec: RowsSpec = call(&mut session, "rows.set", r#"{"mergeMarks":true}"#);
+    assert!(spec.merge_marks);
+    assert!(merge_marks(&mut session) > 0, "#7 merged: its dot");
+    let spec: RowsSpec = call(&mut session, "rows.set", r#"{"grouping":"workers"}"#);
+    assert!(spec.merge_marks, "kept while the grouping changes");
+    let _: RowsSpec = call(&mut session, "rows.set", r#"{"mergeMarks":false}"#);
+    assert_eq!(merge_marks(&mut session), 0);
+    std::fs::remove_dir_all(dir).ok();
+}
+
 #[test]
 fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
     use swarmception_domain::{Collapse, RowsSpec};

@@ -43,6 +43,9 @@ pub enum MenuAction {
     /// View ▸ Fold Quiet Time (#86): the timeline folds the stretches where nothing happened
     /// (the widget's `view.fold`), toggled.
     FoldQuiet,
+    /// View ▸ Merge Marks (#127): `rows.set`'s `mergeMarks` toggled, a green dot at each merged
+    /// ticket's bar's end.
+    MergeMarks,
     /// View ▸ Fit: the widget's `view.fit`.
     Fit,
     /// View ▸ Live: `live.set` toggled, watching the swarm (#54).
@@ -52,7 +55,7 @@ pub enum MenuAction {
 impl MenuAction {
     /// Every item of the menus themselves, in menu order (Open Recent's own are
     /// [`MenuAction::recent_items`]).
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 17] = [
         Self::Open,
         Self::Recent,
         Self::Reload,
@@ -67,6 +70,7 @@ impl MenuAction {
         Self::Collapse(Collapse::Empty),
         Self::Collapse(Collapse::Window),
         Self::FoldQuiet,
+        Self::MergeMarks,
         Self::Fit,
         Self::Live,
     ];
@@ -82,7 +86,7 @@ impl MenuAction {
     }
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 14] = [
+    pub const VIEW: [Option<Self>; 15] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
@@ -94,6 +98,7 @@ impl MenuAction {
         Some(Self::Collapse(Collapse::Empty)),
         Some(Self::Collapse(Collapse::Window)),
         Some(Self::FoldQuiet),
+        Some(Self::MergeMarks),
         Some(Self::Fit),
         None,
         Some(Self::Live),
@@ -120,6 +125,7 @@ impl MenuAction {
             Self::Collapse(Collapse::Window) => "view.collapseWindow",
             Self::Collapse(Collapse::Off) => "view.collapseOff",
             Self::FoldQuiet => "view.foldQuiet",
+            Self::MergeMarks => "view.mergeMarks",
             Self::Fit => "view.fit",
             Self::Live => "view.live",
         }
@@ -153,6 +159,7 @@ impl MenuAction {
             Self::Collapse(Collapse::Window) => "Collapse to Window",
             Self::Collapse(Collapse::Off) => "Every Row",
             Self::FoldQuiet => "Fold Quiet Time",
+            Self::MergeMarks => "Merge Marks",
             Self::Fit => "Fit",
             Self::Live => "Live",
         }
@@ -178,6 +185,7 @@ impl MenuAction {
             Self::Collapse(Collapse::Empty | Collapse::Off) => icons::COLLAPSE,
             Self::Collapse(Collapse::Window) => icons::COLLAPSE_WINDOW,
             Self::FoldQuiet => icons::FOLD,
+            Self::MergeMarks => icons::MERGE_MARKS,
             Self::Fit => icons::FIT,
             Self::Live => icons::LIVE,
         }
@@ -242,6 +250,8 @@ pub struct MenuState {
     pub collapse: Collapse,
     /// The timeline folds its quiet time (#86).
     pub fold_quiet: bool,
+    /// Merged tickets' bars end in a green dot (#127).
+    pub merge_marks: bool,
     /// The live watch is on (#54).
     pub live: bool,
     /// How many repositories Open Recent lists (#69, `repo.recent`).
@@ -267,6 +277,7 @@ impl MenuState {
             | MenuAction::Grouping(_)
             | MenuAction::Collapse(_)
             | MenuAction::FoldQuiet
+            | MenuAction::MergeMarks
             | MenuAction::Live => true,
         }
     }
@@ -282,6 +293,7 @@ impl MenuState {
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse(collapse) => Some(self.collapse == collapse),
             MenuAction::FoldQuiet => Some(self.fold_quiet),
+            MenuAction::MergeMarks => Some(self.merge_marks),
             MenuAction::Live => Some(self.live),
             MenuAction::Open
             | MenuAction::Recent
@@ -354,6 +366,7 @@ mod tests {
             grouping: Grouping::Workers,
             collapse: Collapse::Window,
             fold_quiet: true,
+            merge_marks: false,
             live: true,
             recent: 2,
         };

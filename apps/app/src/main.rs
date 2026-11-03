@@ -658,7 +658,7 @@ mod tests {
     fn options_parse() {
         let options = parse(&["--repo", "../swarm-timeline", "--grouping", "workers", "--collapse", "--dark"]).unwrap();
         assert_eq!(options.repo, Some(PathBuf::from("../swarm-timeline")));
-        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(Collapse::Empty) });
+        assert_eq!(options.rows, SetRowsParams { grouping: Some(Grouping::Workers), collapse: Some(Collapse::Empty), ..SetRowsParams::default() });
         assert_eq!(options.theme, Some(egui::Theme::Dark));
         // A mode may follow --collapse (#74).
         assert_eq!(parse(&["--collapse", "window", "--dark"]).unwrap().rows.collapse, Some(Collapse::Window));

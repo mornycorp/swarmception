@@ -21,6 +21,7 @@ use timeline_core::data::{
 };
 use timeline_core::marks::{Glyph, Mark, MarkEdge};
 use timeline_core::scale::{Availability, NamedScale, Scale};
+use timeline_core::strip::Corner;
 use timeline_core::strip::Segment;
 
 use swarmception_model::Timestamp;
@@ -246,11 +247,16 @@ impl Adder<'_> {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
         }
         self.strip(track, place, bar, (first, last))?;
+        if let Some(corner) = &bar.corner {
+            let mut drawn = Corner::new(colour(corner.colour));
+            drawn.label.clone_from(&corner.label);
+            self.built.data.set_range_corner(track, place, Some(drawn))?;
+        }
         for mark in &bar.marks {
             let at = InstantAt::Item(self.first_at(mark.t));
             let (glyph, edge, importance) = match mark.kind {
-                MarkKind::SentBack => (Glyph::Diamond, MarkEdge::Bottom, crate::colours::HIGH),
                 MarkKind::Merged => (Glyph::Dot, MarkEdge::Middle, crate::colours::LOW),
+                MarkKind::GivenUp => (Glyph::Dot, MarkEdge::Middle, crate::colours::HIGH),
             };
             let importance = Importance::new(importance).unwrap_or(Importance::MAXIMUM);
             self.built
@@ -339,6 +345,10 @@ impl TimelineData for SwarmData {
         self.data.range_segments(track, place)
     }
 
+    fn range_corner(&self, track: TrackId, place: usize) -> Option<&Corner> {
+        self.data.range_corner(track, place)
+    }
+
     fn marks(&self) -> &[Mark] {
         self.data.marks()
     }
@@ -378,7 +388,7 @@ mod tests {
     #[test]
     fn a_bar_ends_at_its_end() {
         let activity = Activity::of(&sample());
-        let rows = rows(&activity, &[], RowsSpec::default());
+        let rows = rows(&activity, &[], RowsSpec { merge_marks: true, ..RowsSpec::default() });
         let built = build(&rows, false).unwrap();
         let scale = built.scales[0].scale().unwrap().clone();
         let tree = built.data.tracks();
@@ -401,7 +411,7 @@ mod tests {
         assert_eq!(stages.iter().map(|(label, _)| label.unwrap_or_default()).collect::<Vec<_>>(), ["claimed", "working", "waiting for merge", "in the gate"]);
         assert_eq!(strip[1].colour, colour(crate::colours::WORKING));
         assert!(timeline_core::strip::in_order(strip));
-        // Its merge, a green dot at its end.
+        // Its merge, a green dot at its end, asked for (#127).
         let marks: Vec<_> = built.data.marks().iter().filter(|m| m.track == ticket).collect();
         assert_eq!(marks.len(), 1);
         assert_eq!((marks[0].drawn_as(), marks[0].colour), (timeline_core::marks::Glyph::Dot, colour(crate::tooltip::PASSED)));
@@ -464,7 +474,7 @@ mod tests {
         use swarmception_model::{MainMerge, parse_merge};
         let activity = Activity::of(&sample());
         let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
-        let rows = rows(&activity, &merges, RowsSpec::default());
+        let rows = rows(&activity, &merges, RowsSpec { merge_marks: true, ..RowsSpec::default() });
         let built = build(&rows, false).unwrap();
         (rows, built)
     }
@@ -623,8 +633,8 @@ mod tests {
 
     /// #108: zoomed out to the whole run, forty items a pixel column, the send back (#110: a
     /// ticket's bar in its own colour, its stages a strip) takes its packed column for its
-    /// ticket, though it is not its column's first range, and its red mark survives the marks'
-    /// packing. (#108's own case, the failed gate run and ready check on their rows, went with
+    /// ticket, though it is not its column's first range, and its range carries the factory's red
+    /// corner (#127). (#108's own case, the failed gate run and ready check on their rows, went with
     /// the rows, #117.)
     #[test]
     fn a_failure_survives_packing() {
@@ -649,12 +659,10 @@ mod tests {
         let column = bars.iter().find(|b| b.range <= sent[0] && sent[0] < b.range + b.count).unwrap();
         assert_eq!(column.shown, sent[0], "its ticket shows for its column");
         assert_ne!(column.range, column.shown, "not its column's first");
-        let marks = built.data.marks();
-        let index = timeline_core::marks::MarkIndex::new(marks, &scale);
-        let drawn = timeline_core::marks::draw(marks, &index, track, &scale, &map);
-        assert!(drawn.len() < marks.iter().filter(|m| m.track == track).count(), "packed");
-        let red: Vec<_> = drawn.iter().filter(|m| m.colour == colour(SENT_BACK)).collect();
-        assert_eq!(red.len(), 1, "the send back's mark stands for its neighbours: {drawn:?}");
+        // #127: its corner, the factory's red one, on its range; no other range has one.
+        let corner = built.data.range_corner(track, sent[0]).expect("the send back's corner");
+        assert_eq!((corner.colour, corner.label.as_deref()), (colour(SENT_BACK), None));
+        assert_eq!((0..ranges.len()).filter(|&i| built.data.range_corner(track, i).is_some()).count(), 1);
     }
 
     #[test]
