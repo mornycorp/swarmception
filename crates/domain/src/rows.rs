@@ -160,6 +160,10 @@ pub struct Bar {
     pub style: Style,
     /// What it is drawn in: [`style_colour`] of its style and ticket.
     pub colour: Rgb,
+    /// How important it is, 0 to 15 (#108): [`colours::importance`] of its style and its run's
+    /// result. A packed column of the timeline takes its most important bar's colour.
+    #[serde(default)]
+    pub importance: u8,
     /// Nothing ended it: it runs to the last event.
     pub open: bool,
     /// Its tooltip as plain text: [`Bar::tooltip_lines`]' text, a line each.
@@ -174,7 +178,8 @@ pub struct Bar {
 impl Bar {
     fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, lines: Vec<TipLine>) -> Self {
         let colour = style_colour(style, ticket);
-        Self { start, end, label, ticket, pr: None, style, colour, open: false, tooltip: texts(&lines), tooltip_lines: lines, run: None }
+        let importance = colours::importance(style, None);
+        Self { start, end, label, ticket, pr: None, style, colour, importance, open: false, tooltip: texts(&lines), tooltip_lines: lines, run: None }
     }
 }
 
@@ -641,7 +646,15 @@ fn run_bar(run: &Run, last: Timestamp) -> Bar {
         _ => None,
     };
     let info = RunBar { sub: run.sub.clone(), lane: run.lane, result: run.result, tickets: run.tickets.clone(), subject: run.subject.clone() };
-    Bar { pr, open: run.end.is_none(), colour: run.colour, run: Some(info), ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone()) }
+    let importance = colours::importance(style, Some(run.result));
+    Bar {
+        pr,
+        open: run.end.is_none(),
+        colour: run.colour,
+        importance,
+        run: Some(info),
+        ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone())
+    }
 }
 
 fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
