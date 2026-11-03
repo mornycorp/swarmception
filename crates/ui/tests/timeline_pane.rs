@@ -314,3 +314,56 @@ fn a_tickets_one_bar_draws_its_stages_as_its_strip() {
     assert_eq!(tip.lines.last().map(timeline_engine::wire::TooltipLineWire::text).as_deref(), Some("■ claimed · 29 min 00 s"));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// #119 (swarm-timeline#211): a merge is a marker of no length (#115), and its tooltip, as the
+/// widget answers it, is the merge's own lines, as `rows.list` gives them, with no duration
+/// line: a merge at an instant has none, so no "duration 0 ns".
+#[test]
+fn a_merge_markers_tooltip_has_no_duration_line() {
+    use swarmception_domain::rows::{MERGED_KEY, Node};
+    use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
+    use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};
+    use timeline_engine::tracks_cmds::{HitParams, Layout, LayoutParams};
+    // #7 claimed at 03:01, submitted at 03:30, merged at 03:45.
+    let dir = repo_with("2026-10-31T03:30:00Z");
+    let log = dir.join("tracking/mini-aa1111/work.jsonl");
+    let events = std::fs::read_to_string(&log).unwrap() + r#"{"event":"merge","issue":7,"mr":8,"t":"2026-10-31T03:45:00Z"}"# + "\n";
+    std::fs::write(&log, events).unwrap();
+    let out = std::process::Command::new("git")
+        .current_dir(&dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-am", "merged"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let mut engine = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
+    let mut pane = TimelinePane::default();
+    pane.sync(&mut engine).unwrap();
+    // The merge's own lines, as the engine's rows give them.
+    let list: swarmception_engine::rows_cmds::ListResult = serde_json::from_str(&engine.execute("rows.list", "").unwrap()).unwrap();
+    let merge = list
+        .rows
+        .iter()
+        .flat_map(Node::leaves)
+        .find_map(|leaf| match leaf {
+            Node::Ranges { key, bars, .. } if key == MERGED_KEY => bars.first().cloned(),
+            _ => None,
+        })
+        .expect("#7's merge");
+    assert_eq!(merge.start, merge.end, "a marker of no length (#115)");
+    // Hovered at the middle of its 3 px marker.
+    let session = pane.widget().session();
+    session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![MERGED_KEY.to_owned()]), label_char_width: Some(7.0) }).unwrap();
+    let bar = bars.tracks[0].ranges.iter().find(|b| b.range == 0 && b.count == 1).expect("the merge's marker");
+    assert!(bar.packed && bar.width >= 3.0, "drawn as a marker: {bar:?}");
+    let layout = session.call::<Layout>(LayoutParams { pane: 600.0, scroll: 0.0 }).unwrap();
+    let row = layout.rows.iter().find(|r| r.key == MERGED_KEY).unwrap();
+    let point = HitParams { pane: 600.0, scroll: 0.0, x: layout.label_width + bar.x + bar.width / 2.0, y: row.y + row.height / 2.0 };
+    let tip = session.call::<Tooltip>(point).unwrap();
+    let lines: Vec<String> = tip.lines.iter().map(timeline_engine::wire::TooltipLineWire::text).collect();
+    assert_eq!(lines, swarmception_domain::tooltip::texts(&merge.tooltip_lines), "the merge's lines alone");
+    assert!(!lines.iter().any(|l| l.starts_with("duration")), "no duration line: {lines:?}");
+    std::fs::remove_dir_all(dir).ok();
+}
