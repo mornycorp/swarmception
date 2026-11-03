@@ -2,7 +2,7 @@
      own now. Keep the heading the shared protocol links to: How many builds at once. -->
 # Development
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (the app's --off-shift, #106) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (tests' fakes run by `sh`, the `fakes` step, #113) · **Target:** M1
 
 How to build, test and run Swarmception, and how many builds a machine takes.
 
@@ -51,10 +51,27 @@ docs/ci-contract.md, says which forms Swarm Core's gate calls and what it reads 
 | `clippy` | `cargo clippy --workspace --all-targets --locked -- -D warnings` | full, `--changed` (its packages), `--smoke` |
 | `test` | `cargo nextest run --profile ci --workspace`, then `cargo test --doc` | full, `--changed` (its packages) |
 | `build` | `cargo build --workspace --exclude xtask` | `--smoke` |
+| `layers` | `cargo xtask layers` | every form |
+| `fakes` | `cargo xtask fakes`: no Rust source writes a `#!` script or makes a file executable ([Fakes in tests](#fakes-in-tests)) | every form |
 | `assets` | `cargo xtask swarm-core sync-assets --check` | every form |
 
 `ci` records its checkout in the target dir (`swarm_core::checkout::claim`) and refuses one
 another checkout used last: one target dir per checkout, never shared.
+
+## Fakes in tests
+
+A test that fakes `gh` or `ssh` writes a shell script, with no `#!` line, and has the system's
+`sh` run it; it never execs a file it just wrote. macOS vets a new executable on its first exec,
+which took 0.3 s idle and 10–34 s under load (#106), and serialises it: on this repo's tests, 12
+copies of a binary at once took 15 s with exec'd fakes, 3–4 s run by `sh` (#113).
+
+- `gh`: `crates/engine/tests/support`'s `fake_gh(repo, script)` (the source crate's tests have
+  `sh_gh`). `gh` runs in the repository with `api` its first argument, so the fake is `/bin/sh`
+  and the script `<repo>/api`, gh's arguments in `$@`.
+- `ssh`: `fake_ssh(clone, dir, remote)` sets `core.sshCommand` to `sh <script>` and
+  `ssh.variant` to `simple`.
+- `cargo xtask fakes`, a step of every `ci`, fails on a `#!` line in a Rust source, or a mode set
+  with an execute bit (or one it can't read). A line that must carries `// fakes: allowed: <why>`.
 
 ## How many builds at once
 
@@ -100,6 +117,7 @@ changes a row's status updates it; the coordinator refreshes its measured number
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Tests' fakes run by `sh`, never exec'd new; the `layers` and `fakes` steps (#113) |
 | 2026-11-03 | minor | The app's `--off-shift`: the Factory's benches off shift opened out of their fold (#106) |
 | 2026-11-01 | minor | The app's `--panes`, `--at`, `--trace` and `--hover`, for the factory (#18) |
 | 2026-10-31 | major | First version, from swarm-core's template |

@@ -15,6 +15,8 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::ListResult;
 use swarmception_source::Github;
 
+mod support;
+
 fn temp(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -88,10 +90,10 @@ fn repo() -> PathBuf {
     dir
 }
 
-/// A `gh` that prints #7 and its PR #8 as `gh api` would.
+/// A `gh` that prints #7 and its PR #8 as `gh api` would, for a session reading the issues of
+/// `repo`: run by `sh`, never exec'd (`support::fake_gh`).
 #[cfg(unix)]
-fn fake_gh(dir: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
+fn fake_gh(dir: &Path, repo: &Path) -> PathBuf {
     let pages = r#"[
       {"number":7,"title":"Seven: the ticket's own title","state":"closed","labels":[{"name":"type::task"},{"name":"area::ui"}],"user":{"login":"owner"},
        "closed_at":"2026-10-31T04:10:00Z","html_url":"https://github.com/o/n/issues/7"},
@@ -99,10 +101,7 @@ fn fake_gh(dir: &Path) -> PathBuf {
        "pull_request":{"merged_at":"2026-10-31T04:10:00Z"}}
     ]"#;
     std::fs::write(dir.join("pages.json"), pages).unwrap();
-    let gh = dir.join("gh");
-    std::fs::write(&gh, format!("#!/bin/sh\ncat '{}/pages.json'\n", dir.display())).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    gh
+    support::fake_gh(repo, &format!("cat '{}/pages.json'\n", dir.display()))
 }
 
 fn call<T: serde::de::DeserializeOwned>(session: &mut Session, id: &str, params: &str) -> T {
@@ -123,7 +122,7 @@ fn whats(details: &Details) -> Vec<&str> {
 fn session_over_repo() -> (Session, Vec<PathBuf>) {
     let (dir, tools) = (repo(), temp("gh"));
     let mut session = Session::new();
-    session.set_github(Github { gh: fake_gh(&tools), cache_dir: None });
+    session.set_github(Github { gh: fake_gh(&tools, &dir), cache_dir: None });
     let status = open(&mut session, &dir);
     assert_eq!((status.error, status.issues.issues), (None, 2), "{:?}", status.issues);
     (session, vec![dir, tools])
