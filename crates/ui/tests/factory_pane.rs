@@ -496,12 +496,12 @@ fn a_persons_selection_survives_hovering_a_chip_and_leaving_it() {
         lit
     };
 
-    // The person selected two bars of #11 and focused the second.
+    // The person selected #11's bars (#110: its merge and its bar) and focused the last.
     let bars = |shell: &mut Shell, issue| {
         shell.engine().call::<swarmception_engine::factory_cmds::TicketBars>(swarmception_engine::factory_cmds::TicketParams { issue }).unwrap().bars
     };
     let mine = bars(&mut shell, 11);
-    assert!(mine.len() >= 2);
+    assert!(!mine.is_empty());
     for bar in &mine {
         shell.timeline().widget().session().call::<Toggle>(RangeParams { track: bar.track.clone(), range: bar.range }).unwrap();
     }

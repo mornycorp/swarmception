@@ -132,6 +132,102 @@ pub enum Style {
     GateRun,
     /// A worker's `ready` check (#84), drawn in its result's colour.
     ReadyCheck,
+    /// A ticket on its row (#110): one bar from its first stretch to its last, in its own colour
+    /// all along, its phases the [`BarSegment`]s of the strip along its foot.
+    Ticket,
+}
+
+/// A stage of a ticket's life on its bar's strip (#110), as on the factory's bricks: its phases,
+/// and *in the gate*, a gate run naming it, carved out of a wait for merge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum Stage {
+    Claimed,
+    Working,
+    Waiting,
+    Gating,
+    SentBack,
+    Stopped,
+}
+
+impl Stage {
+    /// How a person names it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Claimed => "claimed",
+            Self::Working => "working",
+            Self::Waiting => "waiting for merge",
+            Self::Gating => "in the gate",
+            Self::SentBack => "sent back",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    /// Its colour on the strip: the factory's (a phase's border there): claimed yellow, working
+    /// a warm white, waiting blue, in the gate magenta, sent back red, stopped grey.
+    #[must_use]
+    pub const fn colour(self) -> Rgb {
+        match self {
+            Self::Claimed => colours::CLAIMED,
+            Self::Working => colours::WORKING,
+            Self::Waiting => colours::WAITING,
+            Self::Gating => colours::GATING,
+            Self::SentBack => colours::SENT_BACK,
+            Self::Stopped => colours::STOPPED,
+        }
+    }
+
+    /// How important it is (#108): sent back [`colours::HIGH`], stopped [`colours::MIDDLE`], the
+    /// rest [`colours::LOW`]; a packed strip keeps its most important's colour.
+    #[must_use]
+    pub const fn importance(self) -> u8 {
+        match self {
+            Self::SentBack => colours::HIGH,
+            Self::Stopped => colours::MIDDLE,
+            Self::Claimed | Self::Working | Self::Waiting | Self::Gating => colours::LOW,
+        }
+    }
+
+    const fn of(phase: Phase) -> Self {
+        match phase {
+            Phase::Claimed => Self::Claimed,
+            Phase::Working => Self::Working,
+            Phase::Waiting => Self::Waiting,
+            Phase::SentBack => Self::SentBack,
+            Phase::Stopped => Self::Stopped,
+        }
+    }
+}
+
+/// A stretch of a ticket's bar's strip (#110): its stage, from `start` to `end`, in the stage's
+/// colour, as important as the stage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BarSegment {
+    pub stage: Stage,
+    pub start: Timestamp,
+    pub end: Timestamp,
+    pub colour: Rgb,
+    pub importance: u8,
+}
+
+/// What a mark on a ticket's bar says (#110).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub enum MarkKind {
+    /// A send-back, at its time: red, at the bar's foot over its strip (the brick's red corner).
+    SentBack,
+    /// Its merge, at the bar's end: green.
+    Merged,
+}
+
+/// A mark on a ticket's bar (#110): what it is, when, its colour and its name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BarMark {
+    pub kind: MarkKind,
+    pub t: Timestamp,
+    pub colour: Rgb,
+    pub name: String,
 }
 
 impl From<Phase> for Style {
@@ -173,13 +269,35 @@ pub struct Bar {
     /// The gate run it is, on the Gate runs or Ready checks row (#84); none for any other bar.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run: Option<RunBar>,
+    /// A ticket's bar's strip along its foot (#110): its stages, in time order, not overlapping;
+    /// none for any other bar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub segments: Vec<BarSegment>,
+    /// A ticket's bar's marks (#110): its send-backs, then its merge; none for any other bar.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub marks: Vec<BarMark>,
 }
 
 impl Bar {
     fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, lines: Vec<TipLine>) -> Self {
         let colour = style_colour(style, ticket);
         let importance = colours::importance(style, None);
-        Self { start, end, label, ticket, pr: None, style, colour, importance, open: false, tooltip: texts(&lines), tooltip_lines: lines, run: None }
+        Self {
+            start,
+            end,
+            label,
+            ticket,
+            pr: None,
+            style,
+            colour,
+            importance,
+            open: false,
+            tooltip: texts(&lines),
+            tooltip_lines: lines,
+            run: None,
+            segments: Vec::new(),
+            marks: Vec::new(),
+        }
     }
 }
 
@@ -315,8 +433,8 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
 #[must_use]
 pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
-    let text = Text { issues };
     let runs = told_runs(activity, &tickets, merges);
+    let text = Text { issues, runs: &runs };
     let last = activity.extent.map_or(Timestamp(0), |(_, last)| last);
     let mut rows = vec![
         Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
@@ -429,10 +547,12 @@ fn by_workers(activity: &Activity, tickets: &[Ticket], text: Text<'_>) -> Vec<No
     groups
 }
 
-/// What labels and tooltips say besides the events: GitHub's issues.
+/// What labels and tooltips say besides the events: GitHub's issues; and the gate runs, whose
+/// time naming a ticket is its strip's *in the gate* (#110).
 #[derive(Clone, Copy)]
 struct Text<'a> {
     issues: &'a Issues,
+    runs: &'a [Run],
 }
 
 /// The lines a ticket's tooltips start with: what GitHub says of it (its title, strong; state and
@@ -486,13 +606,13 @@ fn packed(tickets: &[&Ticket], key: &str, text: Text<'_>) -> Vec<Node> {
     placed.sort_by_key(|(e, t)| (e.start, t.issue));
     let mut rows: Vec<(Extent, Vec<Bar>)> = Vec::new();
     for (extent, ticket) in placed {
-        let bars = ticket.stretches.iter().map(|s| stretch_bar(ticket, s, text));
+        let bars = ticket_bar(ticket, text);
         match rows.iter_mut().find(|(last, _)| !last.clashes(&extent)) {
             Some(row) => {
                 row.1.extend(bars);
                 row.0 = extent;
             }
-            None => rows.push((extent, bars.collect())),
+            None => rows.push((extent, bars.into_iter().collect())),
         }
     }
     rows.into_iter().zip(1..).map(|((_, bars), n)| Node::Ranges { key: format!("{key}/{n}"), name: format!("Tickets {n}"), bars }).collect()
@@ -572,17 +692,84 @@ fn note_line(stretch: &Stretch, note: &str) -> TipLine {
     if stretch.phase == Phase::SentBack { TipLine::coloured(note, FAILED) } else { TipLine::plain(note) }
 }
 
-fn stretch_bar(ticket: &Ticket, stretch: &Stretch, text: Text<'_>) -> Bar {
-    let phase = stretch.phase.name();
+/// The most stretches a ticket's bar's tooltip lists, its last ones; the rest are counted.
+const LISTED_STRETCHES: usize = 8;
+
+/// A ticket's one bar on its row (#110): from its first stretch's start to its last one's end,
+/// in its own colour all along, labelled once; its stages the strip along its foot, its
+/// send-backs and its merge marks on it. Its tooltip: the ticket, its stretches (the last
+/// [`LISTED_STRETCHES`]), and its milestones. None for a ticket with no stretches.
+fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
+    let (first, last) = (ticket.stretches.first()?, ticket.stretches.last()?);
     let mut tooltip = ticket_lines(ticket, text.issues);
-    tooltip.extend([span_line(ticket, stretch), TipLine::plain(format!("by {}", stretch.by))]);
-    tooltip.extend(stretch.note.iter().map(|note| note_line(stretch, note)));
-    tooltip.extend(stretch.abandoned.as_ref().map(abandoned_line));
+    let skipped = ticket.stretches.len().saturating_sub(LISTED_STRETCHES);
+    if skipped > 0 {
+        tooltip.push(TipLine::plain(format!("… {skipped} earlier stretches")));
+    }
+    for stretch in ticket.stretches.iter().skip(skipped) {
+        tooltip.push(span_line(ticket, stretch).then(format!(" by {}", stretch.by)));
+        tooltip.extend(stretch.note.iter().map(|note| note_line(stretch, note)));
+        tooltip.extend(stretch.abandoned.as_ref().map(abandoned_line));
+    }
     tooltip.push(TipLine::default());
     tooltip.extend(milestones(ticket));
-    let label = titles::label(text.issues, ticket.issue).unwrap_or_else(|| format!("#{} {phase}", ticket.issue));
+    let label = titles::label(text.issues, ticket.issue).unwrap_or_else(|| format!("#{}", ticket.issue));
     let pr = ticket_pr(ticket, text.issues);
-    Bar { open: stretch.open, pr, ..Bar::new(stretch.start, stretch.end, label, Some(ticket.issue), stretch.phase.into(), tooltip) }
+    let segments = stages(ticket, text.runs);
+    // Its most important stage's (#108), a send-back of no time too: a packed column keeps it.
+    let importance = ticket.stretches.iter().map(|s| Stage::of(s.phase).importance()).max().unwrap_or(colours::LOW);
+    Some(Bar {
+        open: last.open,
+        pr,
+        importance,
+        segments,
+        marks: ticket_marks(ticket),
+        ..Bar::new(first.start, last.end, label, Some(ticket.issue), Style::Ticket, tooltip)
+    })
+}
+
+/// A ticket's stages along its bar (#110), in time order: each stretch's phase, its waits split
+/// where a gate run naming it ran (*in the gate*), touching stretches of one stage joined; none of
+/// no time.
+fn stages(ticket: &Ticket, runs: &[Run]) -> Vec<BarSegment> {
+    let gated: Vec<(Timestamp, Timestamp)> =
+        runs.iter().filter(|run| run.lane == Lane::Gate && run.tickets.contains(&ticket.issue)).map(|run| (run.start, run.end.unwrap_or(run.start))).collect();
+    let mut segments: Vec<BarSegment> = Vec::new();
+    let mut push = |stage: Stage, start: Timestamp, end: Timestamp| {
+        if end <= start {
+            return;
+        }
+        match segments.last_mut() {
+            Some(last) if last.stage == stage && last.end == start => last.end = end,
+            _ => segments.push(BarSegment { stage, start, end, colour: stage.colour(), importance: stage.importance() }),
+        }
+    };
+    for stretch in &ticket.stretches {
+        if stretch.phase == Phase::Waiting {
+            for (gating, start, seconds) in crate::factory::split_wait((stretch.start, stretch.end), &gated) {
+                push(if gating { Stage::Gating } else { Stage::Waiting }, start, Timestamp(start.0.saturating_add(seconds)));
+            }
+        } else {
+            push(Stage::of(stretch.phase), stretch.start, stretch.end);
+        }
+    }
+    segments
+}
+
+/// A ticket's marks (#110): each send-back at its time in red, then its merge at its time in
+/// green.
+fn ticket_marks(ticket: &Ticket) -> Vec<BarMark> {
+    let mut marks: Vec<BarMark> = ticket
+        .stretches
+        .iter()
+        .filter(|s| s.phase == Phase::SentBack)
+        .map(|s| {
+            let why = s.note.as_deref().map(|note| format!(": {note}")).unwrap_or_default();
+            BarMark { kind: MarkKind::SentBack, t: s.start, colour: FAILED, name: format!("#{} sent back {}{why}", ticket.issue, s.start) }
+        })
+        .collect();
+    marks.extend(ticket.merged.as_ref().map(|m| BarMark { kind: MarkKind::Merged, t: m.t, colour: PASSED, name: format!("#{} merged {}", ticket.issue, m.t) }));
+    marks
 }
 
 /// A merge's span on the top rows: [`MERGE_SECONDS`] from `at`.
@@ -748,39 +935,56 @@ mod tests {
     }
 
     #[test]
-    fn a_tickets_bars_are_its_stretches_and_name_it() {
+    fn a_ticket_is_one_bar_in_its_colour_its_stages_a_strip_and_its_merge_a_mark() {
+        use crate::colours::{CLAIMED, GATING, LOW, WAITING, WORKING, ticket_colour};
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
         let Node::Ranges { bars, key, .. } = &rows[5] else { panic!() };
         assert_eq!(key, "tickets/2");
-        assert_eq!(bars.iter().map(|b| b.style).collect::<Vec<_>>(), [Style::Claimed, Style::Working, Style::Waiting]);
-        assert!(bars.iter().all(|b| b.ticket == Some(170)), "each bar says which ticket it is");
-        let colours: Vec<_> = bars.iter().map(|b| b.colour).collect();
-        assert_eq!(colours, [crate::colours::CLAIMED, crate::colours::ticket_colour(170), crate::colours::WAITING], "only working is the ticket's own");
-        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 claimed", "#170 working", "#170 waiting for merge"]);
-        assert_eq!(bars[1].tooltip[0], "#170 · PR #173");
-        assert_eq!(bars[1].tooltip[1], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)");
-        assert!(bars[1].tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bars[1].tooltip);
+        let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
+        assert_eq!(
+            (bar.style, bar.ticket, bar.colour, bar.label.as_str()),
+            (Style::Ticket, Some(170), ticket_colour(170), "#170"),
+            "in its own colour, labelled once"
+        );
+        assert_eq!((bar.start.to_string(), bar.end.to_string()), ("2026-10-31T03:53:22Z".to_owned(), "2026-10-31T04:28:58Z".to_owned()), "claim to merge");
+        let stages: Vec<(Stage, String, String, Rgb)> = bar.segments.iter().map(|s| (s.stage, s.start.to_string(), s.end.to_string(), s.colour)).collect();
+        assert_eq!(
+            stages,
+            [
+                (Stage::Claimed, "2026-10-31T03:53:22Z".into(), "2026-10-31T03:53:25Z".into(), CLAIMED),
+                (Stage::Working, "2026-10-31T03:53:25Z".into(), "2026-10-31T04:06:43Z".into(), WORKING),
+                (Stage::Waiting, "2026-10-31T04:06:43Z".into(), "2026-10-31T04:20:00Z".into(), WAITING),
+                (Stage::Gating, "2026-10-31T04:20:00Z".into(), "2026-10-31T04:28:58Z".into(), GATING),
+            ],
+            "the wait split where the gate ran, as on the factory's brick"
+        );
+        assert_eq!(bar.importance, LOW);
+        assert_eq!(
+            bar.marks.iter().map(|m| (m.kind, m.t.to_string(), m.colour)).collect::<Vec<_>>(),
+            [(MarkKind::Merged, "2026-10-31T04:28:58Z".to_owned(), PASSED)]
+        );
+        assert_eq!(bar.tooltip[0], "#170 · PR #173");
+        assert_eq!(bar.tooltip[2], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s) by mini-79ba63");
+        assert!(bar.tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bar.tooltip);
     }
 
     #[test]
-    fn an_abandoned_bar_ends_at_its_holders_session_and_says_so() {
+    fn an_abandoned_stretch_ends_at_its_holders_session_and_says_so() {
         let activity = Activity::of(&crate::tickets::tests::abandoned());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let bars: Vec<&Bar> = rows
-            .iter()
-            .flat_map(|n| n.leaves())
-            .flat_map(|n| match n {
-                Node::Ranges { bars, .. } => bars.iter().collect::<Vec<_>>(),
-                Node::Group { .. } => Vec::new(),
-            })
-            .filter(|b| b.ticket == Some(40) && b.style == Style::Working)
-            .collect();
-        assert_eq!(bars.len(), 2, "worker-1's, abandoned, and worker-3's");
-        assert!(!bars[0].open);
-        assert_eq!(bars[0].tooltip[1], "working: 2026-10-31T01:00:15Z → 2026-10-31T01:10:00Z (9 min 45 s)");
-        assert_eq!(bars[0].tooltip[3], "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
-        assert!(!bars[1].tooltip.iter().any(|l| l.starts_with("abandoned")), "{:?}", bars[1].tooltip);
+        let bars: Vec<&Bar> = every_bar(&rows).into_iter().filter(|b| b.ticket == Some(40) && b.style == Style::Ticket).collect();
+        let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
+        // Its two workers' stretches, the gap between them left bare.
+        let working: Vec<(String, String)> =
+            bar.segments.iter().filter(|s| s.stage == Stage::Working).map(|s| (s.start.to_string(), s.end.to_string())).collect();
+        assert_eq!(
+            working,
+            [("2026-10-31T01:00:15Z".to_owned(), "2026-10-31T01:10:00Z".to_owned()), ("2026-10-31T02:00:20Z".to_owned(), "2026-10-31T02:30:00Z".to_owned())]
+        );
+        let at = bar.tooltip.iter().position(|l| l.starts_with("working: 2026-10-31T01:00:15Z → 2026-10-31T01:10:00Z (9 min 45 s)")).unwrap();
+        assert_eq!(bar.tooltip[at + 1], "abandoned: m-1's session ended 2026-10-31T01:10:00Z", "after worker-1's stretch");
+        assert_eq!(bar.tooltip.iter().filter(|l| l.starts_with("abandoned")).count(), 1, "{:?}", bar.tooltip);
     }
 
     #[test]
@@ -789,18 +993,19 @@ mod tests {
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
         let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
-        let working = &bars[1];
+        let working = &bars[0];
         assert_eq!(
-            working.tooltip[..4],
+            working.tooltip[..5],
             [
                 "#170 The spec, written down",
                 "closed · type::task, area::docs · by cmaughan",
                 "PR #173 Spec: the first draft (merged)",
-                "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s)"
+                "claimed: 2026-10-31T03:53:22Z → 2026-10-31T03:53:25Z (3 s) by mini-79ba63",
+                "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s) by mini-79ba63"
             ]
         );
         assert!(working.tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "then today's lines: {:?}", working.tooltip);
-        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 The spec, written down"; 3], "every bar of it carries its title");
+        assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#170 The spec, written down"], "its one bar carries its title");
         assert!(bars.iter().all(|b| b.pr == Some(173)));
         let Node::Ranges { bars: main, .. } = &rows[0] else { panic!() };
         assert_eq!(main[0].tooltip[0], "PR #173 Spec: the first draft", "a merge onto main says its PR's title");
@@ -876,13 +1081,13 @@ mod tests {
         let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
         let bars: Vec<&Bar> =
             rows.iter().flat_map(Node::leaves).filter_map(|l| if let Node::Ranges { bars, .. } = l { Some(bars) } else { None }).flatten().collect();
-        let working = bars.iter().find(|b| b.label == "#58 working").unwrap();
+        let working = bars.iter().find(|b| b.label == "#58").unwrap();
         assert!(!working.open);
-        assert_eq!(working.tooltip[1], "working: 2026-10-31T12:59:18Z → 2026-10-31T13:06:43Z (7 min 25 s)");
+        assert!(working.tooltip.iter().any(|l| l.starts_with("working: 2026-10-31T12:59:18Z → 2026-10-31T13:06:43Z (7 min 25 s)")), "{:?}", working.tooltip);
         assert!(working.tooltip.contains(&"done      2026-10-31T13:06:43Z".to_owned()), "{:?}", working.tooltip);
         assert!(working.tooltip.contains(&"claim to done: 7 min 27 s".to_owned()), "{:?}", working.tooltip);
         assert_eq!(working.tooltip.last().map(String::as_str), Some("done without a merge: review filed as #66-#73"));
-        let claimed = bars.iter().find(|b| b.label == "#59 claimed").unwrap();
+        let claimed = bars.iter().find(|b| b.label == "#59").unwrap();
         assert_eq!(claimed.tooltip.last().map(String::as_str), Some("done without a merge"));
     }
 
@@ -1098,18 +1303,15 @@ mod tests {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
         let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
-        // The title strong; each stretch's phase in its bar's colour, its duration strong.
-        for bar in bars {
-            let tip = &bar.tooltip_lines;
-            assert!(tip[0].is_strong("#170 · PR #173"), "{:?}", tip[0]);
-            let phase = &tip[1].spans[0];
-            assert_eq!(phase.colour, Some(bar.colour), "{} in its bar's colour", phase.text);
-            assert!(tip[1].spans.iter().any(|s| s.strong && s.text.ends_with(" s")), "the duration strong: {:?}", tip[1]);
-            assert!(tip[2].is_plain(), "by: {:?}", tip[2]);
+        // The title strong; each stretch's phase in its own colour, its duration strong.
+        let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
+        let working = &bar.tooltip_lines;
+        assert!(working[0].is_strong("#170 · PR #173"), "{:?}", working[0]);
+        for (line, phase, colour) in [(1, "claimed", CLAIMED), (2, "working", ticket_colour(170)), (3, "waiting for merge", WAITING)] {
+            assert_eq!(working[line].colour_of(phase), Some(colour), "{phase}");
+            assert!(working[line].spans.iter().any(|s| s.strong && s.text.ends_with(" s")), "the duration strong: {:?}", working[line]);
         }
-        let working = &bars[1].tooltip_lines;
-        assert_eq!(working[1].colour_of("working"), Some(ticket_colour(170)));
-        assert!(working[1].is_strong("13 min 18 s"));
+        assert!(working[2].is_strong("13 min 18 s"));
         // The milestones: each name in the colour of what it begins, merged green, the span strong.
         let milestone = |name: &str| working.iter().find(|l| l.spans.first().is_some_and(|s| s.text == name)).and_then(|l| l.spans[0].colour);
         assert_eq!(milestone("claimed"), Some(CLAIMED));
@@ -1127,12 +1329,18 @@ mod tests {
         // Sent back red, its note (the cause) red; abandoned red.
         let activity = Activity::of(&crate::tickets::tests::abandoned());
         let rows = super::rows(&activity, &[], RowsSpec::default());
-        let sent = every_bar(&rows).into_iter().find(|b| b.style == Style::SentBack && b.ticket == Some(44)).unwrap();
-        assert_eq!(sent.tooltip_lines[1].colour_of("sent back"), Some(SENT_BACK));
-        assert_eq!(sent.tooltip_lines[3].colour_of("tests fail"), Some(FAILED));
-        let gone = every_bar(&rows).into_iter().find(|b| b.ticket == Some(40) && b.style == Style::Working).unwrap();
-        assert_eq!(gone.tooltip_lines[3].colour_of("abandoned"), Some(FAILED));
-        assert_eq!(gone.tooltip_lines[3].text(), "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
+        let sent = every_bar(&rows).into_iter().find(|b| b.style == Style::Ticket && b.ticket == Some(44)).unwrap();
+        let line = |text: &str| sent.tooltip_lines.iter().find(|l| l.text().starts_with(text)).unwrap();
+        assert_eq!(line("sent back").colour_of("sent back"), Some(SENT_BACK));
+        assert_eq!(line("tests fail").colour_of("tests fail"), Some(FAILED));
+        // A send-back is a red mark at its time, and the most important stage of its strip.
+        assert!(sent.marks.iter().any(|m| m.kind == MarkKind::SentBack && m.colour == FAILED));
+        assert!(sent.segments.iter().all(|s| s.end > s.start && s.importance == s.stage.importance()), "{:?}", sent.segments);
+        assert_eq!(sent.importance, crate::colours::HIGH, "a packed column keeps it");
+        let gone = every_bar(&rows).into_iter().find(|b| b.ticket == Some(40) && b.style == Style::Ticket).unwrap();
+        let abandoned = gone.tooltip_lines.iter().find(|l| l.text().starts_with("abandoned")).unwrap();
+        assert_eq!(abandoned.colour_of("abandoned"), Some(FAILED));
+        assert_eq!(abandoned.text(), "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
     }
 
     #[test]
@@ -1141,7 +1349,7 @@ mod tests {
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
         let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
-        let tip = &bars[1].tooltip_lines;
+        let tip = &bars[0].tooltip_lines;
         assert!(tip[0].is_strong("#170 The spec, written down"));
         assert!(tip[1].is_plain());
         assert_eq!(tip[2].colour_of("merged"), Some(PASSED));

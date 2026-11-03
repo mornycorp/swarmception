@@ -271,3 +271,46 @@ fn ctrl_drag_through_the_shell_pans_the_timeline() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// #110: a ticket is one bar in its own colour, its stages the strip along its foot, as
+/// `rows.list` answers them: the widget draws exactly those (`query.bars`' strip), and its
+/// tooltip names the stage under the pointer with how long it took.
+#[test]
+fn a_tickets_one_bar_draws_its_stages_as_its_strip() {
+    use swarmception_domain::rows::{Node, Stage};
+    use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
+    use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};
+    use timeline_engine::tracks_cmds::{HitParams, Layout, LayoutParams};
+    // #7 claimed at 03:01, submitted at 03:30, the last event: waiting since, for no time yet.
+    let (dir, mut engine, mut pane) = opened("2026-10-31T03:30:00Z");
+    let list: swarmception_engine::rows_cmds::ListResult = serde_json::from_str(&engine.execute("rows.list", "").unwrap()).unwrap();
+    let (key, bar) = list
+        .rows
+        .iter()
+        .flat_map(Node::leaves)
+        .find_map(|leaf| match leaf {
+            Node::Ranges { key, bars, .. } if key != "merged" => bars.iter().position(|b| b.ticket == Some(7)).map(|i| (key.clone(), (i, bars[i].clone()))),
+            _ => None,
+        })
+        .unwrap();
+    let (place, bar) = bar;
+    assert_eq!(bar.colour, swarmception_domain::colours::ticket_colour(7), "in its own colour");
+    assert_eq!(bar.segments.iter().map(|s| s.stage).collect::<Vec<_>>(), [Stage::Claimed]);
+    let session = pane.widget().session();
+    session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![key.clone()]), label_char_width: Some(7.0) }).unwrap();
+    let track = &bars.tracks[0];
+    let at = track.ranges.iter().position(|r| r.range == place).unwrap();
+    let strip = track.strips.iter().find(|s| s.bar == at).expect("its strip");
+    let [r, g, b] = bar.segments[0].colour;
+    let colours: Vec<[u8; 4]> = strip.segments.iter().map(|s| s.colour).collect();
+    assert_eq!(colours, [[r, g, b, 255]], "claimed, all along");
+    // The tooltip over the claimed stretch names it.
+    let layout = session.call::<Layout>(LayoutParams { pane: 600.0, scroll: 0.0 }).unwrap();
+    let row = layout.rows.iter().find(|r| r.key == key).unwrap();
+    let piece = strip.segments[0];
+    let point = HitParams { pane: 600.0, scroll: 0.0, x: layout.label_width + piece.x + piece.width / 2.0, y: row.y + row.height / 2.0 };
+    let tip = session.call::<Tooltip>(point).unwrap();
+    assert_eq!(tip.lines.last().map(timeline_engine::wire::TooltipLineWire::text).as_deref(), Some("■ claimed · 29 min 00 s"));
+    std::fs::remove_dir_all(dir).ok();
+}

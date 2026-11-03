@@ -59,6 +59,14 @@ pub const MAIN_MERGE: Rgb = [0x5a, 0xa4, 0x69];
 /// [`STOPPED`].
 pub const NO_TICKET: Rgb = [0x7f, 0x87, 0x96];
 
+/// Working, on a phase's border and strip (#42, the factory's own, and the timeline's strip since
+/// #110): a warm white, lit, lighter than every ticket's colour and every phase's, so it shows on
+/// a bar in its ticket's colour.
+pub const WORKING: Rgb = [0xff, 0xf3, 0xd6];
+/// In a gate run (#42, the factory's own; the timeline's strip since #110): a magenta, more vivid
+/// than the palette's muted purple and pink.
+pub const GATING: Rgb = [0xe0, 0x40, 0xfb];
+
 /// The fixed colours with a hue, which a ticket's colour keeps clear of.
 pub const FIXED: [Rgb; 4] = [CLAIMED, WAITING, SENT_BACK, MAIN_MERGE];
 /// How far, in degrees of OKLCh hue, a ticket's colour keeps from each of [`FIXED`]'s.
@@ -95,7 +103,7 @@ pub fn style_colour(style: Style, ticket: Option<u64>) -> Rgb {
     let own = || ticket.map_or(NO_TICKET, ticket_colour);
     match style {
         Style::MainMerge => MAIN_MERGE,
-        Style::Merged | Style::Working => own(),
+        Style::Merged | Style::Working | Style::Ticket => own(),
         Style::Claimed => CLAIMED,
         Style::Waiting => WAITING,
         Style::SentBack => SENT_BACK,
@@ -128,7 +136,8 @@ pub const fn importance(style: Style, result: Option<GateResult>) -> u8 {
         },
         Style::SentBack => HIGH,
         Style::Stopped => MIDDLE,
-        Style::Claimed | Style::Working | Style::Waiting => LOW,
+        // A ticket's bar takes its strip's most important (#110: [`crate::rows`]).
+        Style::Claimed | Style::Working | Style::Waiting | Style::Ticket => LOW,
         Style::MainMerge | Style::Merged => MERGE,
     }
 }
@@ -308,9 +317,14 @@ mod tests {
                 let rows = rows(&activity, &[], RowsSpec { grouping, ..RowsSpec::default() });
                 let bars = bars_where(&rows, |_, bar| bar.ticket == Some(issue));
                 for (at, bar) in &bars {
+                    // #110: one bar a ticket a row, in its own colour all along; its stages fixed
+                    // colours (working the factory's warm white) on its strip.
                     match bar.style {
-                        Style::Working | Style::Merged => assert_eq!(bar.colour, own, "#{issue} {at:?} {:?}", bar.style),
-                        _ => assert!(fixed.contains(&bar.colour), "#{issue} {at:?} {:?} in {:?}", bar.style, bar.colour),
+                        Style::Ticket | Style::Merged => assert_eq!(bar.colour, own, "#{issue} {at:?} {:?}", bar.style),
+                        _ => panic!("#{issue} {at:?}: a {:?} bar", bar.style),
+                    }
+                    for stage in &bar.segments {
+                        assert!(fixed.contains(&stage.colour) || stage.colour == WORKING || stage.colour == GATING, "#{issue} {stage:?}");
                     }
                     for line in &bar.tooltip_lines {
                         for word in ["working", "began"] {
@@ -318,8 +332,13 @@ mod tests {
                         }
                     }
                 }
-                let working: Vec<_> = bars.iter().filter(|(_, b)| b.style == Style::Working).map(|(_, b)| b.colour).collect();
-                assert_eq!(working, [own, own], "#{issue}: both runs of work, in its colour ({grouping:?})");
+                let working = bars
+                    .iter()
+                    .filter(|(_, b)| b.style == Style::Ticket)
+                    .flat_map(|(_, b)| &b.segments)
+                    .filter(|s| s.stage == crate::rows::Stage::Working)
+                    .count();
+                assert_eq!(working, 2, "#{issue}: both runs of work on its strip ({grouping:?})");
                 assert_eq!(bars.iter().filter(|(_, b)| b.style == Style::Merged).count(), 1);
             }
 

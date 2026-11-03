@@ -644,7 +644,7 @@ fn wait(legs: &mut Vec<Leg>, span: (Timestamp, Timestamp), runs: &[(Timestamp, T
 
 /// A wait for the merge, `span`, cut where the gate `runs` go on: in time order, whether each
 /// piece is in the gate, its start and its seconds (a piece may be empty).
-fn split_wait(span: (Timestamp, Timestamp), runs: &[(Timestamp, Timestamp)]) -> Vec<(bool, Timestamp, i64)> {
+pub(crate) fn split_wait(span: (Timestamp, Timestamp), runs: &[(Timestamp, Timestamp)]) -> Vec<(bool, Timestamp, i64)> {
     let (start, end) = span;
     let mut runs: Vec<(Timestamp, Timestamp)> = runs.iter().map(|(a, b)| ((*a).max(start), (*b).min(end))).filter(|(a, b)| a < b).collect();
     runs.sort();
