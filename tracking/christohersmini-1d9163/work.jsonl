@@ -4,3 +4,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-28e7b2d","t":"2026-11-03T14:20:01Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-28e7b2d","t":"2026-11-03T14:20:16Z"}
 {"event":"submit","issue":124,"mr":125,"t":"2026-11-03T14:20:28Z"}
+{"event":"session.stop","t":"2026-11-03T14:22:12Z"}
