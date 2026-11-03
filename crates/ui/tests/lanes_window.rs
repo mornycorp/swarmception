@@ -113,7 +113,7 @@ fn ready_checks_are_one_lane_in_a_window_with_one_check_and_four_over_the_overla
     assert_eq!(ready_lanes(&mut shell), 1, "one check at a time in the window");
     // ui.inspect reports the window they were packed over, as clock times.
     let inspect = shell.inspect();
-    assert_eq!(inspect.version, 14);
+    assert!(inspect.version >= 14, "lanesWindow since version 14");
     let packed = inspect.timeline.lanes_window.unwrap();
     assert_eq!((packed.start, packed.end), (Timestamp::parse("2026-10-31T04:05:00Z").unwrap(), Timestamp::parse("2026-10-31T04:35:00Z").unwrap()));
 

@@ -141,7 +141,9 @@ pub struct IssueEvent {
 pub struct Activity {
     /// By machine, then name, then instance.
     pub agents: Vec<Agent>,
-    /// Every issue event of every file, oldest first (a file's own order kept at a tie).
+    /// Every issue event of every file, oldest first (a file's own order kept at a tie), with a
+    /// `sendback` for each send-back a gate's failure makes, logged or not (#106: the tracking
+    /// format's rule, [`crate::sendbacks`]).
     pub issue_events: Vec<IssueEvent>,
     /// The first and last event's times; none with no events.
     pub extent: Option<(Timestamp, Timestamp)>,
@@ -173,6 +175,7 @@ impl Activity {
             })
             .collect();
         issue_events.sort_by_key(|e| e.t);
+        let issue_events = crate::sendbacks::told(&agents, issue_events);
         let mut times: Vec<Timestamp> = files.iter().flat_map(|f| f.events.iter().map(|e| e.t)).collect();
         times.sort_unstable();
         Self { agents, issue_events, extent, times, errors }

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -49,7 +49,16 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   ended when, and the factory puts it on the shelf then). A worker's `submit` straight after a
   send-back, with no `work` logged between, is its rework (#83: `Stretch::rework`): the send-back
   keeps a minute's mark (`SENT_BACK_MARK`), the rest up to the submit is *working* again, so a
-  ticket's second run is drawn in its own colour as its first was. `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
+  ticket's second run is drawn in its own colour as its first was. **A send-back** is the
+  tracking format's (its Send-backs, #106: `sendbacks`): a `sendback` event, or a gate (`gate…`)
+  that failed for the change's cause (`rc≠0`, a cause not the machine's, `sendbacks::TRANSIENT`)
+  with no later gate saying it reruns it (`rerun of <sub>:`), which sends back every ticket its
+  start note names before its first `;` at its stop, unless the ticket merged since it was last
+  claimed or submitted; a `sendback` after that failure and before the ticket's next gate is the
+  same send-back, in the coordinator's words. `Activity::of` adds each to `issue_events` as a
+  `sendback` at the gate's stop and drops the events it answers (`sendbacks::told`), so the
+  tickets, the timeline, the details, the factory and `stats.get` read one list; a test checks it
+  against swarm-core's pinned `prwatch::sendback`. `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed: `Collapse` off, `empty` (no events at all) or `window`, #74, which `true`
   and `false` still read as), under two rows at the top, the merges onto `main` and the tickets'
   merges, each a 10 s span from its time (`MERGE_SECONDS`), and under them the gate's two (#84:
@@ -257,7 +266,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   would not fit in one; when even those squash them, the workers off shift holding nothing fold
   into one line under the rest (`+22 off shift: …`), the busy come first and the rest scroll, each
   strip at least a line high, the bench holding a newly selected ticket scrolled into view (#94:
-  `ui.inspect` version 13's `factory.drawn.benchesFolded` and `benchesHidden`), the gate is its list of runs (✔/✖, tickets, cause, age) under what it is
+  `ui.inspect` version 13's `factory.drawn.benchesFolded` and `benchesHidden`); each group in
+  natural order (`factory::natural`: `worker-2` before `worker-10`, #106), and a click on the
+  folded line opens it, their benches after the rest, scrolling with them, the first of them
+  scrolled into view, the line then folding them again (`FactoryView::off_shift`, `UiState`
+  version 11; `ui.set`'s `offShift`; `ui.inspect` version 15's `factory.drawn.benchesUnfolded`), the gate is its list of runs (✔/✖, tickets, cause, age) under what it is
   gating (#31), the workers' ready checks among them in time order (#95: `Gate::checks`, each a
   `GateRun` of `Lane::Ready` with its `worker`; a flask in a second column, read as its worker's
   name; the gate's counts its own), a run selected kept in the list however old
@@ -580,6 +593,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | #106: a gate's failure for the change's cause is a send-back with or without a `sendback` (`sendbacks`, `Activity::issue_events`), as swarm-core's `prwatch::sendback` reads it; the Factory's benches in natural order (`factory::natural`), the fold of those off shift opening on a click and closing again (`FactoryView::off_shift`, `UiState` 11, `ui.set`'s `offShift`, `ui.inspect` 15's `benchesUnfolded`); the live test's fakes run by `sh`, never exec'd new |
 | 2026-11-03 | minor | Each row's lanes sized over the window (`view.lanes`, #97), the widget pinned at swarm-timeline 3692af8 (with the minimap's fold marks); `ui.inspect` 14: `timeline.lanesWindow` |
 | 2026-11-03 | minor | Background reads under load (#96): a last wake when the issues' read is over; the engine's tests block on the waker, the UI's wait to a deadline; the source looks up its refs in one `cat-file --batch-check` |
 | 2026-11-03 | minor | Ready checks in the Factory's Gate list (#95): `Gate::checks` (`ready_checks`, `GateRun::lane` and `worker`), in time order with the gate's runs, a flask apart; `factory.at`'s `run` keeps a run selected in the lists (`keep_run`, `is_run`); a selected run running past *t* drawn selected, one after it `not yet run`; a ready check's details its own story (`Subject::Gate` by its id: `details`' `Ctx::checks`; its bar's subject and its line in its ticket's story go to it); `Drawn::run_lines` |

@@ -297,7 +297,8 @@ mod tests {
                 ("2026-10-31T01:00:05Z".to_owned(), MomentKind::Work, "#5 work began · worker-1"),
                 ("2026-10-31T01:10:00Z".to_owned(), MomentKind::Submit, "#5 submitted (PR #9) · worker-1"),
                 ("2026-10-31T01:19:00Z".to_owned(), MomentKind::GateFail, "gate-9 failed: build · #5"),
-                ("2026-10-31T01:20:00Z".to_owned(), MomentKind::Sendback, "#5 sent back by the gate · worker-1"),
+                // The gate's failure is the send-back (#106): the sendback after it, in its words.
+                ("2026-10-31T01:19:00Z".to_owned(), MomentKind::Sendback, "#5 sent back by the gate · worker-1"),
                 ("2026-10-31T01:30:00Z".to_owned(), MomentKind::Work, "#5 rework began · worker-1"),
                 ("2026-10-31T01:40:00Z".to_owned(), MomentKind::Submit, "#5 submitted (PR #9) · worker-1"),
                 ("2026-10-31T02:00:00Z".to_owned(), MomentKind::GatePass, "gate-pr9b passed · #5"),
@@ -332,7 +333,7 @@ mod tests {
         let next = |from: &str, kinds: &[MomentKind]| step(&list, kinds, Some(at(from)), Direction::Next);
         let previous = |from: &str, kinds: &[MomentKind]| step(&list, kinds, Some(at(from)), Direction::Previous);
         let s = next("2026-10-31T01:05:00Z", &[]);
-        assert_eq!((s.t, s.text.as_str(), s.index, s.count), (Some(at("2026-10-31T01:10:00Z")), "#5 submitted (PR #9) · worker-1", Some(3), 8));
+        assert_eq!((s.t, s.text.as_str(), s.index, s.count), (Some(at("2026-10-31T01:10:00Z")), "#5 submitted (PR #9) · worker-1", Some(3), 7));
         assert_eq!(next("2026-10-31T01:10:00Z", &[]).t, Some(at("2026-10-31T01:19:00Z")), "strictly after");
         assert_eq!(previous("2026-10-31T01:10:00Z", &[]).t, Some(at("2026-10-31T01:00:05Z")), "strictly before");
         // Two at one second are one step, named first and counted.
@@ -351,11 +352,11 @@ mod tests {
         assert_eq!(step(&list, &[], None, Direction::Next).t, Some(at("2026-10-31T01:00:00Z")));
         assert_eq!(step(&list, &[], None, Direction::Previous).t, Some(at("2026-10-31T02:00:00Z")));
         assert_eq!(step(&list, &[], Some(at("2026-10-31T01:30:00Z")), Direction::First).index, Some(1));
-        assert_eq!(step(&list, &[], Some(at("2026-10-31T01:30:00Z")), Direction::Last).index, Some(8));
+        assert_eq!(step(&list, &[], Some(at("2026-10-31T01:30:00Z")), Direction::Last).index, Some(7));
         assert_eq!(step(&[], &[], None, Direction::Next), Step { text: "no later moment".to_owned(), ..Step::default() });
         // Far out of range: answers, never a panic.
         assert_eq!(step(&list, &[], Some(Timestamp(i64::MIN)), Direction::Next).index, Some(1));
-        assert_eq!(step(&list, &[], Some(Timestamp(i64::MAX)), Direction::Previous).index, Some(8));
+        assert_eq!(step(&list, &[], Some(Timestamp(i64::MAX)), Direction::Previous).index, Some(7));
     }
 
     #[test]

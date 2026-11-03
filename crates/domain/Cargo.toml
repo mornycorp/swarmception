@@ -14,6 +14,8 @@ schemars = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+# Its pinned `prwatch::sendback`, which a test checks the send-backs against (#106).
+swarm-core = { workspace = true }
 
 [lints]
 workspace = true

@@ -67,8 +67,9 @@ pub use workers::{
 /// height (#61); 6: the folded panes (#68); 7: the workers pane, its window and its sort (#67);
 /// 8: where the workers' window is (#76); 9: the factory keeps no time of its own (#85: the
 /// factory's `t` is gone, and an older state's is dropped as it reads); 10: folding the timeline's
-/// quiet time (#86, `fold`; an older state's is off).
-pub const UI_STATE_VERSION: u32 = 10;
+/// quiet time (#86, `fold`; an older state's is off); 11: the factory's benches off shift opened
+/// out of their fold (#106, `factory.off_shift`; an older state's are folded).
+pub const UI_STATE_VERSION: u32 = 11;
 
 /// Folding the timeline's quiet time (#86): View ▸ Fold Quiet Time, the toolbar's checkbox and
 /// `ui.set`'s `foldQuiet` turn it on; the widget then folds each stretch where no row has

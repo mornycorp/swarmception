@@ -157,11 +157,14 @@ pub struct FactoryView {
     pub ticket: Option<u64>,
     /// The key moments ⏮ / ⏭ step through.
     pub steps: Steps,
+    /// The benches of the workers off shift opened out of their fold (#106): after the rest,
+    /// scrolling with them. Off, they fold into one line when the benches lack room (#94).
+    pub off_shift: bool,
 }
 
 impl Default for FactoryView {
     fn default() -> Self {
-        Self { follow: true, playing: false, speed: Speed::default(), ticket: None, steps: Steps::All }
+        Self { follow: true, playing: false, speed: Speed::default(), ticket: None, steps: Steps::All, off_shift: false }
     }
 }
 
@@ -267,6 +270,9 @@ pub struct FactoryPane {
     landed: Option<Landed>,
     /// Its title was clicked last frame: fold it (#68).
     fold: bool,
+    /// The benches off shift were opened out of their fold last frame (#106): a fold opened since
+    /// scrolls its first bench into view.
+    off_shift: bool,
 }
 
 /// What a scene was asked for: *t*, `recent`, the traced ticket, and the engine's revision.
@@ -554,8 +560,16 @@ impl FactoryPane {
         let rect = ui.available_rect_before_wrap().intersect(ui.clip_rect());
         ui.allocate_rect(rect, egui::Sense::hover());
         self.rect = Some(rect);
-        let marks = Marks { hovered: self.hovered, traced: view.ticket, selected: self.selected.clone() };
+        if view.off_shift && !self.off_shift {
+            self.wall.reveal_unfolded = true;
+        }
+        self.off_shift = view.off_shift;
+        let marks = Marks { hovered: self.hovered, traced: view.ticket, selected: self.selected.clone(), off_shift: view.off_shift };
         self.drawn = paint(ui, rect, scene, (&mut self.motion, &mut self.wall), marks);
+        if self.drawn.fold_clicked {
+            view.off_shift = !view.off_shift;
+            ui.ctx().request_repaint();
+        }
         if self.drawn.hovered != self.hovered {
             self.hovered = self.drawn.hovered;
             ui.ctx().request_repaint();
@@ -763,9 +777,9 @@ mod tests {
 
     #[test]
     fn the_view_reads_back_and_defaults() {
-        let view = FactoryView { follow: false, playing: true, speed: Speed::Hour, ticket: Some(7), steps: Steps::SendBacks };
+        let view = FactoryView { follow: false, playing: true, speed: Speed::Hour, ticket: Some(7), steps: Steps::SendBacks, off_shift: true };
         let text = serde_json::to_string(&view).unwrap();
-        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","ticket":7,"steps":"sendBacks"}"#);
+        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","ticket":7,"steps":"sendBacks","off_shift":true}"#);
         assert_eq!(serde_json::from_str::<FactoryView>(&text).unwrap(), view);
         assert_eq!(serde_json::from_str::<FactoryView>("{}").unwrap(), FactoryView::default());
         assert!(serde_json::from_str::<FactoryView>(r#"{"speed":"warp"}"#).is_err());

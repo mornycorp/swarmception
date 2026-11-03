@@ -4,7 +4,9 @@
 //! station ([`crate::factory_chip`]): its fill its own colour, its border its phase, only its size
 //! changing. The benches are short strips (the name, model and helper on one line, the status
 //! under it), in more columns when many workers would not fit in one, and with dozens (#94) the
-//! workers off shift holding nothing folded into a line, the busy first and the rest scrolling;
+//! workers off shift holding nothing folded into a line, the busy first and the rest scrolling,
+//! each group in natural order (`worker-2` before `worker-10`, #106); a click on the folded line
+//! opens it, their benches after the rest, scrolling with them, and a click on its line closes it;
 //! the gate is its runs' list (✔/✖, cause, age) under what it is gating. Every chip, bench, run and brick has its tooltip,
 //! the scene's own lines in colour ([`crate::factory_tip`]). [`Drawn`] records what each station
 //! drew, for a test to check against `factory.at`.
@@ -37,6 +39,12 @@ pub struct Drawn {
     pub bench_cells: Vec<Rect>,
     /// The benches folded away into one line for want of room (#94): off shift, holding nothing.
     pub benches_folded: Vec<String>,
+    /// Those benches with their fold opened (#106): after the rest, in view or scrolled away.
+    pub benches_unfolded: Vec<String>,
+    /// Where the fold's line was drawn, and whether it was clicked this frame (#106): it opens,
+    /// or closes.
+    pub fold_line: Option<Rect>,
+    pub fold_clicked: bool,
     /// The benches scrolled out of view (#94).
     pub benches_hidden: usize,
     pub dock: Vec<u64>,
@@ -86,6 +94,8 @@ pub struct Marks {
     pub hovered: Option<u64>,
     pub traced: Option<u64>,
     pub selected: Option<Selected>,
+    /// The benches off shift are opened out of their fold (#106: `FactoryView::off_shift`).
+    pub off_shift: bool,
 }
 
 /// What the factory has selected (#85): the details' subject as the factory draws it, which a
@@ -149,12 +159,14 @@ impl Selected {
 
 /// How main's wall is scrolled (#32): the points down from its newest row, 0 when it fits; and
 /// whether to scroll the selected brick into view on the next frame (#85), once (the bench
-/// holding a selected ticket too). How far the benches are scrolled (#94), in points.
+/// holding a selected ticket too). How far the benches are scrolled (#94), in points; whether
+/// to scroll the first of the benches just opened out of their fold into view (#106), once.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WallView {
     pub scroll: f32,
     pub reveal: bool,
     pub benches: f32,
+    pub reveal_unfolded: bool,
 }
 
 /// `items` with the one `selected` picks moved into the first `shown`, in place of the last of
@@ -498,7 +510,7 @@ struct Floor<'a> {
     wall: &'a mut WallView,
 }
 
-impl Floor<'_> {
+impl<'a> Floor<'a> {
     fn font(size: f32) -> FontId {
         FontId::proportional(size)
     }
@@ -681,22 +693,7 @@ impl Floor<'_> {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
             return;
         }
-        // Every bench while each gets room for two lines; else those off shift holding nothing
-        // fold into a line under the others (#94), and the rest, the busy first, scroll when they
-        // still don't fit.
-        let all: Vec<&Bench> = scene.benches.iter().collect();
-        let (open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(n, room.size()).roomy() {
-            (all, Vec::new())
-        } else {
-            let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = all.into_iter().partition(|b| !folds(b));
-            open.sort_by_key(|b| busy_rank(b.status));
-            (open, folded)
-        };
-        let (room, fold) =
-            if folded.is_empty() { (room, None) } else { (room.with_max_y(room.bottom() - BENCH_FOLD), Some(room.with_min_y(room.bottom() - BENCH_FOLD))) };
-        if let Some(fold) = fold {
-            self.folded(fold, &folded);
-        }
+        let (room, open, unfolded) = self.bench_lists(room);
         if open.is_empty() {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
             return;
@@ -706,7 +703,7 @@ impl Floor<'_> {
         if grid.rows > grid.visible {
             grid = bench_grid(open.len(), room.size());
         }
-        let first = self.bench_scroll(room, &open, grid);
+        let first = self.bench_scroll(room, &open, grid, open.len() - unfolded);
         let width = room.width() / grid.cols as f32;
         for (i, bench) in open.iter().enumerate() {
             let (col, row) = (i / grid.rows, i % grid.rows);
@@ -721,10 +718,42 @@ impl Floor<'_> {
         }
     }
 
-    /// The first row of benches in view (#94): scrolled by the wheel over them, and to the bench
-    /// holding a newly selected ticket; a scrollbar at the right of `room` when they overflow.
-    fn bench_scroll(&mut self, room: Rect, open: &[&Bench], grid: BenchGrid) -> usize {
+    /// The benches to lay out in `room`, the room left for them and how many of them, at the end,
+    /// are those off shift opened out of their fold. Every bench while each gets room for two
+    /// lines; else those off shift holding nothing fold into a line under the others (#94), drawn
+    /// here, and the rest, the busy first, scroll when they still don't fit; each group in the
+    /// scene's natural order (#106). The fold opened puts its benches after the rest, scrolling
+    /// with them, its line under them to close it.
+    fn bench_lists(&mut self, room: Rect) -> (Rect, Vec<&'a Bench>, usize) {
+        let scene = self.scene;
+        let all: Vec<&Bench> = scene.benches.iter().collect();
+        let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(all.len(), room.size()).roomy() {
+            (all, Vec::new())
+        } else {
+            let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = all.into_iter().partition(|b| !folds(b));
+            open.sort_by_key(|b| busy_rank(b.status));
+            (open, folded)
+        };
+        if folded.is_empty() {
+            return (room, open, 0);
+        }
+        self.folded(room.with_min_y(room.bottom() - BENCH_FOLD), &folded);
+        let unfolded = if self.marks.off_shift { folded.len() } else { 0 };
+        if unfolded > 0 {
+            self.drawn.benches_unfolded = std::mem::take(&mut self.drawn.benches_folded);
+            open.extend(folded);
+        } else {
+            self.wall.reveal_unfolded = false;
+        }
+        (room.with_max_y(room.bottom() - BENCH_FOLD), open, unfolded)
+    }
+
+    /// The first row of benches in view (#94): scrolled by the wheel over them, to the bench
+    /// holding a newly selected ticket, and to the first of those just opened out of their fold,
+    /// the `unfolded`th (#106); a scrollbar at the right of `room` when they overflow.
+    fn bench_scroll(&mut self, room: Rect, open: &[&Bench], grid: BenchGrid, unfolded: usize) -> usize {
         let overflow = grid.rows - grid.visible;
+        let reveal_unfolded = std::mem::take(&mut self.wall.reveal_unfolded) && unfolded < open.len();
         if overflow == 0 {
             self.wall.benches = 0.0;
             return 0;
@@ -735,11 +764,19 @@ impl Floor<'_> {
         }
         let selected = self.selected_ticket();
         // Main's wall takes the reveal after; the benches only read it.
-        if let Some(at) = open.iter().position(|b| b.crates.iter().any(|c| Some(c.issue) == selected)).filter(|_| self.wall.reveal) {
+        let held = open.iter().position(|b| b.crates.iter().any(|c| Some(c.issue) == selected)).filter(|_| self.wall.reveal);
+        if let Some(at) = held {
             let row = at % grid.rows;
             let first = (scroll / grid.height).round() as usize;
             if row < first || row >= first + grid.visible {
                 scroll = row.saturating_sub(grid.visible / 2) as f32 * grid.height;
+            }
+        } else if reveal_unfolded {
+            // The fold just opened: its first bench's row at the top, unless it shows already.
+            let row = unfolded % grid.rows;
+            let first = (scroll / grid.height).round() as usize;
+            if row < first || row >= first + grid.visible {
+                scroll = row as f32 * grid.height;
             }
         }
         let scroll = scroll.clamp(0.0, overflow as f32 * grid.height);
@@ -754,15 +791,26 @@ impl Floor<'_> {
     }
 
     /// The benches folded away (#94): how many, and their names, on one line in `rect`; every
-    /// name in its tooltip.
+    /// name in its tooltip. A click on the line opens the fold (#106), their benches after the
+    /// rest, the line then saying so; a click on it closes the fold again.
     fn folded(&mut self, rect: Rect, folded: &[&Bench]) {
         let names: Vec<&str> = folded.iter().map(|b| b.actor.name.as_str()).collect();
-        let text = format!("+{} off shift: {}", folded.len(), names.join(", "));
-        let line = fit(&self.painter, rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, &text, (Self::font(11.0), self.pal.weak), rect.width() - 8.0);
-        let mut tooltip = vec![format!("{} off shift, holding nothing", folded.len())];
+        let (text, how) = if self.marks.off_shift {
+            (format!("{}  {} off shift, shown above: fold them", icons::CHEVRON_DOWN, folded.len()), "click to fold them into this line")
+        } else {
+            (format!("{}  +{} off shift: {}", icons::CHEVRON_RIGHT, folded.len(), names.join(", ")), "click to show their benches")
+        };
+        let id = self.ui.scope_id().with(("factory", "benches-folded"));
+        let response = self.ui.interact(rect, id, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+        let colour = if response.hovered() { self.pal.text } else { self.pal.weak };
+        fit(&self.painter, rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, &text, (Self::font(11.0), colour), rect.width() - 8.0);
+        let mut tooltip = vec![format!("{} off shift, holding nothing: {how}", folded.len())];
         tooltip.extend(names.iter().map(|n| (*n).to_owned()));
-        self.tooltip(line, "benches-folded", &tooltip);
+        if factory_tip::show(response, &tooltip).clicked() {
+            self.drawn.fold_clicked = true;
+        }
         self.drawn.benches_folded = folded.iter().map(|b| b.key.clone()).collect();
+        self.drawn.fold_line = Some(rect);
     }
 
     /// A bench's strip: the worker, its name, model and helper on one line and its status under

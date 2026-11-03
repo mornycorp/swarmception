@@ -1,6 +1,7 @@
 //! What Swarmception computes over the tracking events (docs/architecture.md › Layers, L1): each
 //! agent instance's sessions, pauses, work on issues, sub-agents and marks ([`activity`]); each
-//! ticket's life, from claim to merge ([`tickets`]); the colours of tickets and phases, one source
+//! ticket's life, from claim to merge ([`tickets`]), sent back by a `sendback` or a gate's failure
+//! ([`sendbacks`]); the colours of tickets and phases, one source
 //! for the timeline and the factory ([`colours`]); the rows the timeline shows, the merges onto
 //! main and the tickets, flat or by worker ([`rows`]); the timeline widget's host data built
 //! from those rows ([`timeline`]); the swarm's statistics over a window, tickets landed per
@@ -23,6 +24,7 @@ pub mod factory;
 pub mod gates;
 pub mod moments;
 pub mod rows;
+pub mod sendbacks;
 pub mod stats;
 pub mod tickets;
 pub mod timeline;
