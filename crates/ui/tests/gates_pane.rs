@@ -331,14 +331,15 @@ fn hovering_a_run_on_the_timeline_lights_its_tickets_and_a_click_tells_its_story
     assert_eq!(shell.details().details().map(|d| d.title.as_str()), Some("gate run gate-8b"));
     assert_eq!(shell.inspect().timeline.selected.get(GATES_KEY), Some(&vec![2]), "its bar selected");
 
-    // A ready check: its ticket's story.
+    // A ready check: its own story (#95).
     let ready = shell.run_point("ready-abc").expect("ready-abc's bar drawn");
     let click = |pressed| egui::Event::PointerButton { pos: ready, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
     frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(ready), click(true)]);
     frame_with(&mut shell, &ctx, vec![click(false)]);
     frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
-    assert_eq!(shell.ui_state().details.subject, Some(Subject::Ticket { issue: 7 }));
+    assert!(matches!(&shell.ui_state().details.subject, Some(Subject::Gate { sub, .. }) if sub == "ready-abc"), "{:?}", shell.ui_state().details.subject);
+    assert_eq!(shell.details().details().map(|d| d.title.as_str()), Some("ready check ready-abc"));
 
     // The pointer gone: the details' bars have the highlight back.
     frame_with(&mut shell, &ctx, vec![egui::Event::PointerGone]);
