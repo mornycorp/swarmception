@@ -93,13 +93,12 @@ fn workers(numbers: &[usize]) -> Vec<String> {
     numbers.iter().map(|n| format!("mini/worker-{n}")).collect()
 }
 
-/// The shell over `dir`, the factory short under the timeline and the gates, as the owner saw it.
+/// The shell over `dir`, the factory short under the timeline, as the owner saw it.
 fn loaded(dir: &std::path::Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
     let mut state = shell.ui_state();
     state.panes.details = false;
-    state.panes.gates = true;
     state.panes.timeline = true;
     state.panes.factory = true;
     shell.set_ui_state(state);
@@ -213,7 +212,7 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
     assert!(keys(&open.benches).contains(&"mini/worker-11"), "the first off shift in view: {:?}", keys(&open.benches));
     assert!(open.fold_line.is_some(), "its line stays, to close it");
     let inspect = shell.inspect();
-    assert_eq!((inspect.version, inspect.factory.drawn.benches_unfolded.len()), (16, 30));
+    assert_eq!((inspect.version, inspect.factory.drawn.benches_unfolded.len()), (swarmception_ui::control::INSPECT_VERSION, 30));
 
     // The wheel scrolls them with the rest: back to the top, the busy first.
     let over = open.bench_cells[0].center();

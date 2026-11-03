@@ -1,6 +1,6 @@
 //! Swarmception's UI shell (docs/architecture.md › The UI): the menu bar (File, View, as data in
 //! [`menu`]; on macOS the app puts it in the system menu bar instead), the toolbar, the panes (the
-//! timeline, under it the gates and the factory, and beside them the details of what is
+//! timeline, under it the factory, and beside them the details of what is
 //! selected) and the status bar, over the engine's commands.
 //! Every action runs as an engine command (`repo.reload`, `rows.set`, …) or as one of the
 //! timeline widget's (`view.fit`; the zoom buttons are the widget's toolbar's since #35, which
@@ -19,7 +19,6 @@ mod factory_paint;
 mod factory_stats;
 mod factory_tip;
 pub mod fonts;
-mod gates;
 pub mod icons;
 pub mod layout;
 pub mod menu;
@@ -53,7 +52,6 @@ pub use factory::{FactoryPane, FactoryView, HeaderDrawn, Jump, Source as Factory
 pub use factory_chip::{Look, Size, look};
 pub use factory_paint::{Drawn, Marks, Selected as FactorySelected};
 pub use factory_stats::{StatsStrip, StripDrawn, percent, rate};
-pub use gates::{GatesDrawn, GatesPane, HourDrawn, lane_text};
 pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
 pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimeAxis, TimelinePane, TimelineView};
@@ -68,8 +66,9 @@ pub use workers::{
 /// 8: where the workers' window is (#76); 9: the factory keeps no time of its own (#85: the
 /// factory's `t` is gone, and an older state's is dropped as it reads); 10: folding the timeline's
 /// quiet time (#86, `fold`; an older state's is off); 11: the factory's benches off shift opened
-/// out of their fold (#106, `factory.off_shift`; an older state's are folded).
-pub const UI_STATE_VERSION: u32 = 11;
+/// out of their fold (#106, `factory.off_shift`; an older state's are folded); 12: the gates pane
+/// gone (#128: an older state's `gates` is dropped as it reads).
+pub const UI_STATE_VERSION: u32 = 12;
 
 /// Folding the timeline's quiet time (#86): View ▸ Fold Quiet Time, the toolbar's checkbox and
 /// `ui.set`'s `foldQuiet` turn it on; the widget then folds each stretch where no row has
@@ -105,20 +104,18 @@ pub struct Panes {
     pub factory: bool,
     /// The details of what is selected, beside the others (#47).
     pub details: bool,
-    /// How the gate behaved over the window, under the timeline (#61).
-    pub gates: bool,
     /// Model and effort compared per worker, a window over the others (#67); off by default.
     pub workers: bool,
 }
 
 impl Default for Panes {
     fn default() -> Self {
-        Self { timeline: true, factory: true, details: true, gates: true, workers: false }
+        Self { timeline: true, factory: true, details: true, workers: false }
     }
 }
 
 /// The panes' sizes, in whole points, their margins included (#53): the details pane's width as
-/// last drawn; the factory's and the gates' (#61) heights under the timeline as the person
+/// last drawn; the factory's height under the timeline as the person
 /// dragged them (#68: they give way when the timeline needs the room, and come back when it
 /// doesn't). None: the default for the window's size ([`layout::defaults`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -126,7 +123,6 @@ impl Default for Panes {
 pub struct PaneSizes {
     pub details: Option<u32>,
     pub factory: Option<u32>,
-    pub gates: Option<u32>,
 }
 
 /// What the shell keeps between frames: plain data, kept across a restart ([`saved`]).
@@ -169,7 +165,6 @@ pub struct Shell {
     timeline: TimelinePane,
     factory: FactoryPane,
     details: DetailsPane,
-    gates: GatesPane,
     workers: WorkersPane,
     /// What the details followed last: the timeline's chosen bar, the factory's traced ticket.
     followed: (Option<(String, usize)>, Option<u64>),
@@ -220,7 +215,6 @@ impl Shell {
             timeline: TimelinePane::default(),
             factory: FactoryPane::default(),
             details: DetailsPane::default(),
-            gates: GatesPane::default(),
             workers: WorkersPane::default(),
             followed: (None, None),
             revealed: None,
@@ -369,12 +363,6 @@ impl Shell {
         &self.details
     }
 
-    /// The gates pane, to read what it shows (#61).
-    #[must_use]
-    pub const fn gates(&self) -> &GatesPane {
-        &self.gates
-    }
-
     /// The workers pane, to read what it shows (#67).
     #[must_use]
     pub const fn workers(&self) -> &WorkersPane {
@@ -476,7 +464,6 @@ impl Shell {
             timeline: self.ui.panes.timeline,
             factory: self.ui.panes.factory,
             details: self.ui.panes.details,
-            gates: self.ui.panes.gates,
             workers: self.ui.panes.workers,
             grouping: self.spec.grouping,
             collapse: self.spec.collapse,
@@ -527,7 +514,6 @@ impl Shell {
             MenuAction::Timeline => self.ui.panes.timeline = !self.ui.panes.timeline,
             MenuAction::Factory => self.ui.panes.factory = !self.ui.panes.factory,
             MenuAction::Details => self.ui.panes.details = !self.ui.panes.details,
-            MenuAction::Gates => self.ui.panes.gates = !self.ui.panes.gates,
             MenuAction::Workers => self.ui.panes.workers = !self.ui.panes.workers,
             MenuAction::Grouping(grouping) => self.set_rows(SetRowsParams { grouping: Some(grouping), ..SetRowsParams::default() }),
             MenuAction::Collapse(collapse) => {
@@ -629,11 +615,7 @@ impl Shell {
         if self.ui.panes.details {
             self.details_ui(ui, &defaults);
         }
-        self.sync_gates();
         egui::CentralPanel::default().show(ui, |ui| self.central(ui, &defaults));
-        if !self.ui.panes.gates {
-            self.gates.leave();
-        }
         self.workers_window(ui.ctx());
         if let Some(hour) = self.factory.strip().drawn().chosen {
             self.show_hour(hour);
@@ -763,16 +745,6 @@ impl Shell {
         }
     }
 
-    /// Asks `gates.list` for the timeline's window when the gates pane shows (the whole run when
-    /// the timeline doesn't), when the window or the data moved on (#61).
-    fn sync_gates(&mut self) {
-        if !self.ui.panes.gates {
-            return;
-        }
-        let window = if self.ui.panes.timeline { self.timeline.looking(&mut self.engine).and_then(|l| l.window) } else { None };
-        self.gates.sync(&mut self.engine, window);
-    }
-
     /// The Details pane on the right (#47): resizable, or folded to a strip (#68).
     fn details_ui(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
         let folded = self.ui.folded.details.or(defaults.folded.details).unwrap_or(false);
@@ -833,14 +805,14 @@ impl Shell {
         }
     }
 
-    /// The central area (#68's rule, [`layout`]): the timeline, under it the bands (the gates,
-    /// #61, and the factory), each as shown, folded or not, sharing the height by
+    /// The central area (#68's rule, [`layout`]): the timeline, under it the bands (the factory),
+    /// each as shown, folded or not, sharing the height by
     /// [`layout::share`]: the timeline keeps its least while the bands can give way. Without the
     /// timeline the last open band fills the rest.
     fn central(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
         let panes = self.ui.panes;
-        if !panes.timeline && !panes.factory && !panes.gates {
-            ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline, Factory or Gates shows one."));
+        if !panes.timeline && !panes.factory {
+            ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline or Factory shows one."));
             return;
         }
         let folded = self.ui.folded.or(defaults.folded);
@@ -921,10 +893,6 @@ impl Shell {
     /// What band `kind` draws open; a click on its title folds it.
     fn band_contents(&mut self, ui: &mut egui::Ui, kind: BandKind) {
         let fold = match kind {
-            BandKind::Gates => {
-                self.gates_ui(ui);
-                self.gates.drawn().fold
-            }
             BandKind::Factory => {
                 self.factory.ui(ui, &mut self.ui.factory, &self.status);
                 self.factory.fold_asked()
@@ -939,14 +907,6 @@ impl Shell {
     #[must_use]
     pub const fn layout(&self) -> &layout::LayoutDrawn {
         &self.layout
-    }
-
-    /// The gates pane, its hours under the timeline's window when the timeline shows.
-    fn gates_ui(&mut self, ui: &mut egui::Ui) {
-        // Through the timeline's folds (#86): an hour's column under the timeline's x for it.
-        let axis = if self.ui.panes.timeline { self.timeline.time_axis().cloned() } else { None };
-        let t = self.factory.scene().map(|s| s.t).filter(|_| self.ui.panes.factory);
-        self.gates.ui(ui, axis.as_ref(), t);
     }
 
     /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or
@@ -1242,67 +1202,57 @@ impl Shell {
 /// [`layout::share`] gives it its room.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BandKind {
-    Gates,
     Factory,
 }
 
 impl BandKind {
-    const ALL: [Self; 2] = [Self::Gates, Self::Factory];
+    const ALL: [Self; 1] = [Self::Factory];
 
     const fn name(self) -> &'static str {
         match self {
-            Self::Gates => "gates",
             Self::Factory => "factory",
         }
     }
 
     const fn title(self) -> &'static str {
         match self {
-            Self::Gates => "Gates",
             Self::Factory => "Factory",
         }
     }
 
     const fn icon(self) -> &'static str {
         match self {
-            Self::Gates => icons::GATES,
             Self::Factory => icons::FACTORY,
         }
     }
 
     const fn shown(self, panes: Panes) -> bool {
         match self {
-            Self::Gates => panes.gates,
             Self::Factory => panes.factory,
         }
     }
 
-    /// The least it shrinks to while open: the gates' header and lanes; the factory's header
-    /// and a floor.
+    /// The least it shrinks to while open: the factory's header and a floor.
     const fn least(self) -> f32 {
         match self {
-            Self::Gates => 90.0,
             Self::Factory => 140.0,
         }
     }
 
     const fn default(self, defaults: &layout::Defaults) -> f32 {
         match self {
-            Self::Gates => defaults.gates,
             Self::Factory => defaults.factory,
         }
     }
 
     const fn size(self, sizes: PaneSizes) -> Option<u32> {
         match self {
-            Self::Gates => sizes.gates,
             Self::Factory => sizes.factory,
         }
     }
 
     const fn set_size(self, sizes: &mut PaneSizes, size: Option<u32>) {
         match self {
-            Self::Gates => sizes.gates = size,
             Self::Factory => sizes.factory = size,
         }
     }
@@ -1310,7 +1260,6 @@ impl BandKind {
     /// The person's choice of fold, if they made one.
     const fn chosen(self, folded: layout::Folded) -> Option<bool> {
         match self {
-            Self::Gates => folded.gates,
             Self::Factory => folded.factory,
         }
     }
@@ -1322,7 +1271,6 @@ impl BandKind {
 
     const fn set_folded(self, folded: &mut layout::Folded, fold: bool) {
         match self {
-            Self::Gates => folded.gates = Some(fold),
             Self::Factory => folded.factory = Some(fold),
         }
     }
@@ -1347,7 +1295,7 @@ mod tests {
 
     #[test]
     fn ui_state_reads_back_and_defaults() {
-        let state = UiState { panes: Panes { timeline: false, factory: true, details: false, gates: false, workers: true }, ..UiState::default() };
+        let state = UiState { panes: Panes { timeline: false, factory: true, details: false, workers: true }, ..UiState::default() };
         let text = serde_json::to_string(&state).unwrap();
         assert_eq!(serde_json::from_str::<UiState>(&text).unwrap(), state);
         assert_eq!(serde_json::from_str::<UiState>("{}").unwrap(), UiState::default());
@@ -1358,11 +1306,11 @@ mod tests {
         assert!(old.panes.details && old.details.subject.is_none(), "the details pane, with nothing selected");
         let selected: UiState = serde_json::from_str(r#"{"version":3,"details":{"subject":{"ticket":{"issue":47}}}}"#).unwrap();
         assert_eq!(selected.details.subject, Some(Subject::Ticket { issue: 47 }));
-        // Version 4, before the gates pane (#61): shown, at its default height; its choice and height kept.
+        // Version 4: the factory's height kept.
         let four: UiState = serde_json::from_str(r#"{"version":4,"panes":{"details":false},"sizes":{"factory":300}}"#).unwrap();
-        assert_eq!((four.panes.gates, four.sizes.gates, four.sizes.factory), (true, None, Some(300)));
+        assert_eq!(four.sizes.factory, Some(300));
         // Version 6, before the workers pane (#67): hidden, over the timeline's window, unsorted.
-        let five: UiState = serde_json::from_str(r#"{"version":6,"panes":{"gates":false}}"#).unwrap();
+        let five: UiState = serde_json::from_str(r#"{"version":6,"panes":{"details":false}}"#).unwrap();
         assert_eq!((five.panes.workers, five.workers), (false, WorkersView::default()));
         let sorted = UiState {
             panes: Panes { workers: true, ..Panes::default() },
@@ -1373,8 +1321,11 @@ mod tests {
         // Version 7, before the window's place (#76): at its default place, its sort kept.
         let seven: UiState = serde_json::from_str(r#"{"version":7,"workers":{"whole_run":true,"sort":"landed","ascending":true}}"#).unwrap();
         assert_eq!(seven.workers, WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: true, place: None });
-        let hidden =
-            UiState { panes: Panes { gates: false, ..Panes::default() }, sizes: PaneSizes { gates: Some(180), ..PaneSizes::default() }, ..UiState::default() };
+        let hidden = UiState {
+            panes: Panes { factory: false, ..Panes::default() },
+            sizes: PaneSizes { factory: Some(180), ..PaneSizes::default() },
+            ..UiState::default()
+        };
         assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&hidden).unwrap()).unwrap(), hidden);
     }
 
@@ -1391,7 +1342,6 @@ mod tests {
                 timeline: true,
                 factory: true,
                 details: true,
-                gates: true,
                 workers: false,
                 grouping: Grouping::Flat,
                 collapse: Collapse::Off,

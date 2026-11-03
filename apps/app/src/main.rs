@@ -4,7 +4,7 @@
 //! `swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes <list>]
 //! [--at <time>] [--dark | --light] [--size <w> <h>] [--screenshot <file.png|file.ppm>]`: `--repo` is any
 //! directory in a swarm's clone (the current directory if not given); `--panes` the panes shown
-//! (`timeline`, `factory`, `details`, `gates`, `workers`, comma-separated); `--details <what>` shows the details of
+//! (`timeline`, `factory`, `details`, `workers`, comma-separated); `--details <what>` shows the details of
 //! a ticket (`47`, `#47`), a gate run (`gate:<sub>[@<time>]`), a session
 //! (`session:<instance>[@<time>]`) or a merge onto main (`merge:<commit>`), its pane open (#47);
 //! `--at` puts the factory at a UTC time
@@ -69,17 +69,16 @@ fn steps(text: &str) -> Result<swarmception_ui::Steps, String> {
     steps.ok_or_else(|| format!("--steps takes one of {}, not {text}", ids.join(", ")))
 }
 
-/// `--panes`' list: `timeline`, `factory`, `details`, `gates`, `workers`.
+/// `--panes`' list: `timeline`, `factory`, `details`, `workers`.
 fn panes(list: &str) -> Result<swarmception_ui::Panes, String> {
-    let mut panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, gates: false, workers: false };
+    let mut panes = swarmception_ui::Panes { timeline: false, factory: false, details: false, workers: false };
     for name in list.split(',').map(str::trim) {
         match name {
             "timeline" => panes.timeline = true,
             "factory" => panes.factory = true,
             "details" => panes.details = true,
-            "gates" => panes.gates = true,
             "workers" => panes.workers = true,
-            other => return Err(format!("--panes takes timeline, factory, details, gates and workers, not {other}")),
+            other => return Err(format!("--panes takes timeline, factory, details and workers, not {other}")),
         }
     }
     Ok(panes)
@@ -138,7 +137,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--off-shift] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--off-shift] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -672,7 +671,7 @@ mod tests {
         assert!(parse(&["--zoom", "0"]).is_err() && parse(&["--zoom", "big"]).is_err());
         assert!(parse(&["--frobnicate"]).is_err());
         let options = parse(&["--panes", "factory", "--at", "2026-10-31T13:20:00Z"]).unwrap();
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false, gates: false, workers: false }));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: false, factory: true, details: false, workers: false }));
         assert_eq!(options.at.map(|t| t.to_string()).as_deref(), Some("2026-10-31T13:20:00Z"));
         assert!(parse(&["--panes", "timeline,gantt"]).is_err());
         assert!(parse(&["--at", "teatime"]).is_err());
@@ -685,11 +684,10 @@ mod tests {
         assert_eq!((options.fold, options.hover_fold), (true, Some(2)));
         assert!(parse(&["--hover-fold", "first"]).is_err());
         assert!(parse(&["--hover-gate", "gate-12b"]).is_err(), "no gate run has a bar on the timeline (#117)");
-        let options = parse(&["--panes", "timeline,gates"]).unwrap();
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: true, workers: false }));
+        assert!(parse(&["--panes", "timeline,gates"]).is_err(), "no gates pane (#128)");
         let options = parse(&["--hover-worker", "alder", "--panes", "timeline,workers"]).unwrap();
         assert_eq!(options.hover_worker.as_deref(), Some("alder"));
-        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: false, workers: true }));
+        assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, workers: true }));
         assert!(parse(&["--no-titles"]).is_err(), "titles are always on (#34)");
         assert_eq!(parse(&["--menu", "file.recent"]).unwrap().menu, Some(MenuOpen::Recent));
         assert_eq!(parse(&["--menu", "file"]).unwrap().menu, Some(MenuOpen::File));
@@ -720,7 +718,7 @@ mod tests {
         }
         assert_eq!(
             parse(&["--panes", "details"]).unwrap().panes,
-            Some(swarmception_ui::Panes { timeline: false, factory: false, details: true, gates: false, workers: false })
+            Some(swarmception_ui::Panes { timeline: false, factory: false, details: true, workers: false })
         );
 
         assert_eq!(parse(&["--help"]), Err(String::new()));

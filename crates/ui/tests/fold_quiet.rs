@@ -1,20 +1,16 @@
 //! Folding the timeline's quiet time (#86) over a real repository's tracking branch: two bursts
 //! of work hours apart. Fold Quiet Time (View ▸, the toolbar's checkbox, `ui.set`'s `foldQuiet`)
 //! has the widget fold the stretch where nothing happened, by the swarm's own quiet gap (15 min)
-//! unless `foldAfterSeconds` says; it holds across a reload and is kept in the saved state; and the
-//! Gates band's hours line up under the timeline's x through the fold.
+//! unless `foldAfterSeconds` says; it holds across a reload and is kept in the saved state.
 
 use std::path::{Path, PathBuf};
 
-use swarmception_domain::rows::MERGED_KEY;
-use swarmception_domain::{Collapse, Node};
-use swarmception_engine::rows_cmds::List as Rows;
+use swarmception_domain::Collapse;
 use swarmception_model::Timestamp;
 use swarmception_ui::control::Answer;
 use swarmception_ui::{MenuAction, Shell, UiState};
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::fold_cmds::QueryFolds;
-use timeline_engine::query_cmds::{Bars, BarsParams};
 
 mod support;
 
@@ -185,42 +181,6 @@ fn folding_holds_with_collapse_and_across_a_reload() {
         frame(&mut shell, &ctx);
     }
     assert_eq!(shell.inspect().timeline.folds.len(), 1);
-    std::fs::remove_dir_all(dir).ok();
-}
-
-/// The Gates band's hours sit under the timeline's x for the same time through the fold: each
-/// gate run's merge on the timeline's Tickets merged row (#117: the gate's own rows gone) lies
-/// over its hour's column in the band.
-#[test]
-fn the_gates_hours_line_up_under_the_timeline_through_the_fold() {
-    let dir = repo();
-    let (ctx, mut shell) = loaded(&dir);
-    set(&mut shell, &ctx, r#"{"foldQuiet": true}"#);
-    let drawn = shell.gates().drawn().clone();
-    let (x0, _) = drawn.axis.expect("the band lines up under the timeline");
-    let bars = shell.timeline().widget().session().call::<Bars>(BarsParams { tracks: Some(vec![MERGED_KEY.into()]), label_char_width: None }).unwrap();
-    let runs: Vec<(f32, f32)> = bars.tracks[0].ranges.iter().map(|r| (x0 + r.x, x0 + r.x + r.width)).collect();
-    assert_eq!(runs.len(), 2, "gate-8's merge and gate-10's");
-    let hours: Vec<(Timestamp, egui::Rect)> = drawn.hour_columns.iter().step_by(2).map(|c| (c.start, c.rect)).collect();
-    let rows = shell.engine().call::<Rows>(swarmception_engine::engine_cmds::NoParams {}).unwrap().rows;
-    let gates = rows.iter().find_map(|n| match n {
-        Node::Ranges { key, bars, .. } if key == MERGED_KEY => Some(bars.clone()),
-        _ => None,
-    });
-    let gates = gates.expect("the Tickets merged row");
-    for (bar, (left, right)) in gates.iter().zip(&runs) {
-        let hour = Timestamp(bar.start.0 - bar.start.0.rem_euclid(3_600));
-        let (_, column) = hours.iter().find(|(start, _)| *start == hour).unwrap_or_else(|| panic!("no column for {hour}: {hours:?}"));
-        // The run's merge on the timeline, over its hour's column in the band (the column's inset
-        // a few points either side).
-        assert!(column.left() - 8.0 <= *left && *right <= column.right() + 8.0, "{hour}: bar {left}..{right}, column {column:?}");
-    }
-    // Folded, the second hour's column starts just past the fold's marker, not where 09:00
-    // falls on an even axis (most of the width).
-    let (x0, x1) = drawn.axis.unwrap();
-    let late = hours.iter().find(|(start, _)| *start == t("2026-10-31T09:00:00Z")).unwrap().1;
-    let even = x0 + (x1 - x0) * (6.0 * 3_600.0) / (6.5 * 3_600.0);
-    assert!(late.left() < even - 200.0, "{late:?} vs an even {even}");
     std::fs::remove_dir_all(dir).ok();
 }
 

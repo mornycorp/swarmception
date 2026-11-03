@@ -3,7 +3,7 @@
 //! same items and run them through the same [`crate::Shell::run_menu`], so both reach the same
 //! engine commands (`repo.open`, `repo.recent`, `repo.clearRecent`, `repo.reload`, `repo.fetch`,
 //! `rows.set`, `live.set`) and widget commands (`view.fit`); File opens a repository (Open…,
-//! Open Recent, #69), View lists the panes, the timeline, the factory, the details, the gates and
+//! Open Recent, #69), View lists the panes, the timeline, the factory, the details and
 //! the workers, and Live.
 
 use swarmception_domain::{Collapse, Grouping};
@@ -33,8 +33,6 @@ pub enum MenuAction {
     Factory,
     /// View ▸ Details: shows or hides the details pane (#47).
     Details,
-    /// View ▸ Gates: shows or hides the gates pane (#61).
-    Gates,
     /// View ▸ Workers: shows or hides the workers pane, model and effort compared (#67).
     Workers,
     /// View ▸ Flat or By Worker: `rows.set` with that grouping.
@@ -54,7 +52,7 @@ pub enum MenuAction {
 impl MenuAction {
     /// Every item of the menus themselves, in menu order (Open Recent's own are
     /// [`MenuAction::recent_items`]).
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 16] = [
         Self::Open,
         Self::Recent,
         Self::Reload,
@@ -63,7 +61,6 @@ impl MenuAction {
         Self::Timeline,
         Self::Factory,
         Self::Details,
-        Self::Gates,
         Self::Workers,
         Self::Grouping(Grouping::Flat),
         Self::Grouping(Grouping::Workers),
@@ -85,11 +82,10 @@ impl MenuAction {
     }
 
     /// The View menu's items, separated where `None` is.
-    pub const VIEW: [Option<Self>; 15] = [
+    pub const VIEW: [Option<Self>; 14] = [
         Some(Self::Timeline),
         Some(Self::Factory),
         Some(Self::Details),
-        Some(Self::Gates),
         Some(Self::Workers),
         None,
         Some(Self::Grouping(Grouping::Flat)),
@@ -117,7 +113,6 @@ impl MenuAction {
             Self::Timeline => "view.timeline",
             Self::Factory => "view.factory",
             Self::Details => "view.details",
-            Self::Gates => "view.gates",
             Self::Workers => "view.workersPane",
             Self::Grouping(Grouping::Flat) => "view.flat",
             Self::Grouping(Grouping::Workers) => "view.workers",
@@ -151,7 +146,6 @@ impl MenuAction {
             Self::Timeline => "Timeline",
             Self::Factory => "Factory",
             Self::Details => "Details",
-            Self::Gates => "Gates",
             Self::Workers => "Workers",
             Self::Grouping(Grouping::Flat) => "Flat",
             Self::Grouping(Grouping::Workers) => "By Worker",
@@ -178,7 +172,6 @@ impl MenuAction {
             Self::Timeline => icons::TIMELINE,
             Self::Factory => icons::FACTORY,
             Self::Details => icons::INFO,
-            Self::Gates => icons::GATES,
             Self::Workers => icons::WORKERS,
             Self::Grouping(Grouping::Flat) => icons::FLAT,
             Self::Grouping(Grouping::Workers) => icons::WORKERS,
@@ -244,7 +237,6 @@ pub struct MenuState {
     pub timeline: bool,
     pub factory: bool,
     pub details: bool,
-    pub gates: bool,
     pub workers: bool,
     pub grouping: Grouping,
     pub collapse: Collapse,
@@ -271,7 +263,6 @@ impl MenuState {
             | MenuAction::Timeline
             | MenuAction::Factory
             | MenuAction::Details
-            | MenuAction::Gates
             | MenuAction::Workers
             | MenuAction::Grouping(_)
             | MenuAction::Collapse(_)
@@ -287,7 +278,6 @@ impl MenuState {
             MenuAction::Timeline => Some(self.timeline),
             MenuAction::Factory => Some(self.factory),
             MenuAction::Details => Some(self.details),
-            MenuAction::Gates => Some(self.gates),
             MenuAction::Workers => Some(self.workers),
             MenuAction::Grouping(grouping) => Some(self.grouping == grouping),
             MenuAction::Collapse(collapse) => Some(self.collapse == collapse),
@@ -360,7 +350,6 @@ mod tests {
             timeline: true,
             factory: false,
             details: true,
-            gates: false,
             workers: true,
             grouping: Grouping::Workers,
             collapse: Collapse::Window,
