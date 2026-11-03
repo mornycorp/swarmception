@@ -213,7 +213,7 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
     assert!(keys(&open.benches).contains(&"mini/worker-11"), "the first off shift in view: {:?}", keys(&open.benches));
     assert!(open.fold_line.is_some(), "its line stays, to close it");
     let inspect = shell.inspect();
-    assert_eq!((inspect.version, inspect.factory.drawn.benches_unfolded.len()), (15, 30));
+    assert_eq!((inspect.version, inspect.factory.drawn.benches_unfolded.len()), (16, 30));
 
     // The wheel scrolls them with the rest: back to the top, the busy first.
     let over = open.bench_cells[0].center();

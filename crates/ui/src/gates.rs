@@ -10,9 +10,9 @@
 //! own scale; in the left column, beside them, the runs each lane started in the window and a
 //! short table of the failures by cause. Hovering an hour gives its figures.
 //!
-//! The runs themselves are rows of the timeline (#84: Gate runs and Ready checks, a bar a run,
-//! where they pan, zoom, select and light their tickets as any bar does): the band keeps what
-//! isn't a lane.
+//! The runs have no lanes here and no rows on the timeline (#117, reversing #84): a run naming a
+//! ticket is the ticket's *in the gate* stretch on its bar, a failure its send-back; the
+//! Factory's Gate list tells a run's story. The band keeps its figures, causes and hours.
 
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use swarmception_domain::gates::{Figures, GateHour, GatesList, Lane};

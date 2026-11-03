@@ -16,8 +16,8 @@
 //! Each has a header (a chip in its colour with its mark, its title, the lines under it and
 //! GitHub's labels), its figures ([`Fact`]), what it links to ([`Related`], to select in turn)
 //! and the pages it opens on GitHub ([`Page`]; the engine fills their URLs). Each entry is a line:
-//! its time, its colour (the ticket's own for working and its merge, the phases' fixed colours,
-//! green for what passed or merged, red for what failed or was sent back), what happened, who,
+//! its time, its colour (a stage in its strip's colour, #117: [`Stage::colour`]; the ticket's own
+//! for its merge, green for what passed or merged, red for what failed), what happened, who,
 //! and how long it took (`1 h 05 min`, `3 min 20 s`). Pure: the engine reads the issues and the
 //! slug, the UI draws the lines.
 
@@ -26,10 +26,10 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{IssueKind, IssueState, Issues, Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
-use crate::colours::{self, Rgb, phase_colour, ticket_colour};
+use crate::colours::{self, Rgb, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
 use crate::gates::Lane;
-use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration, groups_holding};
+use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Stage, Style, bars_where, duration, groups_holding};
 use crate::stats::{cause_of, failure_label, step_of};
 use crate::tickets::{Merged, Phase, Stretch, Ticket, tickets};
 use crate::titles;
@@ -355,9 +355,7 @@ fn on_timeline(ctx: &Ctx<'_>, rows: &[Node], subject: &Subject) -> OnTimeline {
             let Some(run) = ctx.run(sub, *at) else { return OnTimeline::default() };
             let named: Vec<u64> = ctx.tickets.iter().filter(|t| names_ticket(run, t)).map(|t| t.issue).collect();
             let commits: Vec<&MainMerge> = merged_prs(&run_events(ctx, run)).into_iter().filter_map(|pr| main_commit(ctx, Some(pr), run.start)).collect();
-            // Its own bar on the Gate runs row (#84) too.
-            let drawn = |bar: &Bar| bar.run.as_ref().is_some_and(|r| r.sub == run.sub && bar.start == run.start);
-            bars_where(rows, |key, bar| bar.ticket.is_some_and(|issue| named.contains(&issue)) || on_main(key, bar, &commits) || drawn(bar))
+            bars_where(rows, |key, bar| bar.ticket.is_some_and(|issue| named.contains(&issue)) || on_main(key, bar, &commits))
         }
         Subject::Session { instance, at } => session_bars(ctx, rows, instance, *at),
         Subject::Merge { commit } => {
@@ -397,18 +395,14 @@ fn session_bars<'r>(ctx: &Ctx<'_>, rows: &'r [Node], instance: &str, at: Option<
     })
 }
 
-/// What the bar `range` of row `track` is the details of: its ticket, the merge onto main it
-/// draws, or a gate run's subject (#84: the run; a `ready` check's ticket, else its worker's
-/// session, as a click on the Gates band's lane told); none for a bar that isn't there.
+/// What the bar `range` of row `track` is the details of: its ticket, or the merge onto main it
+/// draws; none for a bar that isn't there (#117: no gate run has a bar of its own).
 #[must_use]
 pub fn bar_subject(rows: &[Node], merges: &[MainMerge], track: &str, range: usize) -> Option<Subject> {
     let bar = rows.iter().flat_map(Node::leaves).find_map(|leaf| match leaf {
         Node::Ranges { key, bars, .. } if key == track => bars.get(range),
         _ => None,
     })?;
-    if let Some(run) = &bar.run {
-        return Some(run.subject.clone());
-    }
     match (bar.ticket, bar.style) {
         (Some(issue), _) => Some(Subject::Ticket { issue }),
         (None, Style::MainMerge) => merges.iter().find(|m| m.t == bar.start && m.pr == bar.pr).map(|m| Subject::Merge { commit: m.commit.clone() }),
@@ -450,7 +444,7 @@ fn ticket_details(ctx: &Ctx<'_>, issue: u64) -> Option<Details> {
     }
     if let Some(done) = &ticket.done {
         let note = done.note.clone().map(TipLine::plain);
-        entries.push(Entry::at(done.t, colours::STOPPED, "done without a merge").by(Some(ctx.who(&done.by))).note(note));
+        entries.push(Entry::at(done.t, Stage::Stopped.colour(), "done without a merge").by(Some(ctx.who(&done.by))).note(note));
     }
     let (lines, labels) = ticket_header(ctx, ticket);
     let pr = ticket.pr.or_else(|| ctx.issues.pr_of(issue, None).map(|p| p.number)).filter(|pr| *pr != issue);
@@ -476,7 +470,7 @@ fn names_ticket(run: &GateRun, ticket: &Ticket) -> bool {
 }
 
 fn stretch_entry(ctx: &Ctx<'_>, ticket: &Ticket, stretch: &Stretch) -> Entry {
-    let colour = phase_colour(stretch.phase, ticket.issue);
+    let colour = Stage::of(stretch.phase).colour();
     let entry = Entry::span(stretch.start, stretch.end, stretch.open, colour, stretch.phase.name()).by(Some(ctx.who(&stretch.by)));
     let detail = match stretch.phase {
         Phase::Waiting => ticket.pr.map(|pr| TipLine::plain(format!("on PR #{pr}"))),
@@ -628,11 +622,11 @@ fn ticket_facts(ctx: &Ctx<'_>, ticket: &Ticket, runs: &[&GateRun]) -> Vec<Fact> 
     }
     let working = seconds_in(ticket, Phase::Working);
     if working > 0 {
-        facts.push(Fact::coloured("working", duration(working), ticket_colour(ticket.issue)));
+        facts.push(Fact::coloured("working", duration(working), Stage::Working.colour()));
     }
     let waiting = seconds_in(ticket, Phase::Waiting);
     if waiting > 0 {
-        facts.push(Fact::coloured("waiting", duration(waiting), colours::WAITING));
+        facts.push(Fact::coloured("waiting", duration(waiting), Stage::Waiting.colour()));
     }
     if !runs.is_empty() {
         let passed = runs.iter().filter(|r| r.outcome == Outcome::Passed).count();
@@ -838,7 +832,7 @@ fn session_details(ctx: &Ctx<'_>, instance: &str, at: Option<Timestamp>) -> Opti
     entries.extend(agent.work.iter().filter(|w| inside(w.span.start)).map(|w| {
         let detail =
             TipLine::coloured(format!("#{}", w.issue), ticket_colour(w.issue)).then(w.ended.as_ref().map(|e| format!(" · ended by {e}")).unwrap_or_default());
-        Entry::span(w.span.start, w.span.end, w.span.open, ticket_colour(w.issue), "working on")
+        Entry::span(w.span.start, w.span.end, w.span.open, Stage::Working.colour(), "working on")
             .detail(detail)
             .goes_to(Some(Subject::Ticket { issue: w.issue }))
     }));
@@ -873,8 +867,8 @@ fn session_details(ctx: &Ctx<'_>, instance: &str, at: Option<Timestamp>) -> Opti
 /// session it ended, an event this reader doesn't know.
 fn mark_entry(mark: &Mark) -> Entry {
     let colour = match mark.event.as_str() {
-        "claim" => colours::CLAIMED,
-        "submit" => colours::WAITING,
+        "claim" => Stage::Claimed.colour(),
+        "submit" => Stage::Waiting.colour(),
         "merge" => PASSED,
         "sendback" => FAILED,
         _ => colours::STOPPED,
@@ -962,9 +956,8 @@ fn merge_details(ctx: &Ctx<'_>, commit: &str) -> Option<Details> {
         related.push(ctx.related_ticket(ticket.issue));
         if let Some(finished) = ticket.finished {
             let by = ticket.stretches.iter().rev().find(|s| s.phase == Phase::Waiting).map(|s| ctx.who(&s.by));
-            entries.push(
-                Entry::at(finished, colours::WAITING, format!("#{} submitted", ticket.issue)).by(by).goes_to(Some(Subject::Ticket { issue: ticket.issue })),
-            );
+            let entry = Entry::at(finished, Stage::Waiting.colour(), format!("#{} submitted", ticket.issue)).by(by);
+            entries.push(entry.goes_to(Some(Subject::Ticket { issue: ticket.issue })));
         }
         if let Some(merged) = &ticket.merged {
             if let Some(run) = merged.sub.as_deref().and_then(|sub| ctx.run(sub, Some(merged.t))) {
@@ -1074,7 +1067,7 @@ mod tests {
         let times: Vec<Timestamp> = d.entries.iter().map(|e| e.t).collect();
         assert!(times.windows(2).all(|w| w[0] <= w[1]), "oldest first");
         let working = &d.entries[1];
-        assert_eq!((working.colour, working.duration.as_deref()), (ticket_colour(170), Some("13 min 18 s")));
+        assert_eq!((working.colour, working.duration.as_deref()), (Stage::Working.colour(), Some("13 min 18 s")), "#117: the strip's working");
         assert_eq!(working.who.as_ref().map(|w| w.name.as_str()), Some("worker-2"));
         assert_eq!(working.text(), "working · worker-2 · 13 min 18 s");
         assert_eq!(d.entries[0].colour, colours::CLAIMED);
@@ -1183,12 +1176,9 @@ mod tests {
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 0), Some(Subject::Ticket { issue: 170 }), "#110: its one bar");
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 99), None);
         assert_eq!(bar_subject(&rows, &merges(), "nope", 0), None);
-        // #84: a gate run's bar is the run; #95: a ready check's, the check.
-        let at = Timestamp::parse("2026-10-31T04:20:00Z");
-        assert_eq!(bar_subject(&rows, &merges(), crate::rows::GATES_KEY, 0), Some(Subject::Gate { sub: "gate-pr173".into(), at }));
-        let ready = activity.agents.iter().flat_map(|a| &a.subs).find(|s| crate::stats::is_ready(s)).unwrap();
-        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 0), Some(Subject::Gate { sub: ready.sub.clone(), at: Some(ready.span.start) }));
-        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 1), None);
+        // #117: no gate run or ready check has a row of its own (#84's rows are gone).
+        assert_eq!(bar_subject(&rows, &merges(), "gates", 0), None);
+        assert_eq!(bar_subject(&rows, &merges(), "ready", 0), None);
     }
 
     #[test]
@@ -1218,16 +1208,13 @@ mod tests {
             assert_eq!(ticket.groups, crate::rows::groups_holding(&rows, &keys));
             assert_eq!(ticket.groups.is_empty(), grouping == crate::Grouping::Flat, "{grouping:?}: {:?}", ticket.groups);
 
-            // A gate run: the merge onto main it made, its ticket's bars and its own on the Gate
-            // runs row (#84).
+            // A gate run: the merge onto main it made and its ticket's bars (#117: no bar of its
+            // own; its time is the ticket's *in the gate*).
             let gate = on(Subject::Gate { sub: "gate-pr173".into(), at: None });
             let mut want = tickets.clone();
             want.push(main.clone());
             want.sort();
-            let mut with_run = want.clone();
-            with_run.push(BarRef { track: crate::rows::GATES_KEY.into(), range: 0 });
-            with_run.sort();
-            assert_eq!(gate.bars, with_run, "{grouping:?}");
+            assert_eq!(gate.bars, want, "{grouping:?}");
             // A merge onto main: its bar on main's row, and its ticket's.
             assert_eq!(on(Subject::Merge { commit: "be043bc".into() }).bars, want);
 

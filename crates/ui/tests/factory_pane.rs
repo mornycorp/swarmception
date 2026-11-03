@@ -446,8 +446,7 @@ fn a_hover_wins_the_highlight_and_its_leave_gives_it_back_to_the_details() {
     let merge = shell.engine().call::<swarmception_engine::details_cmds::Get>(params).unwrap();
     assert!(merge.title.starts_with("PR #8"), "the merge onto main of PR #8: {}", merge.title);
     want.insert("main".into(), on_main);
-    want.insert("gates".into(), vec![0]);
-    assert_eq!(gate_bars, want, "and its own bar on the Gate runs row (#84)");
+    assert_eq!(gate_bars, want, "no bar of its own: the gate's rows are gone (#117)");
     assert_eq!((shell.timeline().highlighted(), shell.timeline().lit()), (gate_bars.clone(), Lit::Details));
     let before = shell.timeline().selection().unwrap();
 
@@ -868,8 +867,9 @@ fn a_bar_selected_on_the_timeline_selects_it_in_the_factory() {
     assert_eq!(shell.factory().drawn().selected, ["brick !13"]);
     assert_eq!(shell.ui_state().factory.ticket, None, "a merge traces no ticket");
 
-    // A gate run's bar on the timeline's Gate runs row (#84): its line in the gate's list.
-    choose_bar(&mut shell, "gates", 0);
+    // A gate run chosen in the details (#117: no bar of its own on the timeline): its line in
+    // the gate's list.
+    shell.select(Subject::Gate { sub: "gate-pr8".into(), at: None });
     for _ in 0..3 {
         frame(&mut shell, &ctx);
     }

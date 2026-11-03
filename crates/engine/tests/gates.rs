@@ -8,15 +8,13 @@ use std::path::{Path, PathBuf};
 
 use swarmception_domain::details::{Details, Subject};
 use swarmception_domain::gates::{GateResult, GatesList, Lane};
-use swarmception_domain::rows::{BarRef, GATES_KEY, READY_KEY};
+use swarmception_domain::rows::{MERGED_KEY, Stage};
 use swarmception_domain::stats::Gates;
-use swarmception_domain::tooltip::TipLine;
 use swarmception_domain::{Node, Stats};
 use swarmception_engine::Session;
 use swarmception_engine::factory_cmds::TicketBarsResult;
 use swarmception_engine::repo_cmds::StatusResult;
-use swarmception_engine::rows_cmds::{BarResult, ListResult, WindowResult};
-use swarmception_model::Timestamp;
+use swarmception_engine::rows_cmds::{BarResult, ListResult};
 use swarmception_source::Github;
 
 fn git_at(dir: &Path, at: &str, args: &[&str]) {
@@ -225,92 +223,52 @@ fn check_swarm(dir: &Path) -> (GatesList, Stats) {
         assert!(run.duration_seconds >= 0 && run.end.is_none_or(|end| end >= run.start), "{}", run.sub);
         assert!(!run.tooltip.is_empty());
     }
-    // The timeline's rows draw every run (#84).
-    assert_eq!(drawn_runs(&mut session, &list), runs_of(&list), "{}", dir.display());
     (list, stats)
 }
 
-/// A run as the timeline's rows draw it or `gates.list` returns it: its row, id, start, end (a
-/// running one's, the last event), colour and tooltip.
-type RunDrawn = (String, String, Timestamp, Timestamp, [u8; 3], Vec<String>);
-
-/// `list`'s runs, as the rows should draw them: the Gate runs row's, then the Ready checks'.
-fn runs_of(list: &GatesList) -> Vec<RunDrawn> {
-    let last = list.runs.iter().filter(|r| r.end.is_none()).map(|r| r.start.0 + r.duration_seconds).max();
-    let mut runs: Vec<RunDrawn> = Vec::new();
-    for (lane, key) in [(Lane::Gate, GATES_KEY), (Lane::Ready, READY_KEY)] {
-        runs.extend(list.runs.iter().filter(|r| r.lane == lane).map(|r| {
-            let end = r.end.or_else(|| last.map(Timestamp)).unwrap_or(r.start).max(r.start);
-            (key.to_owned(), r.sub.clone(), r.start, end, r.colour, r.tooltip.iter().map(TipLine::text).collect())
-        }));
-    }
-    runs
-}
-
-/// The bars on the Gate runs and Ready checks rows (`rows.list`) that overlap `list`'s window.
-fn drawn_runs(session: &mut Session, list: &GatesList) -> Vec<RunDrawn> {
-    let rows: ListResult = call(session, "rows.list", "");
-    let mut drawn = Vec::new();
-    for key in [GATES_KEY, READY_KEY] {
-        let bars = rows.rows.iter().find_map(|n| match n {
-            Node::Ranges { key: k, bars, .. } if k == key => Some(bars.clone()),
-            _ => None,
-        });
-        for bar in bars.unwrap_or_default().into_iter().filter(|b| b.start <= list.end && b.end >= list.start) {
-            let sub = bar.run.as_ref().map(|r| r.sub.clone()).unwrap_or_default();
-            drawn.push((key.to_owned(), sub, bar.start, bar.end, bar.colour, bar.tooltip.clone()));
-        }
-    }
-    drawn
-}
-
-/// #84: the timeline's Gate runs and Ready checks rows, as `rows.list` and `rows.window` report
-/// them, are `gates.list`'s runs for any window, inferred ones too; `timeline.bar` reads a run's
-/// bar, `timeline.runBars` finds it, and `details.get` of it tells the run's story.
+/// #117 (reversing #84): the gate's runs have no rows on the timeline: `rows.list` has none,
+/// `timeline.runBars` is gone and no bar is a run's. A run is its ticket's *in the gate* stretch,
+/// on its bar's strip and in its tooltip, and `details.get` of a run lights its tickets' bars and
+/// the merges onto main it made; `gates.list` still lists every run.
 #[test]
-fn the_gate_rows_are_gates_lists_runs_for_every_window() {
+fn a_gate_run_has_no_row_its_time_is_its_tickets_in_the_gate() {
     let dir = repo_inferred();
     let mut session = Session::new();
     open(&mut session, &dir);
-    let windows = [
-        "{}",
-        r#"{"start":"2026-10-31T03:00:00Z","end":"2026-10-31T03:20:00Z"}"#,
-        r#"{"start":"2026-10-31T03:35:00Z","end":"2026-10-31T04:06:00Z"}"#,
-        r#"{"start":"2026-10-31T04:25:00Z"}"#,
-        r#"{"start":"2026-11-30T00:00:00Z"}"#,
-    ];
-    for window in windows {
-        let list: GatesList = call(&mut session, "gates.list", window);
-        assert_eq!(drawn_runs(&mut session, &list), runs_of(&list), "{window}");
-    }
     let rows: ListResult = call(&mut session, "rows.list", "");
     let names: Vec<&str> = rows.rows.iter().map(Node::name).collect();
-    assert_eq!(names.get(..4), Some(&["Merges to main", "Tickets merged", "Gate runs", "Ready checks"][..]));
+    assert_eq!(names.get(..2), Some(&["Merges to main", "Tickets merged"][..]));
+    assert!(!names.iter().any(|n| *n == "Gate runs" || *n == "Ready checks"), "{names:?}");
+    let keys: Vec<&str> = rows.rows.iter().flat_map(Node::leaves).map(Node::key).collect();
+    assert!(!keys.iter().any(|k| *k == "gates" || *k == "ready"), "{keys:?}");
+    assert_eq!(session.execute("timeline.runBars", r#"{"sub":"gate-8b"}"#).unwrap_err().code(), "unknown_command");
+    assert_eq!(session.execute("timeline.bar", r#"{"track":"gates","range":0}"#).unwrap_err().code(), "invalid");
 
-    // Collapsed to the window, they are rows like any other: 03:00 to 03:10 has no run.
-    let _: serde_json::Value = call(&mut session, "rows.set", r#"{"collapse":"window"}"#);
-    let quiet: WindowResult = call(&mut session, "rows.window", r#"{"start":"2026-10-31T03:00:00Z","end":"2026-10-31T03:10:00Z"}"#);
-    assert!(quiet.left_out.iter().any(|k| k == GATES_KEY) && quiet.left_out.iter().any(|k| k == READY_KEY), "{quiet:?}");
-    let busy: WindowResult = call(&mut session, "rows.window", r#"{"start":"2026-10-31T03:16:00Z","end":"2026-10-31T03:17:00Z"}"#);
-    assert!(busy.shown.iter().any(|k| k == READY_KEY) && !busy.shown.iter().any(|k| k == GATES_KEY), "{busy:?}");
+    // #7: sent back by gate-8 (03:30 to 03:40), merged by gate-8b (04:05 to 04:10).
+    let bars: TicketBarsResult = call(&mut session, "timeline.ticketBars", r#"{"issue":7}"#);
+    let on_row = bars.bars.iter().find(|b| b.track != MERGED_KEY).expect("#7's bar");
+    let bar: BarResult =
+        call(&mut session, "timeline.bar", &serde_json::to_string(&serde_json::json!({"track": on_row.track, "range": on_row.range})).unwrap());
+    let gating: Vec<(String, String)> =
+        bar.bar.segments.iter().filter(|s| s.stage == Stage::Gating).map(|s| (s.start.to_string(), s.end.to_string())).collect();
+    let at = |t: &str| t.to_owned();
+    assert_eq!(gating, [(at("2026-10-31T03:30:00Z"), at("2026-10-31T03:40:00Z")), (at("2026-10-31T04:05:00Z"), at("2026-10-31T04:10:00Z"))]);
+    for sub in ["gate-8", "gate-8b"] {
+        let line = bar.bar.tooltip_lines.iter().find(|l| l.text().ends_with(&format!(") {sub}"))).unwrap_or_else(|| panic!("{sub}: {:?}", bar.bar.tooltip));
+        assert_eq!(line.colour_of("in the gate"), Some(Stage::Gating.colour()), "{sub}");
+    }
 
-    // A run's bar: found by its id, read by its place, its details the run's.
-    let found: TicketBarsResult = call(&mut session, "timeline.runBars", r#"{"sub":"gate-8b"}"#);
-    assert_eq!(found.bars, [BarRef { track: GATES_KEY.into(), range: 1 }]);
-    let at: TicketBarsResult = call(&mut session, "timeline.runBars", r#"{"sub":"gate-8b","at":"2026-10-31T03:00:00Z"}"#);
-    assert!(at.bars.is_empty(), "not running then");
-    let bar: BarResult = call(&mut session, "timeline.bar", r#"{"track":"gates","range":1}"#);
-    let run = bar.bar.run.expect("a run's bar");
-    assert_eq!((run.sub.as_str(), run.result, run.tickets.as_slice(), bar.bar.label.as_str()), ("gate-8b", GateResult::Passed, &[7][..], "#7"));
-    let failed: BarResult = call(&mut session, "timeline.bar", r#"{"track":"gates","range":0}"#);
-    assert_eq!(failed.bar.label, "#7 · conflict", "a failure names its cause");
-    let details: Details = call(&mut session, "details.get", r#"{"track":"gates","range":1}"#);
-    assert_eq!(details.subject, run.subject);
-    assert!(details.timeline.bars.contains(&BarRef { track: GATES_KEY.into(), range: 1 }), "its own bar among those it lights");
-    let ready: Details = call(&mut session, "details.get", r#"{"track":"ready","range":0}"#);
-    assert!(matches!(&ready.subject, Subject::Gate { sub, .. } if sub == "ready-abc"), "a ready check: its own story (#95): {:?}", ready.subject);
-    assert!(ready.timeline.bars.contains(&BarRef { track: READY_KEY.into(), range: 0 }), "its own bar among those it lights");
-    assert_eq!(session.execute("timeline.bar", r#"{"track":"gates","range":99}"#).unwrap_err().code(), "invalid");
+    // A run's details light its ticket's bars and its merge onto main, no bar of its own.
+    let details: Details = call(&mut session, "details.get", r#"{"gate":"gate-8b"}"#);
+    assert!(matches!(&details.subject, Subject::Gate { sub, .. } if sub == "gate-8b"));
+    assert!(!details.timeline.bars.is_empty() && details.timeline.bars.iter().all(|b| b.track != "gates" && b.track != "ready"), "{:?}", details.timeline.bars);
+    assert!(bars.bars.iter().all(|b| details.timeline.bars.contains(b)), "#7's bars lit");
+    // `gates.list` keeps every run.
+    let list: GatesList = call(&mut session, "gates.list", "{}");
+    let subs: Vec<&str> = list.runs.iter().map(|r| r.sub.as_str()).collect();
+    for sub in ["gate-8", "gate-8b", "ready-abc", "gate-pr21", "gate-pr22"] {
+        assert!(subs.contains(&sub), "{sub}: {subs:?}");
+    }
     std::fs::remove_dir_all(dir).ok();
 }
 

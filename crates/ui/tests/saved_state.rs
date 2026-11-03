@@ -327,3 +327,37 @@ fn a_shell_given_no_state_keeps_none() {
     assert_eq!(shell.app_state(), None);
     assert_eq!(shell.save_state(), Ok(None));
 }
+
+/// #117: a state saved while the timeline had the gate's two rows (#84's `gates` and `ready`,
+/// hidden or collapsed by the person) reads on without them: no note, the rest of the state kept,
+/// and the rows drawn are today's, the merges' and the tickets'.
+#[test]
+fn a_state_naming_the_gone_gate_rows_reads_on_without_them() {
+    use timeline_engine::track_state::TrackState;
+    let (dir, home) = (repo(), scratch("home-gate-rows"));
+    let store = StateStore::new(home.clone());
+    let (ctx, mut first) = started(&dir, &store);
+    first.run_menu(&ctx, MenuAction::Factory);
+    frame(&mut first, &ctx, 1.0);
+    let mut state = first.app_state().expect("a state kept");
+    drop(first);
+    let view = state.timeline.as_mut().expect("the timeline's view");
+    let widget = view.widget.as_mut().expect("the widget's own state");
+    widget.tracks.insert("gates".into(), TrackState { hidden: true, ..TrackState::default() });
+    widget.tracks.insert("ready".into(), TrackState { collapsed: true, height: Some(4), ..TrackState::default() });
+    let file = store.file(&saved::repo_key(&dir));
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    assert!(std::fs::read_to_string(&file).unwrap().contains("\"ready\""), "the file names the gone rows");
+
+    let (_ctx2, mut second) = started(&dir, &store);
+    let after = second.inspect();
+    let shown = file.display().to_string();
+    assert_eq!((after.saved.keeping, after.saved.loaded_from.as_deref(), after.saved.note), (Keeping::Kept, Some(shown.as_str()), None));
+    assert!(!after.state.panes.factory, "the rest of the state kept");
+    assert_eq!(after.timeline.in_view.get(..2).map(<[String]>::to_vec), Some(vec!["main".to_owned(), "merged".to_owned()]));
+    assert!(!after.timeline.in_view.iter().any(|k| k == "gates" || k == "ready"), "{:?}", after.timeline.in_view);
+    assert!(after.timeline.in_view.iter().any(|k| k.starts_with("tickets/")), "{:?}", after.timeline.in_view);
+    std::fs::remove_dir_all(dir).ok();
+    std::fs::remove_dir_all(home).ok();
+}

@@ -6,7 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use swarmception_domain::rows::GATES_KEY;
+use swarmception_domain::rows::MERGED_KEY;
 use swarmception_domain::{Collapse, Node};
 use swarmception_engine::rows_cmds::List as Rows;
 use swarmception_model::Timestamp;
@@ -122,7 +122,8 @@ fn t(text: &str) -> Timestamp {
     Timestamp::parse(text).unwrap()
 }
 
-/// Off by default; on, the stretch from the first gate run's end to #9's claim is folded, by the
+/// Off by default; on, the stretch from #7's merge (#117: the gate run's own bar, to 03:29, gone)
+/// to #9's claim is folded, by the
 /// swarm's own quiet gap; View ▸ Fold Quiet Time turns it off again, and the threshold is kept.
 #[test]
 fn fold_quiet_time_folds_the_stretch_where_nothing_happened() {
@@ -138,14 +139,14 @@ fn fold_quiet_time_folds_the_stretch_where_nothing_happened() {
     assert!(inspect.version >= 13);
     let folds = inspect.timeline.folds.clone();
     assert_eq!(folds.len(), 1, "{folds:?}");
-    assert_eq!((folds[0].start, folds[0].end), (t("2026-10-31T03:29:00Z"), t("2026-10-31T09:01:00Z")), "{folds:?}");
+    assert_eq!((folds[0].start, folds[0].end), (t("2026-10-31T03:28:00Z"), t("2026-10-31T09:01:00Z")), "{folds:?}");
     assert_eq!(inspect.timeline.window, before.timeline.window, "the window stays the same span of time");
     assert!(shell.menu_state().fold_quiet);
     // The widget folds it, its marker 12 px wide.
     let drawn = shell.timeline().widget().session().call::<QueryFolds>(NoParams {}).unwrap();
     assert_eq!(drawn.folds.len(), 1);
     assert!((drawn.folds[0].x1 - drawn.folds[0].x0 - 12.0).abs() < 0.01, "{:?}", drawn.folds);
-    assert!(drawn.folds[0].lines[0].starts_with("quiet 5 h 32 min"), "{:?}", drawn.folds[0].lines);
+    assert!(drawn.folds[0].lines[0].starts_with("quiet 5 h 33 min"), "{:?}", drawn.folds[0].lines);
 
     // A threshold over the stretch folds nothing; kept while off and on again.
     set(&mut shell, &ctx, r#"{"foldAfterSeconds": 21600}"#);
@@ -188,7 +189,8 @@ fn folding_holds_with_collapse_and_across_a_reload() {
 }
 
 /// The Gates band's hours sit under the timeline's x for the same time through the fold: each
-/// gate run's bar on the timeline's Gate runs row lies over its hour's column in the band.
+/// gate run's merge on the timeline's Tickets merged row (#117: the gate's own rows gone) lies
+/// over its hour's column in the band.
 #[test]
 fn the_gates_hours_line_up_under_the_timeline_through_the_fold() {
     let dir = repo();
@@ -196,20 +198,20 @@ fn the_gates_hours_line_up_under_the_timeline_through_the_fold() {
     set(&mut shell, &ctx, r#"{"foldQuiet": true}"#);
     let drawn = shell.gates().drawn().clone();
     let (x0, _) = drawn.axis.expect("the band lines up under the timeline");
-    let bars = shell.timeline().widget().session().call::<Bars>(BarsParams { tracks: Some(vec![GATES_KEY.into()]), label_char_width: None }).unwrap();
+    let bars = shell.timeline().widget().session().call::<Bars>(BarsParams { tracks: Some(vec![MERGED_KEY.into()]), label_char_width: None }).unwrap();
     let runs: Vec<(f32, f32)> = bars.tracks[0].ranges.iter().map(|r| (x0 + r.x, x0 + r.x + r.width)).collect();
-    assert_eq!(runs.len(), 2, "gate-8 and gate-10");
+    assert_eq!(runs.len(), 2, "gate-8's merge and gate-10's");
     let hours: Vec<(Timestamp, egui::Rect)> = drawn.hour_columns.iter().step_by(2).map(|c| (c.start, c.rect)).collect();
     let rows = shell.engine().call::<Rows>(swarmception_engine::engine_cmds::NoParams {}).unwrap().rows;
     let gates = rows.iter().find_map(|n| match n {
-        Node::Ranges { key, bars, .. } if key == GATES_KEY => Some(bars.clone()),
+        Node::Ranges { key, bars, .. } if key == MERGED_KEY => Some(bars.clone()),
         _ => None,
     });
-    let gates = gates.expect("the Gate runs row");
+    let gates = gates.expect("the Tickets merged row");
     for (bar, (left, right)) in gates.iter().zip(&runs) {
         let hour = Timestamp(bar.start.0 - bar.start.0.rem_euclid(3_600));
         let (_, column) = hours.iter().find(|(start, _)| *start == hour).unwrap_or_else(|| panic!("no column for {hour}: {hours:?}"));
-        // The run's bar on the timeline, over its hour's column in the band (the column's inset
+        // The run's merge on the timeline, over its hour's column in the band (the column's inset
         // a few points either side).
         assert!(column.left() - 8.0 <= *left && *right <= column.right() + 8.0, "{hour}: bar {left}..{right}, column {column:?}");
     }

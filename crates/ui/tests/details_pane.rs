@@ -180,11 +180,10 @@ fn the_timeline_highlights_the_details_subjects_bars_and_never_the_selection() {
     let stretches: Vec<BarRef> = seven.iter().filter(|b| b.track != "merged").cloned().collect();
     let merge = shell.engine().call::<Get>(DetailsParams { track: Some("main".into()), range: Some(0), ..DetailsParams::default() }).unwrap().subject;
     let with_main = [seven.clone(), vec![main.clone()]].concat();
-    // A gate run's own bar on the Gate runs row too (#84).
-    let with_run = [with_main.clone(), vec![BarRef { track: "gates".into(), range: 0 }]].concat();
+    // A gate run: its ticket's bars and its merge onto main, no bar of its own (#117).
     for (subject, want) in [
         (Subject::Ticket { issue: 7 }, seven.clone()),
-        (Subject::Gate { sub: "gate-pr8".into(), at: None }, with_run),
+        (Subject::Gate { sub: "gate-pr8".into(), at: None }, with_main.clone()),
         (Subject::Session { instance: "mini-aa1111".into(), at: None }, stretches),
         (Subject::Session { instance: "mini-cc3333".into(), at: None }, vec![main.clone(), seven.iter().find(|b| b.track == "merged").unwrap().clone()]),
         (merge, with_main),
@@ -239,8 +238,8 @@ fn ui_set_details_reports_its_subject_and_brings_its_bars_into_view() {
     let t = |text: &str| Timestamp::parse(text).unwrap();
     let before = person(&mut shell);
 
-    // The window after the gate run ended; its bars (its own on the Gate runs row, #84,
-    // among them) nowhere in it.
+    // The window after the gate run ended; its bars (its ticket's and its merge onto main)
+    // nowhere in it.
     set(&mut shell, r#"{"window": {"start": "2026-10-31T03:46:05Z", "end": "2026-10-31T03:47:00Z"}}"#);
     frame(&mut shell, &ctx);
     assert_eq!(window(&mut shell), (t("2026-10-31T03:46:05Z"), t("2026-10-31T03:47:00Z")));
