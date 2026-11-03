@@ -8,6 +8,8 @@ use swarmception_domain::details::Subject;
 use swarmception_domain::factory::BenchStatus;
 use swarmception_ui::Shell;
 
+mod support;
+
 /// A tracking branch with 40 workers on one machine: `working` of them each working on its own
 /// ticket (#101, #102, …), then `idle` on shift holding nothing, the rest off shift.
 fn repo(working: usize, idle: usize) -> PathBuf {
@@ -69,13 +71,10 @@ fn loaded(dir: &std::path::Path) -> (egui::Context, Shell) {
     state.panes.timeline = true;
     state.panes.factory = true;
     shell.set_ui_state(state);
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     frame(&mut shell, &ctx);
     frame(&mut shell, &ctx);
