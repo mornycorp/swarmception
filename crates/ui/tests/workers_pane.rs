@@ -15,6 +15,8 @@ use swarmception_engine::stats_cmds::{At, GetParams};
 use swarmception_engine::workers_cmds::Compare;
 use swarmception_ui::{Lit, MenuAction, Shell, WorkerRowKind, WorkersColumn, worker_cells};
 
+mod support;
+
 /// worker-1 (opus, high) lands #7 after a send back and #9; worker-2 (opus, low) lands #11 after
 /// a failed `ready` check and its rerun; the coordinator merges them.
 fn repo() -> PathBuf {
@@ -98,13 +100,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) {
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     assert!(!shell.menu_state().workers, "hidden by default");
     shell.run_menu(&ctx, MenuAction::Workers);

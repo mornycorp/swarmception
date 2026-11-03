@@ -17,6 +17,8 @@ use timeline_engine::state_cmds::{Get as GetState, Set as SetState, SetParams as
 use timeline_engine::tracks_cmds::{Layout, LayoutParams, SetTrack, SetTrackParams};
 use timeline_engine::wire::SpanWire;
 
+mod support;
+
 const WORKERS: usize = 12;
 const SIZE: (f32, f32) = (1440.0, 900.0);
 
@@ -77,13 +79,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) {
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() && !shell.loading() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+        shell.has_timeline() && !shell.loading()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     for _ in 0..3 {
         frame(&mut shell, &ctx);
@@ -250,13 +249,7 @@ fn the_rows_a_window_hid_are_not_saved_and_the_persons_own_stay_hidden() {
     let mut engine = Session::new();
     let path = serde_json::to_string(&dir.display().to_string()).unwrap();
     engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
-    for _ in 0..500 {
-        engine.poll();
-        if engine.has_data().is_ok() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    assert!(engine.has_data().is_ok(), "read in the foreground");
     engine.execute("rows.set", r#"{"collapse": "window"}"#).unwrap();
     let mut pane = TimelinePane::default();
     pane.sync(&mut engine).unwrap();

@@ -10,6 +10,8 @@ use swarmception_ui::{FactorySource, Shell};
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::state_cmds::Get;
 
+mod support;
+
 /// A repository whose tracking branch holds two workers and a coordinator's gate.
 fn repo() -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -118,13 +120,10 @@ fn loaded(dir: &std::path::Path) -> (egui::Context, Shell) {
     let mut state = shell.ui_state();
     state.panes.details = false;
     shell.set_ui_state(state);
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     (ctx, shell)
 }

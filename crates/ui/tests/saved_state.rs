@@ -19,6 +19,8 @@ use timeline_engine::rulers_cmds::{Add, AddParams};
 use timeline_engine::state_cmds::{Get, Set as SetState, SetParams as SetStateParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire};
 
+mod support;
+
 fn scratch(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -111,13 +113,10 @@ fn started(dir: &Path, store: &StateStore) -> (egui::Context, Shell) {
     let key = saved::repo_key(dir);
     let loaded = store.load(&key);
     shell.keep_state(store.clone(), &key, Some(&loaded));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx, 0.0);
-        if shell.has_timeline() && !shell.fetching_issues() && !shell.loading() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline() && !shell.fetching_issues() && !shell.loading()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     for _ in 0..3 {
         frame(&mut shell, &ctx, 0.0);

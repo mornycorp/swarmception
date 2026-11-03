@@ -12,6 +12,8 @@ use swarmception_engine::factory_cmds::{At, AtParams};
 use swarmception_model::Timestamp;
 use swarmception_ui::{FactorySelected, Shell};
 
+mod support;
+
 /// worker-1 claims #7 (PR #8): a ready check fails (03:20–03:22, `cause=test`), a second passes
 /// (03:25–03:26), it submits at 03:30; the coordinator's gate-pr8 runs 03:40–03:46 and merges it.
 fn repo() -> PathBuf {
@@ -102,13 +104,10 @@ fn loaded(dir: &std::path::Path, details: bool) -> (egui::Context, Shell) {
     let mut state = shell.ui_state();
     state.panes.details = details;
     shell.set_ui_state(state);
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame_with(&mut shell, &ctx, Vec::new());
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     (ctx, shell)
 }

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -135,11 +135,13 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `thin` under three (`THIN`). Each worker carries the tickets it touched in the window (what a
   hover lights) and its session as its details' `Subject`.
 - **L2 `swarmception-source`**: the tracking branch through `git` (`refs/remotes/origin/tracking`,
-  else `refs/heads/tracking`): `rev-parse`, `ls-tree`, one `cat-file --batch`, and `fetch`; and
+  else `refs/heads/tracking`): `rev-parse`, one `cat-file --batch-check` for every ref it looks
+  for (#96: a git child a ref was most of a read's time on a loaded machine), `ls-tree`, one
+  `cat-file --batch`, and `fetch`; and
   `main`'s first-parent merge commits (`git log --merges`, `origin/main` else `main`, or `master`);
   each call with a deadline and capped output, every path checked as an instance id. `fetch`
   takes `tracking` and `main` in one round trip (`tracking` alone from a remote with no `main`);
-  `heads` reads the two refs' commits with a few `rev-parse`s, so a live check (#54) reads the
+  `heads` reads the two refs' commits with two git calls, so a live check (#54) reads the
   branch again only when one moved (`Heads::of` a read's). `github`
   (#17): the `origin` remote read as GitHub's `owner/name`, the issues fetched with `gh api
   --paginate` (the same runner as git: a deadline, a cap, no prompts), and a cache per repository
@@ -151,7 +153,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   network: a `GithubError`, and the cache as it was.
 - **L3 `swarmception-engine`**: the `Session` (the repository, the activity, the rows spec, the
   rows and the timeline built from them) and the command registry: `engine.commands`,
-  `repo.open` (#69: the folder checked first, `repo_cmds::check`, a few `rev-parse`s through the
+  `repo.open` (#69: the folder checked first, `repo_cmds::check`, two git calls through the
   source's `probe`: a missing folder, a file, a folder in no git repository and one with no
   tracking branch are `Refusal::NoSuchFolder`, `NotADirectory`, `NotARepository` and
   `NoTrackingBranch`, and nothing changes, the repository open staying open; opened, the old
@@ -190,7 +192,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   cache first, then `gh`, cached in turn, never in the way of the tracking branch; what came, from
   where and why not is `repo.status`'s `issues`, and new issues build the rows again. Where they
   come from (`gh`, the cache directory) is `Session::set_github`. A session made with a waker
-  reads in the background and lands through `Session::poll`. The host API `Session::widget_timeline` hands the widget its timeline
+  reads in the background and lands through `Session::poll`; it is woken after each piece that
+  lands and once more when a read is over (#96), so a front end that draws only when woken sees
+  it end. The engine's tests block on that waker (`tests/support`), the UI's frame until a
+  condition with a deadline only a failure reaches, never a count of tries. The host API `Session::widget_timeline` hands the widget its timeline
   (`timeline_engine::timeline::Timeline`), rebuilt when `Session::revision`'s generation moves.
 - **L4 `swarmception-ui`**: the shell: the menu bar (File: Open… (⌘O), Open Recent (#69), Reload, Fetch and Reload, Quit; View:
   the panes, the grouping, Collapse Empty Rows and Collapse to Window (#74), Fold Quiet Time (#86), Fit, Live), as data (`menu`: `MenuAction`, `MenuState`) that the
@@ -572,6 +577,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Background reads under load (#96): a last wake when the issues' read is over; the engine's tests block on the waker, the UI's wait to a deadline; the source looks up its refs in one `cat-file --batch-check` |
 | 2026-11-03 | minor | Ready checks in the Factory's Gate list (#95): `Gate::checks` (`ready_checks`, `GateRun::lane` and `worker`), in time order with the gate's runs, a flask apart; `factory.at`'s `run` keeps a run selected in the lists (`keep_run`, `is_run`); a selected run running past *t* drawn selected, one after it `not yet run`; a ready check's details its own story (`Subject::Gate` by its id: `details`' `Ctx::checks`; its bar's subject and its line in its ticket's story go to it); `Drawn::run_lines` |
 | 2026-11-03 | minor | The Factory's benches with dozens of workers (#94): those off shift holding nothing fold into a line when the rest lack room, the busy first, the rest scrolling (`BenchGrid`, `WallView::benches`), never shorter than a line; `Drawn::bench_cells`, `benches_folded`, `benches_hidden`; `ui.inspect` version 13 |
 | 2026-11-02 | minor | Folding the timeline's quiet time (#86): swarm-timeline at efdf212 (its §5.3); View ▸ Fold Quiet Time, the toolbar's checkbox, `ui.set`'s `foldQuiet` and `foldAfterSeconds`, `UiState` version 10 (`fold`), `ui.inspect` version 12 (`timeline.folds`); `TimelinePane::fold_quiet` and `time_axis`, the Gates band's hours through the folds (`TimeAxis`) |

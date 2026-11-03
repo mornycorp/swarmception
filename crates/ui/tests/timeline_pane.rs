@@ -11,6 +11,8 @@ use timeline_engine::state_cmds::Get;
 use timeline_engine::view_cmds::{Show, ShowParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire};
 
+mod support;
+
 /// A repository in a temporary directory whose tracking branch holds one ticket.
 fn repo() -> PathBuf {
     repo_with("2026-10-31T03:30:00Z")
@@ -235,13 +237,10 @@ fn ctrl_drag_through_the_shell_pans_the_timeline() {
     for modifiers in [ctrl, cmd] {
         let ctx = egui::Context::default();
         let mut shell = swarmception_ui::Shell::new(&ctx, Some(&dir));
-        for _ in 0..500 {
+        support::until("the tracking branch loaded", || {
             frame(&mut shell, &ctx, Vec::new());
-            if shell.has_timeline() {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+            shell.has_timeline()
+        });
         assert!(shell.has_timeline(), "the tracking branch loaded");
         // A height in the timeline's rows, under the minimap's strip (always shown since #35):
         // ticket 7's bar's, while the whole swarm shows.

@@ -9,6 +9,8 @@ use std::path::{Path, PathBuf};
 use swarmception_engine::Github;
 use swarmception_ui::Shell;
 
+mod support;
+
 /// A repository whose tracking branch holds #7 (its PR #8), claimed then submitted, with its
 /// `origin` on GitHub.
 fn repo() -> PathBuf {
@@ -73,13 +75,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context, events: Vec<egui::Event>) -> Fr
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::with_github(&ctx, Some(dir), Github { gh: PathBuf::from("/no/such/gh"), cache_dir: None });
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx, Vec::new());
-        if shell.has_timeline() && !shell.fetching_issues() && !shell.loading() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline() && !shell.fetching_issues() && !shell.loading()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     assert!(!shell.fetching_issues());
     frame(&mut shell, &ctx, Vec::new());

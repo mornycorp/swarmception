@@ -16,6 +16,8 @@ use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::fold_cmds::QueryFolds;
 use timeline_engine::query_cmds::{Bars, BarsParams};
 
+mod support;
+
 /// Worker-1 works on #7 (PR #8) from 03:01, gate-8 merges it at 03:28; nothing then until
 /// worker-2 claims #9 (PR #10) at 09:01, gate-10 merging it at 09:28.
 fn repo() -> PathBuf {
@@ -98,13 +100,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) {
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     for _ in 0..3 {
         frame(&mut shell, &ctx);
