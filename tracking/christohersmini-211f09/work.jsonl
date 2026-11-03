@@ -5,3 +5,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"gate-1","t":"2026-11-03T10:15:53Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-58eae83","t":"2026-11-03T10:16:30Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-58eae83","t":"2026-11-03T10:16:43Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-ac3a473","t":"2026-11-03T10:17:34Z"}
