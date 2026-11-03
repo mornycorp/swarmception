@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 11: a ticket in its own colour, failures survive packing, G25's small ends) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 12: merges as markers, tooltips in the strip's colours, no gate rows) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,8 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | open | | 1–2 h |
+| 1 | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | partial | #115, #117, #119, #121, swarm-timeline#215 | 1 h |
+| 2 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113 | 1 h |
 | — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
 | — | [G26 Failures survive packing](#g26-failures-survive-packing) | done | #108 | |
 | — | [G25 Small ends after batch 10](#g25-small-ends-after-batch-10) | done | #106 | |
@@ -208,8 +209,8 @@ marked **Human:** with what is needed.
   collapse like any row; a hover lights the run's tickets. `timeline.bar`, `timeline.runBars`.
   The Gates band lost its lanes and keeps its figures, causes and hours.
 - **Measured:** mc-engine's 136 gate runs and 147 ready checks equal `gates.list`'s (2026-11-02).
-- **Left:** the widget sizes a row's lanes over the whole run, so Ready checks is four lanes tall
-  everywhere ([G24](#g24-loose-ends-from-the-owners-review)).
+- **Reversed** (owner, 2026-11-03; #117, PR #118): the two rows are gone. A gate run that merges
+  is its tickets' *in the gate* stretch, a failure their send-back ([G29](#g29-merges-as-markers-and-one-colour-per-stage)).
 - **Evidence:** `crates/domain/src/gates.rs`, `crates/engine/tests/gates.rs`,
   `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02.
 
@@ -310,11 +311,35 @@ marked **Human:** with what is needed.
 
 ## G28 Small ends after batch 11
 
-- **Missing:** other tests still exec a freshly written fake `gh` (engine `issues`, `details`;
-  source `github`) and can hit macOS's first-exec delay (G25's fix applies); a gate rerun that
-  doesn't say `rerun of <sub>:` doesn't answer the failure, so its ticket reads sent back until it
-  merges (swarm-core's rule: this repo's gate-43 → gate-43b); the minimap draws no strips.
-- **Estimate:** 1–2 agent-hours, part in swarm-core.
+- **Done** (#113, PR #114): no test execs a file it just wrote (macOS vets a new executable on its
+  first exec): the fakes run through `/bin/sh` with shared helpers, and `cargo xtask fakes`, a
+  step of every `ci`, fails on a new one.
+- **Measured:** 12 copies at once: engine `issues` 14.9 → 2.8 s, `details` 14.7 → 2.9 s, the
+  source crate 16.6 → 4.0 s (2026-11-03).
+- **Left:** a gate rerun that doesn't say `rerun of <sub>:` leaves its ticket sent back until it
+  merges (swarm-core's rule); the minimap draws no strips. Small; no issues yet.
+- **Evidence:** `xtask/src/fakes.rs`, `crates/engine/tests/support`.
+
+## G29 Merges as markers, and one colour per stage
+
+- **Done:**
+  - **Merges as markers** (#115, PR #116; #119, PR #120; swarm-timeline#211, PR #212): each merge
+    on Merges to main and Tickets merged is a range of no length at its time, drawn as a 3 px
+    marker by the widget's packing, sitting on its ticket's merge dot; its tooltip has no
+    duration line.
+  - **A ticket's tooltip in its strip's colours** (#117, PR #118): `Stage::colour` is the one
+    source for the strip, the tooltip, the widget's segment line and Details; a wait's gate runs
+    show as *in the gate* lines.
+  - **No Gate runs or Ready checks rows** (#117, PR #118, the owner reversing #84): the Gates
+    band's figures, the Factory's Gate list, `gates.list` and Details' gate stories stay;
+    `ui.inspect` 16.
+  - **Tooltips whole** (#121, PR #122; swarm-timeline#213, PR #214): drawn in egui's tooltip
+    layer, bounded by the window, not cut to the timeline's rows.
+- **Left:** the tooltip's box assumes 7 px a character, so long lines spill past it
+  (swarm-timeline#215, in progress).
+- **Evidence:** `rows::tests::a_tooltip_names_each_stage_in_its_strip_segments_colour`,
+  `timeline::tests::a_merge_of_no_length_is_drawn_and_picked`, `crates/ui/tests/timeline_pane.rs`,
+  `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-03.
 
 ## G1 The ruler reads clock time
 
@@ -467,6 +492,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 12: G28 partial (#113); G29 new (#115, #117, #119, #121); G21 reversed |
 | 2026-11-03 | minor | Batch 11: G25 done (#106); G26, G27 new and done (#108, #110, swarm-timeline#205, #206); G28 new |
 | 2026-11-03 | minor | Batch 10: G24 done (#92–#98, swarm-timeline#197, #198, swarm-core#14); G25 new |
 | 2026-11-02 | minor | Batch 9: the owner's review: G20–G23 done (#83–#86, swarm-timeline#191); G24 new |

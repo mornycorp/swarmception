@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 11: a ticket in its own colour, failures survive packing, G25's small ends) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 12: merges as markers, tooltips in the strip's colours, no gate rows) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -27,8 +27,8 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | What | Number | Source |
 |---|---|---|
-| Tests | 383 passed | `cargo nextest run --workspace`, 2026-11-03 |
-| Landed per active hour | mc-engine 5.7, swarm-timeline 9.3, Swarmception 6.5 | `stats.get`, 2026-11-03 |
+| Tests | 393 passed | `cargo nextest run --workspace`, 2026-11-03 |
+| Landed per active hour | mc-engine 5.6, swarm-timeline 9.0, Swarmception 6.2 | `stats.get`, 2026-11-03 |
 | Rows for swarm-timeline's tickets | 12 flat | `rows.list`, 2026-10-31 |
 
 ## Timeline (M1)
@@ -60,7 +60,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18); a hovered chip highlights its bars, leaving the selection alone (#48); no clock of its own, the timeline's selection selects in it (#85); dozens of workers' benches read apart (#94); ready checks in its Gate list (#95); benches in natural order, the off-shift fold opens (#106) |
 | UN-5 | The Factory steps back and forth by key moment | done | `factory.moments`, `factory.step`; `crates/domain/src/moments.rs` tests; UI test by clicks and keys (#33) |
 | UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
-| UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61); both lanes per hour, one gate-run definition with `stats.get` (#75); a failed ready check's cause and step (#77, swarm-core#12); runs as timeline rows (#84) |
+| UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61); both lanes per hour, one gate-run definition with `stats.get` (#75); a failed ready check's cause and step (#77, swarm-core#12); runs as timeline rows (#84); runs as timeline rows (#84) removed again by the owner, a run now its tickets' *in the gate* stretch (#117) |
 | UN-6 | Model and effort compared per worker | done | `workers.compare`; View ▸ Workers; `crates/domain/src/workers.rs`, `crates/ui/tests/workers_pane.rs`; screenshots checked 2026-11-02 (#67) |
 | UN-4 | Live watching | done | `live.set`, `live.get`; `crates/engine/tests/live.rs` (a remote that gains events), `crates/ui/tests/live_reload.rs`; mc-engine watched 2026-11-02 (#54) |
 
@@ -68,6 +68,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 12: UN-3 evidence (#117); measured numbers |
 | 2026-11-03 | minor | Batch 11: TL-7, UN-1 evidence (#106, #108, #110); measured numbers |
 | 2026-11-03 | minor | Batch 10: TL-6, TL-7, UN-1 evidence (#94, #95, #97, #98); measured numbers |
 | 2026-11-02 | minor | Batch 9: TL-6, UN-1, UN-3 evidence (#84–#86); measured numbers |
