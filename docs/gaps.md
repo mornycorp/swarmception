@@ -19,8 +19,8 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | partial | #115, #117, #119, #121, swarm-timeline#215 | 1 h |
-| 2 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113 | 1 h |
+| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113 | 1 h |
+| — | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | done | #115, #117, #119, #121, #124 | |
 | — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
 | — | [G26 Failures survive packing](#g26-failures-survive-packing) | done | #108 | |
 | — | [G25 Small ends after batch 10](#g25-small-ends-after-batch-10) | done | #106 | |
@@ -335,8 +335,10 @@ marked **Human:** with what is needed.
     `ui.inspect` 16.
   - **Tooltips whole** (#121, PR #122; swarm-timeline#213, PR #214): drawn in egui's tooltip
     layer, bounded by the window, not cut to the timeline's rows.
-- **Left:** the tooltip's box assumes 7 px a character, so long lines spill past it
-  (swarm-timeline#215, in progress).
+  - **A tooltip's box fits its text** (#124, PR #125; swarm-timeline#215, PR #216): sized from the
+    text as laid out, not 7 px a character (egui's font is ~7.9 px, so long lines spilled).
+- **Left:** labels and readouts still use a fixed width a character (the widget's
+  `LABEL_CHAR_WIDTH`).
 - **Evidence:** `rows::tests::a_tooltip_names_each_stage_in_its_strip_segments_colour`,
   `timeline::tests::a_merge_of_no_length_is_drawn_and_picked`, `crates/ui/tests/timeline_pane.rs`,
   `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-03.
@@ -492,6 +494,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | G29 done (#124, swarm-timeline#215) |
 | 2026-11-03 | minor | Batch 12: G28 partial (#113); G29 new (#115, #117, #119, #121); G21 reversed |
 | 2026-11-03 | minor | Batch 11: G25 done (#106); G26, G27 new and done (#108, #110, swarm-timeline#205, #206); G28 new |
 | 2026-11-03 | minor | Batch 10: G24 done (#92–#98, swarm-timeline#197, #198, swarm-core#14); G25 new |

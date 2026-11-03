@@ -29,8 +29,7 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **Merges as markers, and one colour per stage** ([G29](gaps.md#g29-merges-as-markers-and-one-colour-per-stage)): the tooltip's box
-2. **Small ends after batch 11** ([G28](gaps.md#g28-small-ends-after-batch-11))
+1. **Small ends after batch 11** ([G28](gaps.md#g28-small-ends-after-batch-11))
 
 ## Revision history
 
