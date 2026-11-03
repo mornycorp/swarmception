@@ -30,7 +30,9 @@ use swarmception_model::{Issues, Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Span, Sub, stop_reason};
 use crate::colours::{NO_TICKET, Rgb, ticket_colour};
+use crate::gates::Lane;
 use crate::rows::duration;
+use crate::stats::{cause_of, failure_label, is_ready, step_of};
 use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 
 /// The seconds before *t* whose events count as just happened, unless asked otherwise.
@@ -241,6 +243,12 @@ pub struct GateRun {
     /// Seconds since it started (running) or ended.
     pub age: i64,
     pub tooltip: Vec<String>,
+    /// Whose gate it is (#95): the coordinator's, or a worker's own `ready` check.
+    #[serde(default)]
+    pub lane: Lane,
+    /// A `ready` check's worker, by name (#95); none for a gate run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker: Option<String>,
 }
 
 /// The gate: the coordinators, what is being gated, and how the runs before *t* went.
@@ -257,6 +265,10 @@ pub struct Gate {
     pub failed: usize,
     /// Ended with no result: no `rc`, or never finished (#42).
     pub no_result: usize,
+    /// The workers' own `ready` checks (#95, [`Lane::Ready`]): those going on at *t*, then the
+    /// last [`GATE_HISTORY`] that ended by it, the last first. The counts above are the gate's.
+    #[serde(default)]
+    pub checks: Vec<GateRun>,
 }
 
 /// A merge onto main by *t*: a block of the app.
@@ -966,6 +978,8 @@ fn logged_run(sub: &Sub, t: Timestamp) -> GateRun {
         inferred: false,
         age,
         tooltip,
+        lane: Lane::Gate,
+        worker: None,
     }
 }
 
@@ -993,10 +1007,103 @@ fn inferred_run(sub: &str, events: &[&IssueEvent], t: Timestamp) -> Option<GateR
         inferred: true,
         age: t.0.saturating_sub(end.0),
         tooltip,
+        lane: Lane::Gate,
+        worker: None,
     })
 }
 
+/// Every worker's `ready` check begun by `t` (#95), by start, as a [`GateRun`] of
+/// [`Lane::Ready`]: running until its stop, or its worker's session's end when it logged none
+/// (then *never finished*, as `gates.list` has it), and nothing after `t` told.
+pub(crate) fn ready_checks(activity: &Activity, t: Timestamp) -> Vec<GateRun> {
+    let mut checks: Vec<GateRun> =
+        activity.agents.iter().flat_map(|a| a.subs.iter().filter(|s| is_ready(s) && s.span.start <= t).map(move |s| ready_check(a, s, t))).collect();
+    checks.sort_by(|a, b| (a.start, &a.sub).cmp(&(b.start, &b.sub)));
+    checks
+}
+
+fn ready_check(agent: &Agent, sub: &Sub, t: Timestamp) -> GateRun {
+    let start = sub.span.start;
+    let left = sub.span.open.then(|| agent.session_ended_after(start)).flatten().map(|s| s.span.end.max(start));
+    let end = if sub.span.open && sub.rc.is_none() { left } else { Some(sub.span.end) };
+    let running = end.is_none_or(|end| t < end);
+    let outcome = if running { Outcome::Running } else { ended(sub.rc) };
+    let stop = sub.stop_note.as_deref().filter(|_| !running);
+    let cause = match (outcome, left) {
+        (Outcome::Failed, _) => stop.and_then(cause_of).map(|cause| failure_label(Some(&cause), stop.and_then(step_of).as_deref())),
+        (Outcome::Unknown, Some(_)) => Some(NEVER_FINISHED.to_owned()),
+        _ => None,
+    };
+    let on = agent.work.iter().filter(|w| w.span.start <= start && start <= w.span.end).map(|w| (w.issue, w.mr)).next_back();
+    let mut issues = sub.issues.clone();
+    let mut refs = sub.prs.clone();
+    if let Some((issue, mr)) = on {
+        if !issues.contains(&issue) {
+            issues.push(issue);
+        }
+        refs.extend(mr.filter(|m| !refs.contains(m)));
+    }
+    let kind = [&sub.start_note, &sub.stop_note]
+        .into_iter()
+        .flatten()
+        .find_map(|n| note_field(n, "kind"))
+        .and_then(|k| k.split_whitespace().next().map(str::to_owned));
+    let end = end.filter(|_| !running);
+    let age = t.0.saturating_sub(end.unwrap_or(start).0);
+    let mut tooltip = vec![format!("ready check {} · {}", sub.sub, agent.name)];
+    tooltip.extend(sub.start_note.iter().cloned());
+    tooltip.push(match end {
+        None => format!("running for {} (since {start})", duration(age)),
+        Some(end) => format!("{}: {start} → {end} ({})", outcome_name(outcome), duration(end.0.saturating_sub(start.0))),
+    });
+    tooltip.extend(stop.map(str::to_owned));
+    if outcome == Outcome::Unknown && left.is_some() {
+        tooltip.push(format!("{NEVER_FINISHED}: {}'s session ended", agent.name));
+    }
+    GateRun {
+        sub: sub.sub.clone(),
+        start,
+        end,
+        outcome,
+        cause,
+        kind,
+        refs,
+        issues,
+        inferred: false,
+        age,
+        tooltip,
+        lane: Lane::Ready,
+        worker: Some(agent.name.clone()),
+    }
+}
+
+/// Whether `run` is the run `sub` names, holding `at` (its start, or a time within it), or any
+/// of `sub`'s runs without one: how a gate run or ready check is selected (#85, #95).
+#[must_use]
+pub fn is_run(run: &GateRun, sub: &str, at: Option<Timestamp>) -> bool {
+    run.sub == sub && at.is_none_or(|at| at == run.start || (run.start <= at && run.end.is_none_or(|end| at <= end)))
+}
+
+/// Keeps the gate run or ready check `sub` (at `at`) in `scene`'s gate lists (#95), when it began
+/// by the scene's *t* but is older than the lists' [`GATE_HISTORY`]: in its place by its end, so
+/// a run selected elsewhere is always there to draw selected. One begun after *t* stays out.
+pub fn keep_run(scene: &mut FactoryScene, activity: &Activity, sub: &str, at: Option<Timestamp>) {
+    let gate = &mut scene.gate;
+    if gate.running.iter().chain(&gate.recent).chain(&gate.checks).any(|r| is_run(r, sub, at)) {
+        return;
+    }
+    let found = gate_runs(activity, scene.t).into_iter().chain(ready_checks(activity, scene.t)).rfind(|r| is_run(r, sub, at));
+    let Some(run) = found else { return };
+    let list = if run.lane == Lane::Ready { &mut gate.checks } else { &mut gate.recent };
+    let place = list.iter().position(|r| r.outcome != Outcome::Running && (r.end, r.start) < (run.end, run.start)).unwrap_or(list.len());
+    list.insert(place, run);
+}
+
 fn gate(activity: &Activity, t: Timestamp, runs: &[GateRun], mut crates: Vec<Crate>) -> Gate {
+    let (mut checks, mut over): (Vec<GateRun>, Vec<GateRun>) = ready_checks(activity, t).into_iter().partition(|c| c.outcome == Outcome::Running);
+    checks.reverse();
+    over.sort_by_key(|c| std::cmp::Reverse((c.end, c.start)));
+    checks.extend(over.into_iter().take(GATE_HISTORY));
     let inspectors = actors(activity).values().filter(|i| is_coordinator(i)).map(|i| actor(i, t)).collect();
     let running = runs.iter().filter(|r| r.outcome == Outcome::Running).cloned().collect();
     let mut ended: Vec<&GateRun> = runs.iter().filter(|r| r.outcome != Outcome::Running).collect();
@@ -1005,7 +1112,7 @@ fn gate(activity: &Activity, t: Timestamp, runs: &[GateRun], mut crates: Vec<Cra
     let failed = ended.iter().filter(|r| r.outcome == Outcome::Failed).count();
     let no_result = ended.iter().filter(|r| r.outcome == Outcome::Unknown).count();
     crates.sort_by_key(|c| (c.since, c.issue));
-    Gate { inspectors, running, crates, recent: ended.into_iter().take(GATE_HISTORY).cloned().collect(), passed, failed, no_result }
+    Gate { inspectors, running, crates, recent: ended.into_iter().take(GATE_HISTORY).cloned().collect(), passed, failed, no_result, checks }
 }
 
 fn shipping(merges: &[MainMerge], tickets: &[Ticket], runs: &[GateRun], t: Timestamp, done: (Vec<Crate>, usize)) -> Shipping {
@@ -1241,6 +1348,77 @@ pub(crate) mod tests {
         assert_eq!(run.age, 300);
         assert_eq!(gating.gate.inspectors[0].shift, Shift::On);
         assert_eq!(gating.counts.gating, 1);
+    }
+
+    #[test]
+    fn the_gate_lists_the_workers_ready_checks_apart_from_its_runs() {
+        // #95: worker-2's ready check runs 04:06:00 → 04:06:37 (rc=0), on #170.
+        assert!(sample_scene("2026-10-31T04:05:00Z").gate.checks.is_empty(), "nothing before it starts");
+        let running = sample_scene("2026-10-31T04:06:10Z");
+        let check = &running.gate.checks[0];
+        assert_eq!((check.sub.as_str(), check.lane, check.worker.as_deref()), ("ready-4bb1de4", Lane::Ready, Some("worker-2")));
+        assert_eq!((check.outcome, check.end, check.age), (Outcome::Running, None, 10), "nothing after t told");
+        assert_eq!((check.issues.as_slice(), check.cause.as_deref()), (&[170][..], None));
+        assert_eq!(check.tooltip[0], "ready check ready-4bb1de4 · worker-2");
+        assert!(running.gate.running.iter().chain(&running.gate.recent).all(|r| r.lane == Lane::Gate), "the gate's runs are its own");
+
+        let later = sample_scene("2026-10-31T04:25:00Z");
+        let check = &later.gate.checks[0];
+        assert_eq!((check.outcome, check.end, check.age), (Outcome::Passed, Some(at("2026-10-31T04:06:37Z")), 1103));
+        assert_eq!(later.gate.running[0].lane, Lane::Gate);
+        assert_eq!((later.gate.passed, later.gate.failed), (0, 0), "the counts are the gate's");
+        // Its typed result carries the lane and the worker; an older one without them reads as a gate run.
+        let json = serde_json::to_value(check).unwrap();
+        assert_eq!((json["lane"].as_str(), json["worker"].as_str()), (Some("ready"), Some("worker-2")));
+        let mut old = serde_json::to_value(&later.gate.running[0]).unwrap();
+        old.as_object_mut().unwrap().remove("lane");
+        assert_eq!(serde_json::from_value::<GateRun>(old).unwrap().lane, Lane::Gate);
+    }
+
+    #[test]
+    fn a_selected_run_older_than_the_history_is_kept_and_one_after_t_left_out() {
+        let lines: Vec<String> = (0..12)
+            .flat_map(|n| {
+                [
+                    format!(r#"{{"event":"sub.start","name":"gate","sub":"gate-{n}","t":"2026-10-31T01:{:02}:00Z"}}"#, n * 2),
+                    format!(r#"{{"event":"sub.stop","note":"rc=0","sub":"gate-{n}","t":"2026-10-31T01:{:02}:30Z"}}"#, n * 2),
+                ]
+            })
+            .collect();
+        let start = r#"{"event":"session.start","machine":"mini","name":"coordinator","role":"coordinator","t":"2026-10-31T01:00:00Z"}"#;
+        let text = std::iter::once(start.to_owned()).chain(lines).collect::<Vec<_>>().join("\n");
+        let activity = Activity::of(&[parse_file("mini-c1", &text)]);
+        let mut late = scene(&activity, &[], at("2026-10-31T02:00:00Z"), DEFAULT_RECENT);
+        assert_eq!(late.gate.recent.len(), GATE_HISTORY);
+        assert!(!late.gate.recent.iter().any(|r| r.sub == "gate-1"));
+        keep_run(&mut late, &activity, "gate-1", Some(at("2026-10-31T01:02:00Z")));
+        let subs: Vec<&str> = late.gate.recent.iter().map(|r| r.sub.as_str()).collect();
+        assert_eq!(subs.len(), GATE_HISTORY + 1);
+        assert_eq!(subs.last(), Some(&"gate-1"), "in its place by its end: {subs:?}");
+        let mut early = scene(&activity, &[], at("2026-10-31T01:03:00Z"), DEFAULT_RECENT);
+        let before = early.clone();
+        keep_run(&mut early, &activity, "gate-9", None);
+        assert_eq!(early, before, "a run begun after t isn't told");
+    }
+
+    #[test]
+    fn a_ready_check_its_session_left_never_finished() {
+        let lines = [
+            r#"{"event":"session.start","machine":"mini","name":"worker-1","role":"worker","t":"2026-10-31T01:00:00Z"}"#,
+            r#"{"event":"claim","issue":5,"t":"2026-10-31T01:01:00Z"}"#,
+            r#"{"event":"work","issue":5,"t":"2026-10-31T01:02:00Z"}"#,
+            r#"{"event":"sub.start","name":"ready","sub":"ready-a","t":"2026-10-31T01:10:00Z"}"#,
+            r#"{"event":"sub.stop","note":"rc=101; cause=build; step=clippy","sub":"ready-a","t":"2026-10-31T01:12:00Z"}"#,
+            r#"{"event":"sub.start","name":"ready","sub":"ready-b","t":"2026-10-31T01:20:00Z"}"#,
+            r#"{"event":"session.stop","t":"2026-10-31T01:30:00Z"}"#,
+        ];
+        let files = [parse_file("mini-w1", &lines.join("\n"))];
+        let activity = Activity::of(&files);
+        let checks = ready_checks(&activity, at("2026-10-31T01:25:00Z"));
+        assert_eq!(checks.iter().map(|c| (c.sub.as_str(), c.outcome)).collect::<Vec<_>>(), [("ready-a", Outcome::Failed), ("ready-b", Outcome::Running)]);
+        assert_eq!(checks[0].cause.as_deref(), Some("build/clippy"), "its cause and the step it failed at");
+        let late = ready_checks(&activity, at("2026-10-31T02:00:00Z"));
+        assert_eq!((late[1].outcome, late[1].end, late[1].cause.as_deref()), (Outcome::Unknown, Some(at("2026-10-31T01:30:00Z")), Some(NEVER_FINISHED)));
     }
 
     #[test]

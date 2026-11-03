@@ -155,7 +155,10 @@ fn every_run_its_result_and_the_figures() {
     let details: Details = call(&mut session, "details.get", r#"{"gate":"gate-8b"}"#);
     assert_eq!(details.subject, merged.subject);
     assert!(details.entries.iter().any(|e| e.goes_to == Some(Subject::Merge { commit: commit.clone() })), "{commit}");
-    assert_eq!(list.runs[0].subject, Subject::Ticket { issue: 7 }, "a ready check: its ticket");
+    let check = &list.runs[0];
+    assert_eq!(check.subject, Subject::Gate { sub: check.sub.clone(), at: Some(check.start) }, "a ready check: its own story (#95)");
+    let told: Details = call(&mut session, "details.get", &format!(r#"{{"gate":"{}"}}"#, check.sub));
+    assert_eq!((told.subject, told.title.as_str()), (check.subject.clone(), "ready check ready-abc"));
 
     // A window: the runs it overlaps, the figures of those it started.
     let window: GatesList = call(&mut session, "gates.list", r#"{"start":"2026-10-31T03:35:00Z","end":"2026-10-31T04:06:00Z"}"#);
@@ -305,7 +308,8 @@ fn the_gate_rows_are_gates_lists_runs_for_every_window() {
     assert_eq!(details.subject, run.subject);
     assert!(details.timeline.bars.contains(&BarRef { track: GATES_KEY.into(), range: 1 }), "its own bar among those it lights");
     let ready: Details = call(&mut session, "details.get", r#"{"track":"ready","range":0}"#);
-    assert_eq!(ready.subject, Subject::Ticket { issue: 7 }, "a ready check: its ticket's story");
+    assert!(matches!(&ready.subject, Subject::Gate { sub, .. } if sub == "ready-abc"), "a ready check: its own story (#95): {:?}", ready.subject);
+    assert!(ready.timeline.bars.contains(&BarRef { track: READY_KEY.into(), range: 0 }), "its own bar among those it lights");
     assert_eq!(session.execute("timeline.bar", r#"{"track":"gates","range":99}"#).unwrap_err().code(), "invalid");
     std::fs::remove_dir_all(dir).ok();
 }

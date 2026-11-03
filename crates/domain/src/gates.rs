@@ -61,10 +61,11 @@ pub const NO_RESULT: Rgb = colours::STOPPED;
 const HOUR: i64 = 3_600;
 
 /// Whose gate a run is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Lane {
     /// The coordinator's gate, before it merges.
+    #[default]
     Gate,
     /// A worker's own check before it submits (`ready`).
     Ready,
@@ -457,8 +458,8 @@ fn ready_run(activity: &Activity, tickets: &[Ticket], agent: &Agent, sub: &Sub, 
     }
     let (prs, carried_tickets) = carried(tickets, &[], &issues, &prs);
     let kind = [&sub.start_note, &sub.stop_note].into_iter().flatten().find_map(|n| crate::factory::note_field(n, "kind"));
-    let subject =
-        carried_tickets.first().map_or_else(|| Subject::Session { instance: agent.instance.clone(), at: Some(start) }, |&issue| Subject::Ticket { issue });
+    // Its own story, as a gate run's (#95), which names the ticket it checked.
+    let subject = Subject::Gate { sub: sub.sub.clone(), at: Some(start) };
     let (instance, name) = who(activity, &agent.instance);
     Run {
         sub: sub.sub.clone(),
@@ -540,7 +541,7 @@ fn tooltip(activity: &Activity, run: &Run) -> Vec<TipLine> {
     }
     lines.push(TipLine::plain(match run.lane {
         Lane::Gate => "click: its story in Details",
-        Lane::Ready => "click: its ticket's story in Details",
+        Lane::Ready => "click: its story in Details",
     }));
     lines
 }
@@ -813,7 +814,7 @@ mod tests {
         assert_eq!((thirteen.tickets.as_slice(), thirteen.prs.as_slice()), (&[3][..], &[13][..]));
         let ready = sub_of(&list, "ready-bbb");
         assert_eq!((ready.tickets.as_slice(), ready.prs.as_slice(), ready.cause.as_deref()), (&[2][..], &[12][..], Some("test")));
-        assert_eq!((ready.subject.clone(), ready.name.as_str()), (Subject::Ticket { issue: 2 }, "worker-1"));
+        assert_eq!((ready.subject.clone(), ready.name.as_str()), (Subject::Gate { sub: "ready-bbb".into(), at: Some(ready.start) }, "worker-1"));
         assert_eq!(sub_of(&list, "ready-bbb-rerun").rerun_of.as_deref(), Some("ready-bbb"));
         let running = sub_of(&list, "ready-ccc");
         assert_eq!((running.end, running.duration_seconds, running.colour), (None, 600, RUNNING), "to the last event");
@@ -982,7 +983,8 @@ mod tests {
         assert_eq!(bar(&gate, "gate-13").colour, NO_RESULT);
         let failed = bar(&ready, "ready-bbb");
         assert_eq!((failed.label.as_str(), failed.style, failed.colour), ("#2 · test", Style::ReadyCheck, FAILED));
-        assert_eq!(failed.run.map(|r| r.subject), Some(Subject::Ticket { issue: 2 }), "a ready check tells its ticket's story");
+        let at_start = Some(failed.start);
+        assert_eq!(failed.run.map(|r| r.subject), Some(Subject::Gate { sub: "ready-bbb".into(), at: at_start }), "a ready check tells its own story (#95)");
         let running = bar(&ready, "ready-ccc");
         assert_eq!((running.open, running.end, running.colour), (true, at(4, 0), RUNNING), "running: to the last event, open");
         // Collapse to the window: a window with no gate run leaves the Gate runs row out, as any row.

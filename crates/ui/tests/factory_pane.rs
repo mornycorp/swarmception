@@ -145,7 +145,7 @@ fn the_pane_draws_what_factory_at_returns() {
     assert_eq!(shell.factory().t(), Some(t));
 
     let shown: FactoryScene = shell.factory().scene().cloned().unwrap();
-    let asked = shell.engine().call::<At>(AtParams { t: Some(t), recent: Some(shown.recent), ticket: None }).unwrap();
+    let asked = shell.engine().call::<At>(AtParams { t: Some(t), recent: Some(shown.recent), ticket: None, run: None }).unwrap();
     assert_eq!(shown, asked, "the pane shows factory.at's answer for its time");
     // 03:42: worker-1 works on #9, #7 is in the gate, #11 waits at the dock, #13 is up next.
     assert_eq!(issues(&asked.gate.crates), [7]);

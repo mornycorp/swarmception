@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_domain::factory::FactoryScene;
 use swarmception_domain::moments::{Direction, MomentKind, Step};
 use swarmception_engine::Session;
-use swarmception_engine::factory_cmds::{At, AtParams, PlaceAt, PlaceAtParams, StepParams, StepTo};
+use swarmception_engine::factory_cmds::{At, AtParams, PlaceAt, PlaceAtParams, RunAt, StepParams, StepTo};
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_model::Timestamp;
 
@@ -270,7 +270,7 @@ pub struct FactoryPane {
 }
 
 /// What a scene was asked for: *t*, `recent`, the traced ticket, and the engine's revision.
-type Asked = (Option<Timestamp>, i64, Option<u64>, (u64, u64));
+type Asked = (Option<Timestamp>, i64, Option<u64>, Option<RunAt>, (u64, u64));
 
 /// What a play step does.
 struct Play {
@@ -510,12 +510,17 @@ impl FactoryPane {
     /// Asks `factory.at` again when *t*, `recent` or the engine moved on.
     pub fn sync(&mut self, engine: &mut Session, view: &FactoryView, recent: i64) {
         let (t, ticket) = (self.t, view.ticket);
-        let asked = Some((t, recent, ticket, engine.revision()));
+        // A run selected stays in the gate's list, however long ago it ran (#95).
+        let run = match &self.selected {
+            Some(Selected::Run { sub, at }) => Some(RunAt { sub: sub.clone(), at: *at }),
+            _ => None,
+        };
+        let asked = Some((t, recent, ticket, run.clone(), engine.revision()));
         if self.asked == asked {
             return;
         }
         self.asked = asked;
-        match engine.call::<At>(AtParams { t, recent: Some(recent), ticket }) {
+        match engine.call::<At>(AtParams { t, recent: Some(recent), ticket, run }) {
             Ok(scene) => {
                 self.scene = Some(scene);
                 self.error = None;

@@ -288,7 +288,7 @@ mod tests {
         let benches: Vec<(String, Vec<u64>)> = reported.benches.iter().map(|b| (b.key.clone(), b.tickets.clone())).collect();
         assert_eq!(benches, drawn.benches);
         assert_eq!((&reported.runs, reported.blocks, &reported.journey), (&drawn.runs, drawn.blocks, &drawn.journey));
-        let asked = shell.engine().call::<At>(AtParams { t: Some(t), recent: Some(shown.recent), ticket: Some(7) }).unwrap();
+        let asked = shell.engine().call::<At>(AtParams { t: Some(t), recent: Some(shown.recent), ticket: Some(7), run: None }).unwrap();
         assert_eq!(reported.gate, asked.gate.crates.iter().map(|c| c.issue).collect::<Vec<_>>(), "#7 is in the gate at 03:42");
         assert_eq!(reported.gate, [7]);
         assert!(!reported.journey.is_empty(), "#7's journey is traced");

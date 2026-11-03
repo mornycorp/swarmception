@@ -6,7 +6,7 @@
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, scene, titled};
+use swarmception_domain::factory::{DEFAULT_RECENT, FactoryScene, journey, keep_run, scene, titled};
 use swarmception_domain::moments::{Direction, Moment, MomentKind, Step as Landing, moments, step};
 use swarmception_domain::rows::bars_where;
 use swarmception_model::Timestamp;
@@ -16,8 +16,17 @@ use crate::error::{EngineError, Refusal, Unavailable};
 use crate::session::Session;
 use crate::stats_cmds::At as When;
 
+/// A gate run or ready check, by its sub-agent's id and a time in it (its start), to pick one of
+/// a rerun's runs.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RunAt {
+    pub sub: String,
+    pub at: Option<Timestamp>,
+}
+
 /// What `factory.at` shows.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AtParams {
     /// The moment, in seconds since the Unix epoch (UTC); the last event's when left out.
@@ -27,6 +36,10 @@ pub struct AtParams {
     pub recent: Option<i64>,
     /// A ticket whose journey through the stations by `t` the scene carries.
     pub ticket: Option<u64>,
+    /// A gate run or ready check the gate's lists keep though older than their history (#95):
+    /// what is selected, so it can be drawn selected; none begun after `t`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<RunAt>,
 }
 
 /// `factory.at`: the factory at a moment: up next, the shelf, the benches with their actors and
@@ -50,6 +63,9 @@ impl Command for At {
         let t = params.t.unwrap_or(last);
         let mut scene = scene(&loaded.activity, &loaded.tracking.merges, t, params.recent.unwrap_or(DEFAULT_RECENT));
         scene.journey = params.ticket.and_then(|issue| journey(&loaded.activity, t, issue));
+        if let Some(run) = &params.run {
+            keep_run(&mut scene, &loaded.activity, &run.sub, run.at);
+        }
         titled(&mut scene, &session.issues.issues);
         Ok(scene)
     }
