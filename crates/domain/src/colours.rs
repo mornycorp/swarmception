@@ -250,7 +250,7 @@ mod tests {
 
     /// #83, the owner's: mc-engine #169 as its tracking branch has it (sent back for a conflict,
     /// fixed and submitted again with no `work` logged), and a ticket sent back then re-claimed
-    /// by another worker on a new branch. Every bar, chip, brick, moment and details entry of the
+    /// by another worker on a new branch, and #169 with its rework's `work` logged (#98). Every bar, chip, brick, moment and details entry of the
     /// ticket is in its own colour or a phase's fixed one, and both its runs of work in its own.
     #[test]
     fn a_tickets_colour_holds_across_a_send_back_and_a_re_claim() {
@@ -258,11 +258,15 @@ mod tests {
         use crate::details::{Subject, details};
         use crate::factory::{DEFAULT_RECENT, scene};
         use crate::rows::{Grouping, RowsSpec, bars_where, rows};
-        use crate::tickets::tests::{RECLAIMED, SENT_BACK_169, files};
+        use crate::tickets::tests::{RECLAIMED, SENT_BACK_169, files, sent_back_169_logged};
         use swarmception_model::{Issues, Timestamp};
 
         let fixed = [CLAIMED, WAITING, SENT_BACK, STOPPED];
-        for (fixture, issue, rework_at) in [(&SENT_BACK_169[..], 169, "2026-11-01T11:34:00Z"), (&RECLAIMED[..], 7, "2026-11-01T02:10:00Z")] {
+        let logged = sent_back_169_logged();
+        let logged: Vec<(&str, &str)> = logged.iter().map(|(i, t)| (*i, t.as_str())).collect();
+        for (fixture, issue, rework_at) in
+            [(&SENT_BACK_169[..], 169, "2026-11-01T11:34:00Z"), (&logged[..], 169, "2026-11-01T11:33:30Z"), (&RECLAIMED[..], 7, "2026-11-01T02:10:00Z")]
+        {
             let activity = Activity::of(&files(fixture));
             let own = ticket_colour(issue);
             for grouping in [Grouping::Flat, Grouping::Workers] {

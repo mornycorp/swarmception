@@ -321,11 +321,11 @@ fn read_work(agent: &mut Agent, reading: &mut Reading, event: &Event) {
     let t = event.t;
     let working_on = |reading: &Reading, issue: u64| reading.work.as_ref().is_some_and(|w| w.issue == issue);
     match &event.kind {
-        Kind::Claim { issue, .. } | Kind::Work { issue } if !working_on(reading, *issue) => {
+        Kind::Claim { issue, .. } | Kind::Work { issue, .. } if !working_on(reading, *issue) => {
             end_work(agent, reading, t, "another issue's work");
             reading.work = Some(Work { issue: *issue, mr: event.kind.mr(), span: Span { start: t, end: t, open: false }, ended: None });
         }
-        Kind::Claim { mr: Some(mr), .. } | Kind::Submit { mr: Some(mr), .. } => {
+        Kind::Claim { mr: Some(mr), .. } | Kind::Work { mr: Some(mr), .. } | Kind::Submit { mr: Some(mr), .. } => {
             if let Some(work) = reading.work.as_mut() {
                 work.mr = work.mr.or(Some(*mr));
             }

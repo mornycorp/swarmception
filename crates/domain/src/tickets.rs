@@ -4,9 +4,11 @@
 //!
 //! - `claim` starts a *claimed* stretch, unless the ticket is already claimed, worked on or waiting;
 //! - `work` starts *working*; `submit` starts *waiting* for the merge;
-//! - `sendback` starts *sent back*, until work begins again. A worker answers a send-back by
-//!   fixing its PR and submitting again, and logs no `work` before it (Swarm Core's `ready` logs
-//!   the `submit` alone), so a `submit` straight after a send-back is its rework (#83): the
+//! - `sendback` starts *sent back*, until work begins again. Since swarm-core#14 the worker's
+//!   `prwatch` logs `work --issue <n> --mr <m>` when it picks the PR up (#98): that `work` starts
+//!   the rework, *working* again, and the time before it reads as *sent back*, the PR waiting for
+//!   its worker. Older runs logged no `work` before the fix (Swarm Core's `ready` logs the
+//!   `submit` alone), so a `submit` straight after a send-back is its rework (#83): the
 //!   send-back reads as such for [`SENT_BACK_MARK`] seconds (or until the submit, if sooner),
 //!   and the time from there to the submit is *working* again, by the submitter, a
 //!   [`Stretch::rework`]. The ticket's second run is drawn as its first, in its own colour; a
@@ -78,7 +80,8 @@ pub struct Stretch {
     /// Its holder's session ended, which ended it.
     pub abandoned: Option<Abandoned>,
     /// Working again after a send-back that its submit answered with no `work` logged between
-    /// (#83): it starts [`SENT_BACK_MARK`] after the send-back, a time no event logged.
+    /// (#83): it starts [`SENT_BACK_MARK`] after the send-back, a time no event logged. A logged
+    /// `work` after a send-back (swarm-core#14) starts an ordinary *working* stretch instead.
     pub rework: bool,
 }
 
@@ -584,6 +587,18 @@ pub(crate) mod tests {
         ),
     ];
 
+    /// [`SENT_BACK_169`] as a worker on swarm-core#14 logs it (#98): `prwatch` logs alder's
+    /// `work --issue 169 --mr 178` at 11:33:10, when it reads the send-back.
+    pub(crate) fn sent_back_169_logged() -> [(&'static str, String); 2] {
+        let [(worker, events), (coordinator, sent)] = SENT_BACK_169;
+        let work = r#"{"event":"work","issue":169,"mr":178,"note":"rework: #178 sent back 2026-11-01T11:32:29Z: cause=conflict","t":"2026-11-01T11:33:10Z"}"#;
+        let events = events.replace(
+            "\n{\"event\":\"sub.start\",\"name\":\"ready\",\"note\":\"ci --changed before submitting\",\"sub\":\"ready-aec5c5f\"",
+            &format!("\n{work}\n{{\"event\":\"sub.start\",\"name\":\"ready\",\"note\":\"ci --changed before submitting\",\"sub\":\"ready-aec5c5f\""),
+        );
+        [(worker, events), (coordinator, sent.to_owned())]
+    }
+
     pub(crate) fn files(files: &[(&str, &str)]) -> Vec<swarmception_model::AgentFile> {
         files.iter().map(|(instance, text)| swarmception_model::parse_file(instance, text)).collect()
     }
@@ -612,6 +627,38 @@ pub(crate) mod tests {
         assert_eq!(ticket.began.map(|t| t.to_string()), Some(day("10:56:34")), "work first began at the work event");
         assert_eq!(ticket.finished.map(|t| t.to_string()), Some(day("11:36:00")));
         assert_eq!(ticket.worker.as_deref(), Some("christohersmini-314f61"));
+    }
+
+    /// #98: a `work` logged after the send-back (swarm-core#14's `prwatch`) starts the rework there,
+    /// and the time before it is the send-back's, waiting for its worker; nothing is inferred.
+    #[test]
+    fn a_logged_work_after_a_send_back_starts_the_rework_there() {
+        let logged = sent_back_169_logged();
+        assert_eq!(logged[0].1.matches("\"event\":\"work\"").count(), 2, "the fixture gained its work");
+        let fixture: Vec<(&str, &str)> = logged.iter().map(|(i, t)| (*i, t.as_str())).collect();
+        let read = tickets(&Activity::of(&files(&fixture)));
+        let reworked = ticket(&read, 169);
+        let day = |t: &str| format!("2026-11-01T{t}Z");
+        let spans: Vec<_> = reworked.stretches.iter().map(|s| (s.phase, s.start.to_string(), s.end.to_string(), s.rework)).collect();
+        assert_eq!(
+            spans,
+            [
+                (Phase::Claimed, day("10:56:32"), day("10:56:34"), false),
+                (Phase::Working, day("10:56:34"), day("11:23:00"), false),
+                (Phase::Waiting, day("11:23:00"), day("11:32:29"), false),
+                (Phase::SentBack, day("11:32:29"), day("11:33:10"), false),
+                (Phase::Working, day("11:33:10"), day("11:36:00"), false),
+                (Phase::Waiting, day("11:36:00"), day("12:07:37"), false),
+            ],
+            "sent back up to the logged work, the rework from it to the second submit"
+        );
+        let rework = &reworked.stretches[4];
+        assert_eq!(rework.by, "christohersmini-314f61");
+        assert!(rework.note.as_deref().is_some_and(|n| n.starts_with("rework: #178 sent back")), "{:?}", rework.note);
+        assert_eq!((reworked.pr, reworked.began.map(|t| t.to_string())), (Some(178), Some(day("10:56:34"))));
+        // The older run, with no work logged, still infers it (#83).
+        let older = tickets(&Activity::of(&files(&SENT_BACK_169)));
+        assert!(ticket(&older, 169).stretches.iter().any(|s| s.rework), "no work logged: the inferred rework");
     }
 
     #[test]

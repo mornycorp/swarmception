@@ -92,8 +92,11 @@ pub enum Kind {
         issue: u64,
         mr: Option<u64>,
     },
+    /// `mr`: the pull request it picks up again after a send-back (Swarm Core's `prwatch` logs
+    /// it, sc#14): the rework starts here.
     Work {
         issue: u64,
+        mr: Option<u64>,
     },
     Submit {
         issue: u64,
@@ -138,7 +141,7 @@ impl Kind {
     pub const fn issue(&self) -> Option<u64> {
         match self {
             Self::Claim { issue, .. }
-            | Self::Work { issue }
+            | Self::Work { issue, .. }
             | Self::Submit { issue, .. }
             | Self::Stop { issue, .. }
             | Self::Release { issue, .. }
@@ -152,7 +155,7 @@ impl Kind {
     #[must_use]
     pub const fn mr(&self) -> Option<u64> {
         match self {
-            Self::Claim { mr, .. } | Self::Submit { mr, .. } | Self::Merge { mr, .. } | Self::Sendback { mr, .. } => *mr,
+            Self::Claim { mr, .. } | Self::Work { mr, .. } | Self::Submit { mr, .. } | Self::Merge { mr, .. } | Self::Sendback { mr, .. } => *mr,
             _ => None,
         }
     }
@@ -270,7 +273,7 @@ pub fn parse_line(line: &str) -> Result<Event, String> {
         "session.resume" => Kind::SessionResume,
         "session.stop" => Kind::SessionStop { reason: text(raw.reason.clone()), of: text(raw.of.clone()) },
         "claim" => Kind::Claim { issue: issue(&raw)?, mr: raw.mr },
-        "work" => Kind::Work { issue: issue(&raw)? },
+        "work" => Kind::Work { issue: issue(&raw)?, mr: raw.mr },
         "submit" => Kind::Submit { issue: issue(&raw)?, mr: raw.mr },
         "stop" => Kind::Stop { issue: issue(&raw)?, reason: raw.reason.clone().map(StopReason::of) },
         "release" => Kind::Release { issue: issue(&raw)?, reason: text(raw.reason.clone()), of: text(raw.of.clone()) },
@@ -351,10 +354,19 @@ mod tests {
             ]
         );
         assert_eq!(file.events[1].kind, Kind::Claim { issue: 170, mr: Some(173) });
+        assert_eq!(file.events[2].kind, Kind::Work { issue: 170, mr: None });
         assert_eq!(file.events[6].kind, Kind::Stop { issue: 170, reason: Some(StopReason::Done) });
         assert_eq!(file.events[8].sub.as_deref(), Some("gate-mr154-rerun"));
         let Kind::SessionStart { role, format, .. } = &file.events[0].kind else { panic!("not a start") };
         assert_eq!((role, *format), (&Role::Worker, Some(3)));
+    }
+
+    /// swarm-core#14: a `work` that picks up a sent-back PR names it, `mr`.
+    #[test]
+    fn a_work_on_a_send_back_names_its_pr() {
+        let line = r#"{"event":"work","issue":7,"mr":9,"note":"rework: #9 sent back 2026-10-17T12:00:00Z: cause=conflict","t":"2026-10-17T12:20:00Z"}"#;
+        let event = parse_line(line).unwrap();
+        assert_eq!((&event.kind, event.kind.mr(), event.kind.issue()), (&Kind::Work { issue: 7, mr: Some(9) }, Some(9), Some(7)));
     }
 
     #[test]

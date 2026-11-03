@@ -147,6 +147,10 @@ fn ticket_moments(activity: &Activity, ticket: &Ticket) -> Vec<Moment> {
             Phase::Claimed => (MomentKind::Claim, format!("#{n} claimed"), by()),
             // A rework's start is inferred, not logged (#83): no moment of its own.
             Phase::Working if stretch.rework => continue,
+            // A logged `work` after a send-back (swarm-core#14) is the rework's start (#98).
+            Phase::Working if i.checked_sub(1).and_then(|p| ticket.stretches.get(p)).is_some_and(|s| s.phase == Phase::SentBack) => {
+                (MomentKind::Work, format!("#{n} rework began"), by())
+            }
             Phase::Working => (MomentKind::Work, format!("#{n} work began"), by()),
             Phase::Waiting => {
                 let pr = ticket.pr.map(|pr| format!(" (PR #{pr})")).unwrap_or_default();
@@ -294,7 +298,7 @@ mod tests {
                 ("2026-10-31T01:10:00Z".to_owned(), MomentKind::Submit, "#5 submitted (PR #9) · worker-1"),
                 ("2026-10-31T01:19:00Z".to_owned(), MomentKind::GateFail, "gate-9 failed: build · #5"),
                 ("2026-10-31T01:20:00Z".to_owned(), MomentKind::Sendback, "#5 sent back by the gate · worker-1"),
-                ("2026-10-31T01:30:00Z".to_owned(), MomentKind::Work, "#5 work began · worker-1"),
+                ("2026-10-31T01:30:00Z".to_owned(), MomentKind::Work, "#5 rework began · worker-1"),
                 ("2026-10-31T01:40:00Z".to_owned(), MomentKind::Submit, "#5 submitted (PR #9) · worker-1"),
                 ("2026-10-31T02:00:00Z".to_owned(), MomentKind::GatePass, "gate-pr9b passed · #5"),
                 ("2026-10-31T02:00:00Z".to_owned(), MomentKind::Merge, "#5 merged (PR #9) · worker-1"),
