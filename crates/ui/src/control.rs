@@ -40,8 +40,9 @@ use crate::{Panes, Shell, UiState};
 /// `hovered` an hour); 11: the
 /// factory follows the timeline (#85): its `t` the time it shows, its sources the timeline's, what
 /// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip; 12:
-/// the timeline's folds (#86, `timeline.folds`; the state's `fold`).
-pub const INSPECT_VERSION: u32 = 12;
+/// the timeline's folds (#86, `timeline.folds`; the state's `fold`); 13: the benches folded away
+/// and scrolled out of view (#94, `factory.drawn.benchesFolded`, `benchesHidden`).
+pub const INSPECT_VERSION: u32 = 13;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -68,7 +69,14 @@ pub struct BenchDrawn {
 pub struct FactoryDrawn {
     pub upcoming: Vec<u64>,
     pub shelf: Vec<u64>,
+    /// The benches in view.
     pub benches: Vec<BenchDrawn>,
+    /// The benches folded into one line for want of room (#94): off shift, holding nothing.
+    #[serde(default)]
+    pub benches_folded: Vec<String>,
+    /// The benches scrolled out of view (#94).
+    #[serde(default)]
+    pub benches_hidden: usize,
     pub dock: Vec<u64>,
     pub gate: Vec<u64>,
     /// The gate's runs going on, then those before *t*, as their lines read.
@@ -595,6 +603,8 @@ impl Shell {
                 upcoming: drawn.upcoming.clone(),
                 shelf: drawn.shelf.clone(),
                 benches: drawn.benches.iter().map(|(key, tickets)| BenchDrawn { key: key.clone(), tickets: tickets.clone() }).collect(),
+                benches_folded: drawn.benches_folded.clone(),
+                benches_hidden: drawn.benches_hidden,
                 dock: drawn.dock.clone(),
                 gate: drawn.gate.clone(),
                 runs: drawn.runs.clone(),

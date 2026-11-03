@@ -3,8 +3,9 @@
 //! bottom in a row, two when the pane is narrow (#31). Every ticket is the same chip at every
 //! station ([`crate::factory_chip`]): its fill its own colour, its border its phase, only its size
 //! changing. The benches are short strips (the name, model and helper on one line, the status
-//! under it), in more columns when many workers would not fit in one; the gate is its runs' list
-//! (✔/✖, cause, age) under what it is gating. Every chip, bench, run and brick has its tooltip,
+//! under it), in more columns when many workers would not fit in one, and with dozens (#94) the
+//! workers off shift holding nothing folded into a line, the busy first and the rest scrolling;
+//! the gate is its runs' list (✔/✖, cause, age) under what it is gating. Every chip, bench, run and brick has its tooltip,
 //! the scene's own lines in colour ([`crate::factory_tip`]). [`Drawn`] records what each station
 //! drew, for a test to check against `factory.at`.
 //!
@@ -29,8 +30,14 @@ use crate::{factory_tip, icons};
 pub struct Drawn {
     pub upcoming: Vec<u64>,
     pub shelf: Vec<u64>,
-    /// Each bench's key and the crates it drew.
+    /// Each bench's key and the crates it drew: the benches in view.
     pub benches: Vec<(String, Vec<u64>)>,
+    /// Where each bench in view was drawn, as [`Drawn::benches`] orders them (#94).
+    pub bench_cells: Vec<Rect>,
+    /// The benches folded away into one line for want of room (#94): off shift, holding nothing.
+    pub benches_folded: Vec<String>,
+    /// The benches scrolled out of view (#94).
+    pub benches_hidden: usize,
     pub dock: Vec<u64>,
     pub gate: Vec<u64>,
     /// The runs going on, then the runs before *t*.
@@ -136,11 +143,13 @@ impl Selected {
 }
 
 /// How main's wall is scrolled (#32): the points down from its newest row, 0 when it fits; and
-/// whether to scroll the selected brick into view on the next frame (#85), once.
+/// whether to scroll the selected brick into view on the next frame (#85), once (the bench
+/// holding a selected ticket too). How far the benches are scrolled (#94), in points.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct WallView {
     pub scroll: f32,
     pub reveal: bool,
+    pub benches: f32,
 }
 
 /// `items` with the one `selected` picks moved into the first `shown`, in place of the last of
@@ -264,6 +273,10 @@ const BENCH_TWO_LINES: f32 = 38.0;
 /// The bench strips' heights: the least before taking another column, and the most.
 const BENCH_LEAST: f32 = 42.0;
 const BENCH_MOST: f32 = 56.0;
+/// The shortest a bench strip gets, on one line (#94): fewer and they scroll.
+const BENCH_SHORTEST: f32 = 30.0;
+/// The line the benches folded away take, under the others (#94).
+const BENCH_FOLD: f32 = 18.0;
 /// The narrowest a column of benches gets.
 const BENCH_NARROWEST: f32 = 230.0;
 
@@ -277,14 +290,51 @@ struct KeyItem {
     label: &'static str,
 }
 
-/// How many columns `n` benches take in `room`, and each strip's height: one column while every
-/// strip gets [`BENCH_LEAST`], more (each at least [`BENCH_NARROWEST`] wide, three at most) when
-/// not; the strips no taller than [`BENCH_MOST`].
-fn bench_grid(n: usize, room: Vec2) -> (usize, f32) {
+/// How `n` benches are laid out in `room` (#94).
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct BenchGrid {
+    cols: usize,
+    /// The rows in all, and those in view.
+    rows: usize,
+    visible: usize,
+    /// Each strip's height.
+    height: f32,
+}
+
+impl BenchGrid {
+    /// Whether every strip gets [`BENCH_LEAST`].
+    fn roomy(&self) -> bool {
+        self.rows == self.visible && self.height >= BENCH_LEAST
+    }
+}
+
+/// How `n` benches take `room`: one column while every strip gets [`BENCH_LEAST`], more (each at
+/// least [`BENCH_NARROWEST`] wide, three at most) when not; the strips no taller than
+/// [`BENCH_MOST`] and no shorter than [`BENCH_SHORTEST`]: the rows that don't fit at that scroll
+/// (#94), the ones in view filling the room.
+fn bench_grid(n: usize, room: Vec2) -> BenchGrid {
     let most = ((room.x / BENCH_NARROWEST).floor() as usize).clamp(1, 3);
     let cols = (1..=most).find(|c| n.div_ceil(*c) as f32 * BENCH_LEAST <= room.y).unwrap_or(most);
     let rows = n.div_ceil(cols).max(1);
-    (cols, (room.y / rows as f32).min(BENCH_MOST))
+    let visible = rows.min(((room.y / BENCH_SHORTEST).floor() as usize).max(1));
+    BenchGrid { cols, rows, visible, height: (room.y / visible as f32).min(BENCH_MOST) }
+}
+
+/// Where a bench comes when the benches lack room (#94): the busy first, then the paused and the
+/// idle, then any other.
+const fn busy_rank(status: BenchStatus) -> u8 {
+    match status {
+        BenchStatus::Working | BenchStatus::SentBack | BenchStatus::Claimed => 0,
+        BenchStatus::Stopped => 1,
+        BenchStatus::Paused => 2,
+        BenchStatus::Idle => 3,
+        BenchStatus::Off => 4,
+    }
+}
+
+/// Whether a bench folds away when the benches lack room (#94): off shift, holding nothing.
+fn folds(bench: &Bench) -> bool {
+    bench.status == BenchStatus::Off && bench.crates.is_empty()
 }
 
 /// The chips a bench strip `cell` draws, the one worked on first: small on a one-line strip,
@@ -608,14 +658,88 @@ impl Floor<'_> {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
             return;
         }
-        let (cols, height) = bench_grid(n, room.size());
-        let rows = n.div_ceil(cols);
-        let width = room.width() / cols as f32;
-        for (i, bench) in scene.benches.iter().enumerate() {
-            let (col, row) = ((i / rows) as f32, (i % rows) as f32);
-            let cell = Rect::from_min_size(room.left_top() + vec2(col * width, row * height), vec2(width, height)).shrink2(vec2(2.5, 2.0));
+        // Every bench while each gets room for two lines; else those off shift holding nothing
+        // fold into a line under the others (#94), and the rest, the busy first, scroll when they
+        // still don't fit.
+        let all: Vec<&Bench> = scene.benches.iter().collect();
+        let (open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(n, room.size()).roomy() {
+            (all, Vec::new())
+        } else {
+            let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = all.into_iter().partition(|b| !folds(b));
+            open.sort_by_key(|b| busy_rank(b.status));
+            (open, folded)
+        };
+        let (room, fold) =
+            if folded.is_empty() { (room, None) } else { (room.with_max_y(room.bottom() - BENCH_FOLD), Some(room.with_min_y(room.bottom() - BENCH_FOLD))) };
+        if let Some(fold) = fold {
+            self.folded(fold, &folded);
+        }
+        if open.is_empty() {
+            self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
+            return;
+        }
+        let mut grid = bench_grid(open.len(), room.size());
+        let room = if grid.rows > grid.visible { room.with_max_x(room.right() - SCROLLBAR) } else { room };
+        if grid.rows > grid.visible {
+            grid = bench_grid(open.len(), room.size());
+        }
+        let first = self.bench_scroll(room, &open, grid);
+        let width = room.width() / grid.cols as f32;
+        for (i, bench) in open.iter().enumerate() {
+            let (col, row) = (i / grid.rows, i % grid.rows);
+            if row < first || row >= first + grid.visible {
+                self.drawn.benches_hidden += 1;
+                continue;
+            }
+            let at = vec2(col as f32 * width, (row - first) as f32 * grid.height);
+            let cell = Rect::from_min_size(room.left_top() + at, vec2(width, grid.height)).shrink2(vec2(2.5, 2.0));
+            self.drawn.bench_cells.push(cell);
             self.bench(cell, bench);
         }
+    }
+
+    /// The first row of benches in view (#94): scrolled by the wheel over them, and to the bench
+    /// holding a newly selected ticket; a scrollbar at the right of `room` when they overflow.
+    fn bench_scroll(&mut self, room: Rect, open: &[&Bench], grid: BenchGrid) -> usize {
+        let overflow = grid.rows - grid.visible;
+        if overflow == 0 {
+            self.wall.benches = 0.0;
+            return 0;
+        }
+        let mut scroll = self.wall.benches;
+        if self.ui.rect_contains_pointer(room) {
+            scroll -= self.ui.input(|i| i.smooth_scroll_delta.y);
+        }
+        let selected = self.selected_ticket();
+        // Main's wall takes the reveal after; the benches only read it.
+        if let Some(at) = open.iter().position(|b| b.crates.iter().any(|c| Some(c.issue) == selected)).filter(|_| self.wall.reveal) {
+            let row = at % grid.rows;
+            let first = (scroll / grid.height).round() as usize;
+            if row < first || row >= first + grid.visible {
+                scroll = row.saturating_sub(grid.visible / 2) as f32 * grid.height;
+            }
+        }
+        let scroll = scroll.clamp(0.0, overflow as f32 * grid.height);
+        self.wall.benches = scroll;
+        let first = ((scroll / grid.height).round() as usize).min(overflow);
+        let track = Rect::from_min_max(pos2(room.right() + 3.0, room.top()), pos2(room.right() + SCROLLBAR, room.bottom()));
+        self.painter.rect_filled(track, 2.0, self.pal.edge.gamma_multiply(0.6));
+        let thumb = (grid.visible as f32 / grid.rows as f32 * track.height()).max(12.0);
+        let at = track.top() + (track.height() - thumb) * (first as f32 / overflow as f32);
+        self.painter.rect_filled(Rect::from_min_size(pos2(track.left(), at), vec2(track.width(), thumb)), 2.0, self.pal.weak);
+        first
+    }
+
+    /// The benches folded away (#94): how many, and their names, on one line in `rect`; every
+    /// name in its tooltip.
+    fn folded(&mut self, rect: Rect, folded: &[&Bench]) {
+        let names: Vec<&str> = folded.iter().map(|b| b.actor.name.as_str()).collect();
+        let text = format!("+{} off shift: {}", folded.len(), names.join(", "));
+        let line = fit(&self.painter, rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, &text, (Self::font(11.0), self.pal.weak), rect.width() - 8.0);
+        let mut tooltip = vec![format!("{} off shift, holding nothing", folded.len())];
+        tooltip.extend(names.iter().map(|n| (*n).to_owned()));
+        self.tooltip(line, "benches-folded", &tooltip);
+        self.drawn.benches_folded = folded.iter().map(|b| b.key.clone()).collect();
     }
 
     /// A bench's strip: the worker, its name, model and helper on one line and its status under
@@ -1156,22 +1280,29 @@ mod tests {
 
     #[test]
     fn benches_take_more_columns_only_when_one_would_squash_them() {
+        let shape = |g: BenchGrid| (g.cols, g.height);
         // Three workers in a tall column: one column, each strip at its most.
-        assert_eq!(bench_grid(3, vec2(500.0, 300.0)), (1, BENCH_MOST));
+        assert_eq!(shape(bench_grid(3, vec2(500.0, 300.0))), (1, BENCH_MOST));
+        assert!(bench_grid(3, vec2(500.0, 300.0)).roomy());
         // Twelve on a laptop: two columns of six, every strip with its two lines.
-        let (cols, height) = bench_grid(12, vec2(500.0, 300.0));
+        let (cols, height) = shape(bench_grid(12, vec2(500.0, 300.0)));
         assert_eq!(cols, 2);
         assert!(height >= BENCH_LEAST, "{height}");
         // Twelve on a big screen: one column of short strips.
-        let (cols, height) = bench_grid(12, vec2(900.0, 700.0));
+        let (cols, height) = shape(bench_grid(12, vec2(900.0, 700.0)));
         assert_eq!(cols, 1);
         assert!((BENCH_LEAST..=BENCH_MOST).contains(&height), "{height}");
         // Too narrow for a second column: one column, each on one line.
-        let (cols, height) = bench_grid(12, vec2(300.0, 300.0));
-        assert_eq!(cols, 1);
-        assert!(height < BENCH_TWO_LINES);
-        // None, or a room with no size: never a division by nothing.
-        assert_eq!(bench_grid(0, vec2(0.0, 0.0)).0, 1);
+        let grid = bench_grid(9, vec2(300.0, 300.0));
+        assert_eq!(grid.cols, 1);
+        assert!(grid.height < BENCH_TWO_LINES && grid.height >= BENCH_SHORTEST && grid.rows == grid.visible);
+        assert!(!grid.roomy());
+        // Forty in a short card (#94): never shorter than one line, the rest scroll.
+        let grid = bench_grid(40, vec2(480.0, 250.0));
+        assert_eq!((grid.cols, grid.rows), (2, 20));
+        assert_eq!(grid.visible, 8);
+        assert!(grid.height >= BENCH_SHORTEST, "{grid:?}");
+        assert_eq!(bench_grid(0, vec2(0.0, 0.0)).cols, 1);
     }
 
     fn block(took: Option<i64>) -> Block {
