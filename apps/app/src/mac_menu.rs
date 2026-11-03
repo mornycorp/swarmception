@@ -78,6 +78,7 @@ const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
         | MenuAction::Grouping(_)
         | MenuAction::Collapse(_)
         | MenuAction::FoldQuiet
+        | MenuAction::MergeMarks
         | MenuAction::Fit
         | MenuAction::Recent
         | MenuAction::OpenRecent(_)

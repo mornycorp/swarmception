@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_model::{Issues, MainMerge, Timestamp};
+use swarmception_model::{IssueState, Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
 use crate::colours::{self, Rgb, style_colour};
@@ -108,6 +108,10 @@ pub struct RowsSpec {
     /// Which rows are left out: none, those with no events, or those with nothing in the
     /// visible window (#74). `true` and `false` still read, as `empty` and `off`.
     pub collapse: Collapse,
+    /// A merged ticket's bar ends in a green dot at its merge (#127): off by default, since the
+    /// bar ending there says it already.
+    #[serde(rename = "mergeMarks")]
+    pub merge_marks: bool,
 }
 
 /// What a bar shows; its colour follows from this and its ticket ([`style_colour`]).
@@ -216,10 +220,23 @@ pub struct BarSegment {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum MarkKind {
-    /// A send-back, at its time: red, at the bar's foot over its strip (the brick's red corner).
-    SentBack,
-    /// Its merge, at the bar's end: green.
+    /// Its merge, at the bar's end: green, when the rows ask for it (`mergeMarks`, #127).
     Merged,
+    /// Given up, at the bar's end: red (#127). Its holder's session ended with it held
+    /// (abandoned), or GitHub closed it without a merge. A ticket stopped `done` finished on
+    /// purpose (a review, say) and is not given up.
+    GivenUp,
+}
+
+/// A ticket's bar's corner mark (#127), as the factory's brick has it: a sent-back ticket's red
+/// corner, labelled with how many times when more than once.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct BarCorner {
+    pub colour: Rgb,
+    /// The count, when more than one.
+    pub label: Option<String>,
+    /// `#170 sent back 2 times`.
+    pub name: String,
 }
 
 /// A mark on a ticket's bar (#110): what it is, when, its colour and its name.
@@ -270,9 +287,13 @@ pub struct Bar {
     /// none for any other bar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub segments: Vec<BarSegment>,
-    /// A ticket's bar's marks (#110): its send-backs, then its merge; none for any other bar.
+    /// A ticket's bar's marks (#110): its merge (when the rows ask for it), or where it was
+    /// given up (#127); none for any other bar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub marks: Vec<BarMark>,
+    /// A sent-back ticket's bar's corner (#127): the factory's red corner, with the count.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub corner: Option<BarCorner>,
 }
 
 impl Bar {
@@ -293,6 +314,7 @@ impl Bar {
             tooltip_lines: lines,
             segments: Vec::new(),
             marks: Vec::new(),
+            corner: None,
         }
     }
 }
@@ -407,7 +429,7 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
 pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
     let runs = runs(activity, &tickets, merges);
-    let text = Text { issues, runs: &runs };
+    let text = Text { issues, runs: &runs, merge_marks: spec.merge_marks };
     let mut rows = vec![
         Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
         Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets, issues) },
@@ -523,6 +545,8 @@ fn by_workers(activity: &Activity, tickets: &[Ticket], text: Text<'_>) -> Vec<No
 struct Text<'a> {
     issues: &'a Issues,
     runs: &'a [Run],
+    /// Merged tickets' bars end in a green dot (#127).
+    merge_marks: bool,
 }
 
 /// The lines a ticket's tooltips start with: what GitHub says of it (its title, strong; state and
@@ -721,7 +745,8 @@ fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
         pr,
         importance,
         segments,
-        marks: ticket_marks(ticket),
+        marks: ticket_marks(ticket, text),
+        corner: ticket_corner(ticket),
         ..Bar::new(first.start, last.end, label, Some(ticket.issue), Style::Ticket, tooltip)
     })
 }
@@ -753,20 +778,36 @@ fn stages(ticket: &Ticket, runs: &[Run]) -> Vec<BarSegment> {
     segments
 }
 
-/// A ticket's marks (#110): each send-back at its time in red, then its merge at its time in
-/// green.
-fn ticket_marks(ticket: &Ticket) -> Vec<BarMark> {
-    let mut marks: Vec<BarMark> = ticket
-        .stretches
-        .iter()
-        .filter(|s| s.phase == Phase::SentBack)
-        .map(|s| {
-            let why = s.note.as_deref().map(|note| format!(": {note}")).unwrap_or_default();
-            BarMark { kind: MarkKind::SentBack, t: s.start, colour: FAILED, name: format!("#{} sent back {}{why}", ticket.issue, s.start) }
-        })
-        .collect();
-    marks.extend(ticket.merged.as_ref().map(|m| BarMark { kind: MarkKind::Merged, t: m.t, colour: PASSED, name: format!("#{} merged {}", ticket.issue, m.t) }));
-    marks
+/// A ticket's marks (#110, #127): its merge at its time in green when the rows ask for it, else
+/// where it was given up, at its bar's end in red: abandoned, or closed on GitHub without a merge
+/// (whatever its last stretch says). None otherwise, and for one stopped `done` (finished on
+/// purpose).
+fn ticket_marks(ticket: &Ticket, text: Text<'_>) -> Vec<BarMark> {
+    if let Some(merged) = &ticket.merged {
+        let mark = BarMark { kind: MarkKind::Merged, t: merged.t, colour: PASSED, name: format!("#{} merged {}", ticket.issue, merged.t) };
+        return if text.merge_marks { vec![mark] } else { Vec::new() };
+    }
+    let Some(last) = ticket.stretches.last().filter(|_| ticket.done.is_none()) else { return Vec::new() };
+    let why = if let Some(abandoned) = &ticket.abandoned {
+        abandoned.text()
+    } else if text.issues.get(ticket.issue).is_some_and(|issue| {
+        // Closed by a pull request GitHub merged, though the tracking never logged it: not given up.
+        issue.state == IssueState::Closed && !text.issues.pr_of(ticket.issue, ticket.pr).is_some_and(|pr| pr.state == IssueState::Merged)
+    }) {
+        "closed without a merge".to_owned()
+    } else {
+        return Vec::new();
+    };
+    vec![BarMark { kind: MarkKind::GivenUp, t: last.end, colour: FAILED, name: format!("#{} {why}", ticket.issue) }]
+}
+
+/// A sent-back ticket's corner (#127): the factory's brick's, red, with the count when it was
+/// sent back more than once. None for a ticket never sent back.
+fn ticket_corner(ticket: &Ticket) -> Option<BarCorner> {
+    let times = ticket.stretches.iter().filter(|s| s.phase == Phase::SentBack).count();
+    let label = (times > 1).then(|| times.to_string());
+    let name = if times == 1 { format!("#{} sent back", ticket.issue) } else { format!("#{} sent back {times} times", ticket.issue) };
+    (times > 0).then(|| BarCorner { colour: Stage::SentBack.colour(), label, name })
 }
 
 fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
@@ -883,7 +924,7 @@ mod tests {
     fn a_ticket_is_one_bar_in_its_colour_its_stages_a_strip_and_its_merge_a_mark() {
         use crate::colours::{CLAIMED, GATING, LOW, WAITING, WORKING, ticket_colour};
         let activity = Activity::of(&sample());
-        let rows = rows(&activity, &[], RowsSpec::default());
+        let rows = rows(&activity, &[], RowsSpec { merge_marks: true, ..RowsSpec::default() });
         let Node::Ranges { bars, key, .. } = &rows[3] else { panic!() };
         assert_eq!(key, "tickets/2");
         let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
@@ -907,8 +948,13 @@ mod tests {
         assert_eq!(bar.importance, LOW);
         assert_eq!(
             bar.marks.iter().map(|m| (m.kind, m.t.to_string(), m.colour)).collect::<Vec<_>>(),
-            [(MarkKind::Merged, "2026-10-31T04:28:58Z".to_owned(), PASSED)]
+            [(MarkKind::Merged, "2026-10-31T04:28:58Z".to_owned(), PASSED)],
+            "asked for (#127)"
         );
+        assert!(bar.corner.is_none(), "never sent back");
+        // By default its merge is no mark (#127): the bar ending there says it.
+        let plain = super::rows(&activity, &[], RowsSpec::default());
+        assert!(every_bar(&plain).iter().flat_map(|b| &b.marks).all(|m| m.kind != MarkKind::Merged));
         assert_eq!(bar.tooltip[0], "#170 · PR #173");
         assert_eq!(bar.tooltip[2], "working: 2026-10-31T03:53:25Z → 2026-10-31T04:06:43Z (13 min 18 s) by mini-79ba63");
         assert!(bar.tooltip.iter().any(|l| l.starts_with("merged") && l.ends_with("04:28:58Z")), "{:?}", bar.tooltip);
@@ -961,7 +1007,10 @@ mod tests {
         assert_eq!(merged[0].tooltip[3], "merged");
         assert_eq!(merged[0].label, "#170", "the top rows' spans are too short for titles");
         // Whatever the spec, a ticket's own bars carry its title: there is no option (#34).
-        for spec in [RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Empty }, RowsSpec { grouping: Grouping::Flat, collapse: Collapse::Empty }] {
+        for spec in [
+            RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Empty, ..RowsSpec::default() },
+            RowsSpec { grouping: Grouping::Flat, collapse: Collapse::Empty, ..RowsSpec::default() },
+        ] {
             let rows = rows_with(&activity, &merges(), spec, &issues);
             let labels: Vec<&str> = rows
                 .iter()
@@ -998,10 +1047,12 @@ mod tests {
     #[test]
     fn rows_spec_reads_back_and_has_no_titles_option() {
         let spec: RowsSpec = serde_json::from_str(r#"{"grouping":"workers","collapse":"window"}"#).unwrap();
-        assert_eq!(spec, RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window });
+        assert_eq!(spec, RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window, ..RowsSpec::default() });
         assert_eq!(serde_json::from_str::<RowsSpec>("{}").unwrap(), RowsSpec::default());
-        assert_eq!(serde_json::to_string(&RowsSpec::default()).unwrap(), r#"{"grouping":"flat","collapse":"off"}"#, "no titles field (#34)");
-        assert_eq!(serde_json::to_string(&spec).unwrap(), r#"{"grouping":"workers","collapse":"window"}"#);
+        assert_eq!(serde_json::to_string(&RowsSpec::default()).unwrap(), r#"{"grouping":"flat","collapse":"off","mergeMarks":false}"#, "no titles field (#34)");
+        assert_eq!(serde_json::to_string(&spec).unwrap(), r#"{"grouping":"workers","collapse":"window","mergeMarks":false}"#);
+        let marked: RowsSpec = serde_json::from_str(r#"{"mergeMarks":true}"#).unwrap();
+        assert!(marked.merge_marks, "#127");
     }
 
     #[test]
@@ -1091,7 +1142,7 @@ mod tests {
     #[test]
     fn by_worker_a_group_with_nothing_in_the_window_folds_away_whole() {
         let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20)]), worker("m-2", "mini", "worker-2", &[(3, 30, 40)])];
-        let rows = rows(&Activity::of(&files), &[], RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window });
+        let rows = rows(&Activity::of(&files), &[], RowsSpec { grouping: Grouping::Workers, collapse: Collapse::Window, ..RowsSpec::default() });
         assert_eq!(shape(&rows), ["mini", "  worker-1", "    Tickets 1", "    Tickets 2", "  worker-2", "    Tickets 1"]);
         let out = left_out(&rows, at(12), at(25), &[]);
         assert_eq!(out, ["w/mini/worker-1/1", "w/mini/worker-2"], "worker-2's group goes whole, not row by row");
@@ -1302,14 +1353,59 @@ mod tests {
         let line = |text: &str| sent.tooltip_lines.iter().find(|l| l.text().starts_with(text)).unwrap();
         assert_eq!(line("sent back").colour_of("sent back"), Some(SENT_BACK));
         assert_eq!(line("tests fail").colour_of("tests fail"), Some(FAILED));
-        // A send-back is a red mark at its time, and the most important stage of its strip.
-        assert!(sent.marks.iter().any(|m| m.kind == MarkKind::SentBack && m.colour == FAILED));
+        // A send-back is the factory's red corner (#127), and the most important stage of its strip.
+        let corner = sent.corner.as_ref().expect("its corner");
+        assert_eq!((corner.colour, corner.label.as_deref(), corner.name.as_str()), (SENT_BACK, None, "#44 sent back"), "once: no count");
         assert!(sent.segments.iter().all(|s| s.end > s.start && s.importance == s.stage.importance()), "{:?}", sent.segments);
         assert_eq!(sent.importance, crate::colours::HIGH, "a packed column keeps it");
         let gone = every_bar(&rows).into_iter().find(|b| b.ticket == Some(40) && b.style == Style::Ticket).unwrap();
         let abandoned = gone.tooltip_lines.iter().find(|l| l.text().starts_with("abandoned")).unwrap();
         assert_eq!(abandoned.colour_of("abandoned"), Some(FAILED));
         assert_eq!(abandoned.text(), "abandoned: m-1's session ended 2026-10-31T01:10:00Z");
+        // Abandoned and taken up again: not given up (#127).
+        assert!(gone.marks.is_empty(), "{:?}", gone.marks);
+        // Abandoned for good: a red dot at its bar's end.
+        let left = every_bar(&rows).into_iter().find(|b| b.ticket == Some(45) && b.style == Style::Ticket).unwrap();
+        let given: Vec<(MarkKind, Timestamp, Rgb, &str)> = left.marks.iter().map(|m| (m.kind, m.t, m.colour, m.name.as_str())).collect();
+        assert_eq!(given, [(MarkKind::GivenUp, left.end, FAILED, "#45 abandoned: m-6's session ended 2026-10-31T01:30:00Z")]);
+    }
+
+    /// #127: sent back twice, the corner says 2; stopped `done`, no red dot; closed on GitHub
+    /// without a merge, a red dot; closed by a merged pull request the tracking missed, none.
+    #[test]
+    fn a_corner_counts_send_backs_and_a_red_dot_marks_only_what_was_given_up() {
+        let twice = [
+            r#"{"event":"session.start","machine":"m","name":"w","role":"worker","t":"2026-10-31T01:00:00Z"}"#,
+            r#"{"event":"claim","issue":9,"mr":19,"t":"2026-10-31T01:00:10Z"}"#,
+            r#"{"event":"submit","issue":9,"mr":19,"t":"2026-10-31T01:10:00Z"}"#,
+            r#"{"event":"sendback","issue":9,"mr":19,"note":"cause=test","t":"2026-10-31T01:20:00Z"}"#,
+            r#"{"event":"submit","issue":9,"mr":19,"t":"2026-10-31T01:30:00Z"}"#,
+            r#"{"event":"sendback","issue":9,"mr":19,"note":"cause=clippy","t":"2026-10-31T01:40:00Z"}"#,
+            r#"{"event":"submit","issue":9,"mr":19,"t":"2026-10-31T01:50:00Z"}"#,
+        ]
+        .join("\n");
+        let files = [swarmception_model::parse_file("m-1", &twice), swarmception_model::parse_file("m-2", crate::tickets::tests::DONE)];
+        let activity = Activity::of(&files);
+        let ticket = |rows: &[Node], issue: u64| every_bar(rows).into_iter().find(|b| b.style == Style::Ticket && b.ticket == Some(issue)).cloned().unwrap();
+        let rows = super::rows(&activity, &[], RowsSpec::default());
+        let corner = ticket(&rows, 9).corner.unwrap();
+        assert_eq!((corner.label.as_deref(), corner.name.as_str()), (Some("2"), "#9 sent back 2 times"));
+        assert!(ticket(&rows, 58).marks.is_empty() && ticket(&rows, 59).marks.is_empty(), "done on purpose");
+        // GitHub: #9 closed (by nothing merged) is given up; #58 closed and done stays unmarked.
+        let closed = |number: u64| swarmception_model::Issue { number, state: IssueState::Closed, ..swarmception_model::Issue::default() };
+        let issues = Issues::new(vec![closed(9), closed(58)]);
+        let rows = rows_with(&activity, &[], RowsSpec::default(), &issues);
+        let given: Vec<(MarkKind, String)> = ticket(&rows, 9).marks.iter().map(|m| (m.kind, m.name.clone())).collect();
+        assert_eq!(given, [(MarkKind::GivenUp, "#9 closed without a merge".to_owned())]);
+        assert!(ticket(&rows, 58).marks.is_empty());
+        let merged = swarmception_model::Issue {
+            number: 19,
+            kind: swarmception_model::IssueKind::PullRequest,
+            state: IssueState::Merged,
+            ..swarmception_model::Issue::default()
+        };
+        let issues = Issues::new(vec![closed(9), merged]);
+        assert!(ticket(&rows_with(&activity, &[], RowsSpec::default(), &issues), 9).marks.is_empty(), "its pull request merged");
     }
 
     #[test]

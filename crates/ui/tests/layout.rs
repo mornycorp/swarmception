@@ -217,7 +217,7 @@ fn a_details_subject_in_a_collapsed_group_opens_it_and_its_rows_come_into_view()
     let dir = repo();
     let size = (1440.0, 900.0);
     let (ctx, mut shell) = loaded(&dir, size);
-    shell.engine().call::<SetRows>(SetRowsParams { grouping: Some(Grouping::Workers), collapse: None }).unwrap();
+    shell.engine().call::<SetRows>(SetRowsParams { grouping: Some(Grouping::Workers), ..SetRowsParams::default() }).unwrap();
     for _ in 0..3 {
         frame(&mut shell, &ctx, size);
     }
