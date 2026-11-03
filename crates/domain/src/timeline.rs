@@ -5,7 +5,8 @@
 //! and the Unit scale (every item the same width) reads as event order with idle time cut out.
 //! Positions are nanoseconds from [`Built::origin`], the first time floored to the hour, so the
 //! ruler's hour ticks fall on the hours of the clock; the data's clock epoch is that origin, so a
-//! Clock ruler reads the `Time` scale as the time of day (UTC).
+//! Clock ruler reads the `Time` scale as the time of day (UTC). Each range carries its bar's
+//! importance (#108), so a packed column of narrow bars shows its failure, not its first pass.
 
 use std::collections::BTreeMap;
 
@@ -200,7 +201,7 @@ impl Adder<'_> {
             extent: RangeExtent::Items { first, last },
             colour: Some(colour(bar.colour)),
             lane: None,
-            importance: timeline_core::data::Importance::default(),
+            importance: Importance::new(bar.importance).unwrap_or(Importance::MAXIMUM),
         };
         self.built.data.add_range(track, range)?;
         if bar.open {
@@ -367,6 +368,90 @@ mod tests {
         assert_eq!(Link::parse("github.issue:0"), None);
         assert_eq!(Link::parse("github.pull:x"), None);
         assert_eq!(Link::parse("other:1"), None);
+    }
+
+    /// Sixty tickets, one after another, each claimed, worked on, `ready`-checked, submitted and
+    /// gated, a ticket every ten minutes; #17's ready check fails and is rerun, and its gate
+    /// fails and sends it back, before it is worked on again and a rerun merges it.
+    fn sixty_tickets() -> Vec<swarmception_model::AgentFile> {
+        let base = 1_793_404_800; // 2026-10-31T00:00:00Z
+        let line = |at: i64, body: &str| format!("{{\"t\":\"{}\",{body}}}", Timestamp(base + at));
+        let mut worker = vec![line(0, r#""event":"session.start","machine":"m","name":"worker-1","role":"worker""#)];
+        let mut coordinator = vec![line(0, r#""event":"session.start","machine":"m","name":"coordinator","role":"coordinator""#)];
+        for i in 1..=60 {
+            let (o, pr, bad) = (i * 600, 100 + i, i == 17);
+            worker.push(line(o, &format!(r#""event":"claim","issue":{i},"mr":{pr}"#)));
+            worker.push(line(o + 10, &format!(r#""event":"work","issue":{i}"#)));
+            worker.push(line(o + 100, &format!(r#""event":"sub.start","name":"ready","sub":"ready-{i}""#)));
+            worker.push(line(o + 160, &format!(r#""event":"sub.stop","note":"rc={}","sub":"ready-{i}""#, u8::from(bad))));
+            if bad {
+                worker.push(line(o + 170, &format!(r#""event":"sub.start","name":"ready","sub":"ready-{i}b""#)));
+                worker.push(line(o + 200, &format!(r#""event":"sub.stop","note":"rc=0","sub":"ready-{i}b""#)));
+            }
+            worker.push(line(o + 220, &format!(r#""event":"submit","issue":{i},"mr":{pr}"#)));
+            coordinator.push(line(o + 300, &format!(r#""event":"sub.start","name":"gate","note":"local gate: #{pr} (#{i})","sub":"gate-{i}""#)));
+            if bad {
+                coordinator.push(line(o + 355, &format!(r#""event":"sendback","issue":{i},"mr":{pr},"note":"cause=test","sub":"gate-{i}""#)));
+                coordinator.push(line(o + 360, &format!(r#""event":"sub.stop","note":"rc=1; cause=test","sub":"gate-{i}""#)));
+                worker.push(line(o + 400, &format!(r#""event":"work","issue":{i}"#)));
+                worker.push(line(o + 450, &format!(r#""event":"submit","issue":{i},"mr":{pr}"#)));
+                coordinator.push(line(o + 500, &format!(r#""event":"sub.start","name":"gate","note":"local gate: #{pr} (#{i})","sub":"gate-{i}b""#)));
+                coordinator.push(line(o + 550, &format!(r#""event":"merge","issue":{i},"mr":{pr},"sub":"gate-{i}b""#)));
+                coordinator.push(line(o + 560, &format!(r#""event":"sub.stop","note":"rc=0","sub":"gate-{i}b""#)));
+            } else {
+                coordinator.push(line(o + 350, &format!(r#""event":"merge","issue":{i},"mr":{pr},"sub":"gate-{i}""#)));
+                coordinator.push(line(o + 360, &format!(r#""event":"sub.stop","note":"rc=0","sub":"gate-{i}""#)));
+            }
+        }
+        [("m-w", worker), ("m-c", coordinator)].iter().map(|(id, lines)| swarmception_model::parse_file(id, &lines.join("\n"))).collect()
+    }
+
+    /// #108: every range carries its bar's importance.
+    #[test]
+    fn each_range_carries_its_bars_importance() {
+        use crate::colours::{HIGH, LOW, MERGE};
+        let activity = Activity::of(&sixty_tickets());
+        let rows = rows(&activity, &[], RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        let tree = built.data.tracks();
+        let mut levels = std::collections::BTreeSet::new();
+        for leaf in rows.iter().flat_map(Node::leaves) {
+            let Node::Ranges { key, bars, .. } = leaf else { continue };
+            let Some(track) = tree.ids().find(|&id| tree.get(id).unwrap().key() == key) else { continue };
+            let ranges = built.data.ranges(track).unwrap();
+            let importances: Vec<u8> = ranges.iter().map(|r| r.importance.value()).collect();
+            assert_eq!(importances, bars.iter().map(|b| b.importance).collect::<Vec<_>>(), "{key}");
+            levels.extend(importances);
+        }
+        assert_eq!(levels.into_iter().collect::<Vec<_>>(), [MERGE, LOW, HIGH], "the merges, the passes and the work, the failures and the send back");
+    }
+
+    /// #108, the issue's own case: zoomed out to the whole run, forty items a pixel column, the
+    /// failed gate run, the failed ready check and the send back each show red in a packed
+    /// column, though none is its column's first range (which, before #108, gave it its colour).
+    #[test]
+    fn a_failure_survives_packing() {
+        use crate::colours::SENT_BACK;
+        use crate::tooltip::FAILED;
+        use timeline_core::axis::{Axis, Domain, PixelMap, Span};
+        use timeline_core::range_lod::{RangeIndex, range_bars};
+
+        let activity = Activity::of(&sixty_tickets());
+        let rows = rows(&activity, &[], RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        let count = built.data.item_count();
+        let scale = Scale::unit(count).unwrap();
+        let end = i64::try_from(count).unwrap();
+        let map = PixelMap::new(Axis::new(Domain::Index, Span::new(0, end).unwrap()).window(0, end).unwrap(), count as f32 / 40.0).unwrap();
+        let tree = built.data.tracks();
+        for (key, red) in [("gates", FAILED), ("ready", FAILED), ("tickets/1", SENT_BACK)] {
+            let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
+            let bars = range_bars(&built.data, track, &scale, &RangeIndex::new(&built.data, track).unwrap(), &map).unwrap();
+            assert!(bars.iter().all(|b| b.packed), "{key}: zoomed out, every column packs: {bars:?}");
+            let shown: Vec<_> = bars.iter().filter(|b| b.colour == Some(colour(red))).collect();
+            assert_eq!(shown.len(), 1, "{key}: one red column, the failure's: {bars:?}");
+            assert_ne!(shown[0].range, shown[0].shown, "{key}: not its column's first range, so only its importance shows it");
+        }
     }
 
     #[test]

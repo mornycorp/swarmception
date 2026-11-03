@@ -13,7 +13,15 @@
 //! red, and every entry keeps at least [`CLEARANCE`] of hue and [`DISTANCE`] of colour (OKLab)
 //! from each fixed colour, so a ticket never reads as a phase. Every colour takes a dark label at
 //! a contrast of 4.5 or more, and reads on the dark background.
+//!
+//! - **Each bar's importance** ([`importance`], #108): zoomed out, the timeline packs a column of
+//!   narrow bars into one in the colour of its most important (swarm-timeline's spec §6.1), so
+//!   what needs attention survives packing: failed gate runs and ready checks, and a ticket's
+//!   *sent back* stretch, [`HIGH`]; a run with no result (`?`) and a *stopped* stretch, work that
+//!   ended unfinished, [`MIDDLE`]; passes, running runs, claimed, working and waiting [`LOW`]; the
+//!   merges the widget's default, 0, as before.
 
+use crate::gates::GateResult;
 use crate::rows::Style;
 use crate::tickets::Phase;
 
@@ -95,6 +103,33 @@ pub fn style_colour(style: Style, ticket: Option<u64>) -> Rgb {
         // A run's bar is drawn in its result's colour (#84: `GateResult::colour`, which the bar
         // sets); this is a running one's, waiting's blue.
         Style::GateRun | Style::ReadyCheck => WAITING,
+    }
+}
+
+/// What needs attention (#108): a failed run, a ticket sent back.
+pub const HIGH: u8 = 12;
+/// What ended unfinished (#108): a run with no result, a ticket stopped.
+pub const MIDDLE: u8 = 8;
+/// What went as it should (#108): passes, running runs, claimed, working and waiting.
+pub const LOW: u8 = 4;
+/// A merge's: the widget's default, as before #108.
+pub const MERGE: u8 = 0;
+
+/// How important a bar of `style` is, 0 to 15, `result` its run's on the Gate runs and Ready
+/// checks rows (none for any other bar): what colour a packed column of the timeline takes, its
+/// most important bar's (swarm-timeline's spec §6.1; [`HIGH`], [`MIDDLE`], [`LOW`], [`MERGE`]).
+#[must_use]
+pub const fn importance(style: Style, result: Option<GateResult>) -> u8 {
+    match style {
+        Style::GateRun | Style::ReadyCheck => match result {
+            Some(GateResult::Failed) => HIGH,
+            Some(GateResult::NoResult) => MIDDLE,
+            Some(GateResult::Passed | GateResult::Running) | None => LOW,
+        },
+        Style::SentBack => HIGH,
+        Style::Stopped => MIDDLE,
+        Style::Claimed | Style::Working | Style::Waiting => LOW,
+        Style::MainMerge | Style::Merged => MERGE,
     }
 }
 
@@ -312,6 +347,31 @@ mod tests {
             let told = details(&activity, &[], &Issues::default(), &Subject::Ticket { issue });
             let told = told.as_ref().map(|d| (d.colour, d.entries.iter().filter(|e| e.what == "working").map(|e| e.colour).collect::<Vec<_>>()));
             assert_eq!(told, Some((own, vec![own, own])), "#{issue}'s details: its chip and both runs");
+        }
+    }
+
+    /// #108: every kind of bar's importance, as the table says, each one the widget takes.
+    #[test]
+    fn every_kind_of_bar_has_its_importance() {
+        use timeline_core::data::Importance;
+        let run = |style, result| importance(style, Some(result));
+        for lane in [Style::GateRun, Style::ReadyCheck] {
+            assert_eq!(run(lane, GateResult::Failed), HIGH, "{lane:?} failed");
+            assert_eq!(run(lane, GateResult::NoResult), MIDDLE, "{lane:?} with no result");
+            assert_eq!(run(lane, GateResult::Passed), LOW, "{lane:?} passed");
+            assert_eq!(run(lane, GateResult::Running), LOW, "{lane:?} running");
+            assert_eq!(importance(lane, None), LOW, "{lane:?} without a run");
+        }
+        let phases = [(Phase::SentBack, HIGH), (Phase::Stopped, MIDDLE), (Phase::Claimed, LOW), (Phase::Working, LOW), (Phase::Waiting, LOW)];
+        for (phase, expected) in phases {
+            assert_eq!(importance(phase.into(), None), expected, "{phase:?}");
+        }
+        assert_eq!(importance(Style::MainMerge, None), MERGE);
+        assert_eq!(importance(Style::Merged, None), MERGE);
+        assert_eq!(MERGE, Importance::default().value(), "merges as before");
+        const { assert!(HIGH > MIDDLE && MIDDLE > LOW && LOW > MERGE, "a failure outranks a `?`, a `?` a pass") };
+        for level in [HIGH, MIDDLE, LOW, MERGE] {
+            assert_eq!(Importance::new(level).map(Importance::value), Ok(level), "{level} is the widget's");
         }
     }
 
