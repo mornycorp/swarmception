@@ -3,6 +3,9 @@
 //! scale. The axis's items are the distinct times the bars name, in order; item `i` spans
 //! from its time to the next one's, so a bar is the run of items from its start up to its end,
 //! and the Unit scale (every item the same width) reads as event order with idle time cut out.
+//! A bar of no length (a merge, #115) is an item of its own at its time, before the one that
+//! spans on from it: on the `Time` scale it has no width (the widget packs it to 3 px, §6.1),
+//! and on Unit it is one item wide, an event in the order.
 //! Positions are nanoseconds from [`Built::origin`], the first time floored to the hour, so the
 //! ruler's hour ticks fall on the hours of the clock; the data's clock epoch is that origin, so a
 //! Clock ruler reads the `Time` scale as the time of day (UTC). Each range carries its bar's
@@ -109,7 +112,8 @@ pub struct Built {
     pub scales: Vec<NamedScale>,
     /// Position 0: the first time, floored to the hour.
     pub origin: Timestamp,
-    /// Each item's time, in order.
+    /// Each item's time, in order: a time with a bar of no length at it twice, its item of no
+    /// width then the one spanning on.
     pub times: Vec<Timestamp>,
 }
 
@@ -128,9 +132,11 @@ impl Built {
 /// Core's refusal of the data, which these rows never cause.
 pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     let mut times: Vec<Timestamp> = Vec::new();
+    let mut points: Vec<Timestamp> = Vec::new();
     for leaf in rows.iter().flat_map(Node::leaves) {
         if let Node::Ranges { bars, .. } = leaf {
             times.extend(bars.iter().flat_map(|b| [b.start, b.end]));
+            points.extend(bars.iter().filter(|b| is_point(b)).map(|b| b.start));
             // A ticket's strip's stages and its marks (#110) fall between its ends.
             times.extend(bars.iter().flat_map(|b| b.segments.iter().flat_map(|s| [s.start, s.end])));
             times.extend(bars.iter().flat_map(|b| b.marks.iter().map(|m| m.t)));
@@ -138,13 +144,22 @@ pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     }
     times.sort_unstable();
     times.dedup();
+    points.sort_unstable();
+    points.dedup();
+    // Each point's time twice: its item of no width (it ends where the next, at the same time,
+    // starts), then the one spanning on to the next time.
+    let times: Vec<Timestamp> = times.into_iter().flat_map(|t| std::iter::repeat_n(t, if points.binary_search(&t).is_ok() { 2 } else { 1 })).collect();
     let origin = Timestamp(times.first().map_or(0, |t| t.0.div_euclid(3_600) * 3_600));
     let mut built = SwarmData { clock_epoch: Some(origin.0.saturating_mul(NANOS)), ..SwarmData::default() };
     let category = built.data.add_category(Colour::rgb(0x80, 0x80, 0x80))?;
     for _ in &times {
         built.data.push_item(Item { category, importance: Importance::default(), selectable: true })?;
     }
-    let index: BTreeMap<Timestamp, ItemIndex> = times.iter().copied().zip(0..).collect();
+    // Each time's first item (a point's, when it has one) and the one spanning on from it.
+    let mut index: BTreeMap<Timestamp, (ItemIndex, ItemIndex)> = BTreeMap::new();
+    for (t, i) in times.iter().copied().zip(0..) {
+        index.entry(t).and_modify(|(_, on)| *on = i).or_insert((i, i));
+    }
     let mut adder = Adder { built: &mut built, index: &index, show_empty };
     for node in rows {
         adder.add(None, node)?;
@@ -161,9 +176,14 @@ pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     Ok(Built { data: built, scales, origin, times })
 }
 
+/// A bar of no length (#115): a merge, at its time. An open one runs on to the last event.
+fn is_point(bar: &Bar) -> bool {
+    bar.start == bar.end && !bar.open
+}
+
 struct Adder<'a> {
     built: &'a mut SwarmData,
-    index: &'a BTreeMap<Timestamp, ItemIndex>,
+    index: &'a BTreeMap<Timestamp, (ItemIndex, ItemIndex)>,
     show_empty: bool,
 }
 
@@ -193,15 +213,27 @@ impl Adder<'_> {
         Ok(())
     }
 
+    /// The item spanning on from `t`: where what starts at `t` starts.
     fn item(&self, t: Timestamp) -> ItemIndex {
-        self.index.get(&t).copied().unwrap_or_default()
+        self.index.get(&t).map(|&(_, on)| on).unwrap_or_default()
+    }
+
+    /// The first item at `t`, a point's when it has one: what ends at `t` ends where it starts,
+    /// and what is at `t` (a mark) is there.
+    fn first_at(&self, t: Timestamp) -> ItemIndex {
+        self.index.get(&t).map(|&(first, _)| first).unwrap_or_default()
     }
 
     /// A bar is the run of items from its start's up to the one before its end's (which ends at
-    /// its end), and at least its start's.
+    /// its end), and at least its start's; a bar of no length is its time's item of no width.
     fn bar(&mut self, track: TrackId, place: usize, bar: &Bar) -> Result<(), DataError> {
-        let first = self.item(bar.start);
-        let last = self.item(bar.end).saturating_sub(1).max(first);
+        let (first, last) = if is_point(bar) {
+            let at = self.first_at(bar.start);
+            (at, at)
+        } else {
+            let first = self.item(bar.start);
+            (first, self.first_at(bar.end).saturating_sub(1).max(first))
+        };
         let range = Range {
             name: bar.label.clone(),
             extent: RangeExtent::Items { first, last },
@@ -215,7 +247,7 @@ impl Adder<'_> {
         }
         self.strip(track, place, bar, (first, last))?;
         for mark in &bar.marks {
-            let at = InstantAt::Item(self.item(mark.t));
+            let at = InstantAt::Item(self.first_at(mark.t));
             let (glyph, edge, importance) = match mark.kind {
                 MarkKind::SentBack => (Glyph::Diamond, MarkEdge::Bottom, crate::colours::HIGH),
                 MarkKind::Merged => (Glyph::Dot, MarkEdge::Middle, crate::colours::LOW),
@@ -243,7 +275,7 @@ impl Adder<'_> {
         let mut next = first;
         for stage in &bar.segments {
             let start = self.item(stage.start).max(next);
-            let end = self.item(stage.end).saturating_sub(1).min(last);
+            let end = self.first_at(stage.end).saturating_sub(1).min(last);
             if end < start {
                 continue;
             }
@@ -395,7 +427,7 @@ mod tests {
     }
 
     #[test]
-    fn each_range_is_drawn_in_its_bars_colour_and_a_merge_spans_ten_seconds() {
+    fn each_range_is_drawn_in_its_bars_colour_and_a_merge_is_a_marker_of_no_length() {
         use swarmception_model::{MainMerge, parse_merge};
         let activity = Activity::of(&sample());
         let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
@@ -409,10 +441,98 @@ mod tests {
             let ranges = built.data.ranges(track).unwrap();
             assert_eq!(ranges.iter().map(|r| r.colour).collect::<Vec<_>>(), bars.iter().map(|b| Some(colour(b.colour))).collect::<Vec<_>>(), "{key}");
             if key == "main" || key == "merged" {
+                // #115: one item, of no width on the `Time` scale, at the merge's time.
                 let RangeExtent::Items { first, last } = ranges[0].extent else { panic!() };
+                assert_eq!(first, last, "{key}");
                 let span = scale.range_span(first, last).unwrap();
-                assert_eq!(built.time_at(span.end()).0 - built.time_at(span.start()).0, 10, "{key}: a 10 s span");
+                assert_eq!(span.width(), 0, "{key}: no length");
+                assert_eq!(built.time_at(span.start()), bars[0].start, "{key}: at its time");
+                assert_eq!(built.times[usize::try_from(first).unwrap()], bars[0].start);
             }
+        }
+    }
+
+    /// The sample with #173's merge onto main, built: its rows and the widget's data.
+    fn merged_sample() -> (Vec<Node>, Built) {
+        use swarmception_model::{MainMerge, parse_merge};
+        let activity = Activity::of(&sample());
+        let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
+        let rows = rows(&activity, &merges, RowsSpec::default());
+        let built = build(&rows, false).unwrap();
+        (rows, built)
+    }
+
+    fn track_of(built: &Built, key: &str) -> TrackId {
+        let tree = built.data.tracks();
+        tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap()
+    }
+
+    /// #115: a merge's time is two items, its own of no width then the one spanning on; a bar
+    /// ending there ends where the merge's starts, and a mark there is at it.
+    #[test]
+    fn a_merges_time_is_an_item_of_no_width_then_the_one_spanning_on() {
+        let (rows, built) = merged_sample();
+        let distinct: std::collections::BTreeSet<Timestamp> = built.times.iter().copied().collect();
+        let points: std::collections::BTreeSet<Timestamp> = rows
+            .iter()
+            .flat_map(Node::leaves)
+            .flat_map(|n| if let Node::Ranges { bars, .. } = n { bars.clone() } else { Vec::new() })
+            .filter(is_point)
+            .map(|b| b.start)
+            .collect();
+        assert_eq!(points.len(), 2, "#173's merge onto main and #170's merge, apart: {points:?}");
+        assert_eq!(built.times.len(), distinct.len() + points.len(), "one more item a merge's time");
+        assert!(built.times.windows(2).all(|w| w[0] <= w[1]), "in order");
+        let scale = built.scales[0].scale().unwrap();
+        let unit = Scale::unit(built.data.item_count()).unwrap();
+        for t in &points {
+            let at = built.times.iter().position(|x| x == t).unwrap() as u64;
+            assert_eq!(scale.span(at).unwrap().width(), 0, "{t}: the merge's own item has no width");
+            assert_eq!(unit.span(at).unwrap().width(), 1, "{t}: on Unit, an event in the order");
+            assert!(scale.span(at + 1).unwrap().width() > 0, "{t}: the next spans on");
+        }
+        // #170's ticket bar ends at its merge, where the merge's item starts, and its mark is there.
+        let ticket = track_of(&built, "tickets/2");
+        let RangeExtent::Items { last, .. } = built.data.ranges(ticket).unwrap()[0].extent else { panic!() };
+        let RangeExtent::Items { first: merge, .. } = built.data.ranges(track_of(&built, "merged")).unwrap()[0].extent else { panic!() };
+        assert_eq!(last + 1, merge, "the ticket's bar stops at its merge's item, on Unit too");
+        let mark = built.data.marks().iter().find(|m| m.track == ticket).unwrap();
+        assert_eq!(mark.shape, timeline_core::marks::MarkShape::Dot(InstantAt::Item(merge)));
+    }
+
+    /// #115: zoomed in to five minutes on the `Time` scale, a merge of no length still draws, a
+    /// packed bar 3 px wide at its time (the widget's §6.1), and a hover on it or a click near
+    /// it picks it; fitted to the whole run, it is there too.
+    #[test]
+    fn a_merge_of_no_length_is_drawn_and_picked() {
+        use timeline_core::axis::{Axis, Domain, PixelMap, Span};
+        use timeline_core::range_lod::{LanePoint, RangeIndex, RangePick, nearest_range, pick_range, range_bars};
+
+        let (rows, built) = merged_sample();
+        let scale = built.scales[0].scale().unwrap();
+        let end = scale.range_span(0, built.data.item_count() - 1).unwrap().end();
+        let axis = Axis::new(Domain::Time, Span::new(0, end).unwrap());
+        for key in ["main", "merged"] {
+            let Some(Node::Ranges { bars, .. }) = rows.iter().find(|n| matches!(n, Node::Ranges { key: k, .. } if k == key)) else { panic!() };
+            let at = (bars[0].start.0 - built.origin.0) * NANOS;
+            let track = track_of(&built, key);
+            let index = RangeIndex::new(&built.data, track).unwrap();
+            // Five minutes over 1,000 px, the merge in the middle.
+            let map = PixelMap::new(axis.window(at - 150 * NANOS, at + 150 * NANOS).unwrap(), 1_000.0).unwrap();
+            let drawn = range_bars(&built.data, track, scale, &index, &map).unwrap();
+            assert_eq!(drawn.len(), 1, "{key}: {drawn:?}");
+            let bar = drawn[0];
+            assert!(bar.packed && bar.width >= 3.0, "{key}: packed, at least 3 px: {bar:?}");
+            assert!((bar.x + bar.width / 2.0 - 500.0).abs() <= 1.5, "{key}: centred on its time: {bar:?}");
+            assert_eq!(bar.colour, Some(colour(bars[0].colour)), "{key}: in its colour");
+            for x in [499.0, 500.0, 501.0] {
+                let picked = pick_range(&built.data, track, scale, &index, &map, LanePoint { lane: 0, x }).unwrap();
+                assert_eq!(picked, Some(RangePick::Run { first: 0, count: 1 }), "{key}: hovered at {x}");
+            }
+            let near = nearest_range(&built.data, track, scale, &index, &map, LanePoint { lane: 0, x: 520.0 }).unwrap();
+            assert_eq!(near, Some(0), "{key}: a click near it selects it");
+            let fitted = PixelMap::new(axis.window(0, end).unwrap(), 1_000.0).unwrap();
+            assert_eq!(range_bars(&built.data, track, scale, &index, &fitted).unwrap().len(), 1, "{key}: fitted");
         }
     }
 
