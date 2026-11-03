@@ -165,17 +165,10 @@ fn pr_by(events: &[IssueEvent], issue: u64, t: Timestamp) -> Option<u64> {
     events.iter().rev().filter(|e| e.issue == issue && e.t <= t).find_map(|e| e.kind.mr())
 }
 
-/// The issue events (`events`, oldest first) with each send-back a gate's failure makes added as
-/// a `sendback` at its stop, and the `sendback` events those answer dropped: the module's rule.
-#[must_use]
-pub fn told(agents: &[Agent], events: Vec<IssueEvent>) -> Vec<IssueEvent> {
-    let gates = gates(agents);
-    if gates.iter().all(|g| g.failed.is_none()) {
-        return events;
-    }
+/// Each ticket's steps, in time order: at a tie a gate's start before a failure before an event.
+fn steps(gates: &[Gate<'_>], events: &[IssueEvent]) -> BTreeMap<u64, Vec<(Timestamp, Step)>> {
     let prs: BTreeMap<u64, u64> = events.iter().filter_map(|e| Some((e.kind.mr()?, e.issue))).collect();
     let issues: BTreeSet<u64> = events.iter().map(|e| e.issue).collect();
-    // Each ticket's steps, by time: at a tie a gate's start before a failure before an event.
     let mut steps: BTreeMap<u64, Vec<(Timestamp, Step)>> = BTreeMap::new();
     for (i, gate) in gates.iter().enumerate() {
         let named: BTreeSet<u64> = gate.refs.iter().filter_map(|&n| issue_of(n, &prs, &issues)).collect();
@@ -188,40 +181,53 @@ pub fn told(agents: &[Agent], events: Vec<IssueEvent>) -> Vec<IssueEvent> {
     for (i, event) in events.iter().enumerate().filter(|(_, e)| matches!(e.kind, Kind::Sendback { .. })) {
         steps.entry(event.issue).or_default().push((event.t, Step::SentBack(i)));
     }
+    for list in steps.values_mut() {
+        list.sort();
+    }
+    steps
+}
+
+/// The send-back gate `g`'s failure makes of `issue` at `t`: none when the ticket merged since
+/// it was last handed in.
+fn sent_back(gates: &[Gate<'_>], g: usize, events: &[IssueEvent], issue: u64, t: Timestamp) -> Option<IssueEvent> {
+    let gate = gates.get(g)?;
+    let why = gate.failed.as_ref()?.1.clone();
+    if merged_by(events, issue, t) {
+        return None;
+    }
+    let mr = pr_by(events, issue, t);
+    Some(IssueEvent { t, instance: gate.instance.to_owned(), issue, kind: Kind::Sendback { issue, mr }, sub: Some(gate.sub.to_owned()), note: Some(why) })
+}
+
+/// The issue events (`events`, oldest first) with each send-back a gate's failure makes added as
+/// a `sendback` at its stop, and the `sendback` events those answer dropped: the module's rule.
+#[must_use]
+pub fn told(agents: &[Agent], events: Vec<IssueEvent>) -> Vec<IssueEvent> {
+    let gates = gates(agents);
+    if gates.iter().all(|g| g.failed.is_none()) {
+        return events;
+    }
     let mut added: Vec<IssueEvent> = Vec::new();
     let mut answered: BTreeSet<usize> = BTreeSet::new();
-    for (issue, mut list) in steps {
-        list.sort();
+    for (issue, list) in steps(&gates, &events) {
         // The send-back a gate's failure made, not yet followed by the ticket's next gate.
         let mut open: Option<usize> = None;
         for (t, step) in list {
             match step {
                 Step::Gated => open = None,
                 Step::Failed(g) => {
-                    open = None;
-                    let Some((gate, why)) = gates.get(g).and_then(|gate| Some((gate, gate.failed.as_ref()?.1.clone()))) else { continue };
-                    if merged_by(&events, issue, t) {
-                        continue;
-                    }
-                    let mr = pr_by(&events, issue, t);
-                    open = Some(added.len());
-                    added.push(IssueEvent {
-                        t,
-                        instance: gate.instance.to_owned(),
-                        issue,
-                        kind: Kind::Sendback { issue, mr },
-                        sub: Some(gate.sub.to_owned()),
-                        note: Some(why),
+                    open = sent_back(&gates, g, &events, issue, t).map(|back| {
+                        added.push(back);
+                        added.len() - 1
                     });
                 }
                 Step::SentBack(e) => {
-                    if let Some(same) = open.take().and_then(|a| added.get_mut(a)) {
-                        // The same send-back as the gate's failure: the coordinator's words say why.
-                        if let Some(note) = events.get(e).and_then(|e| e.note.clone()).filter(|n| !n.is_empty()) {
-                            same.note = Some(note);
-                        }
-                        answered.insert(e);
+                    let Some(same) = open.take().and_then(|a| added.get_mut(a)) else { continue };
+                    // The same send-back as the gate's failure: the coordinator's words say why.
+                    if let Some(note) = events.get(e).and_then(|e| e.note.clone()).filter(|n| !n.is_empty()) {
+                        same.note = Some(note);
                     }
+                    answered.insert(e);
                 }
             }
         }
@@ -256,7 +262,10 @@ mod tests {
         )
     }
 
-    fn sendbacks(coordinator: &str) -> Vec<(String, u64, Option<u64>, Option<String>, Option<String>)> {
+    /// A send-back as the tests read it: its time, issue, PR, gate and note.
+    type Told = (String, u64, Option<u64>, Option<String>, Option<String>);
+
+    fn sendbacks(coordinator: &str) -> Vec<Told> {
         let activity = Activity::of(&files(&[("pc-c", coordinator), ("pc-w", WORKER)]));
         activity
             .issue_events
