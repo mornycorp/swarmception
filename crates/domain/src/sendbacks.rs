@@ -16,7 +16,9 @@
 //!   last claimed or submitted (a PR a note names in passing, or one the gate merged before it
 //!   failed). A `sendback` event for the ticket after that failure and before its next gate is
 //!   the same send-back: its note (the coordinator's words) replaces the gate's result, and it
-//!   counts once.
+//!   counts once. So is one the failing gate logged itself (its `sub`) before its stop: it stands
+//!   alone, at its own time (swarm-core's `prwatch` reads the stop's time then, a minute or so
+//!   later; it only ever keeps the latest).
 //!
 //! [`told`] adds each such send-back to the activity's issue events as a `sendback` at the gate's
 //! stop, logged by the gate's coordinator with the gate's `sub`, and drops the `sendback` events
@@ -210,11 +212,15 @@ pub fn told(agents: &[Agent], events: Vec<IssueEvent>) -> Vec<IssueEvent> {
     let mut added: Vec<IssueEvent> = Vec::new();
     let mut answered: BTreeSet<usize> = BTreeSet::new();
     for (issue, list) in steps(&gates, &events) {
-        // The send-back a gate's failure made, not yet followed by the ticket's next gate.
+        // The send-back a gate's failure made, not yet followed by the ticket's next gate; and the
+        // gates whose own `sendback`s came since the ticket's last gate began.
         let mut open: Option<usize> = None;
+        let mut logged: Vec<&str> = Vec::new();
         for (t, step) in list {
             match step {
-                Step::Gated => open = None,
+                Step::Gated => (open, logged) = (None, Vec::new()),
+                // A gate that sent the ticket back itself before its stop: that `sendback` is it.
+                Step::Failed(g) if gates.get(g).is_some_and(|gate| logged.contains(&gate.sub)) => open = None,
                 Step::Failed(g) => {
                     open = sent_back(&gates, g, &events, issue, t).map(|back| {
                         added.push(back);
@@ -222,7 +228,10 @@ pub fn told(agents: &[Agent], events: Vec<IssueEvent>) -> Vec<IssueEvent> {
                     });
                 }
                 Step::SentBack(e) => {
-                    let Some(same) = open.take().and_then(|a| added.get_mut(a)) else { continue };
+                    let Some(same) = open.take().and_then(|a| added.get_mut(a)) else {
+                        logged.extend(events.get(e).and_then(|e| e.sub.as_deref()));
+                        continue;
+                    };
                     // The same send-back as the gate's failure: the coordinator's words say why.
                     if let Some(note) = events.get(e).and_then(|e| e.note.clone()).filter(|n| !n.is_empty()) {
                         same.note = Some(note);
@@ -294,6 +303,17 @@ mod tests {
         assert_eq!(
             sendbacks(&with_event),
             [("2026-10-17T12:10:00Z".to_owned(), 7, Some(9), Some("gate-mr9".to_owned()), Some("cause=test: the tests fail".to_owned()))]
+        );
+        // One the gate logged itself before its stop is the send-back, at its own time.
+        let logged_first = format!(
+            "{START}\n{}\n{}\n{}",
+            r#"{"event":"sub.start","name":"gate","note":"local gate: #9 (#7)","sub":"gate-mr9","t":"2026-10-17T12:00:00Z"}"#,
+            r#"{"event":"sendback","issue":7,"mr":9,"note":"cause=test: a test failed","sub":"gate-mr9","t":"2026-10-17T12:09:00Z"}"#,
+            r#"{"event":"sub.stop","note":"rc=1; cause=test","sub":"gate-mr9","t":"2026-10-17T12:10:00Z"}"#
+        );
+        assert_eq!(
+            sendbacks(&logged_first),
+            [("2026-10-17T12:09:00Z".to_owned(), 7, Some(9), Some("gate-mr9".to_owned()), Some("cause=test: a test failed".to_owned()))]
         );
         // One after the ticket's next gate is a send-back of its own.
         let regated = format!(

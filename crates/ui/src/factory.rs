@@ -779,7 +779,7 @@ mod tests {
     fn the_view_reads_back_and_defaults() {
         let view = FactoryView { follow: false, playing: true, speed: Speed::Hour, ticket: Some(7), steps: Steps::SendBacks, off_shift: true };
         let text = serde_json::to_string(&view).unwrap();
-        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","ticket":7,"steps":"sendBacks"}"#);
+        assert_eq!(text, r#"{"follow":false,"playing":true,"speed":"hour","ticket":7,"steps":"sendBacks","off_shift":true}"#);
         assert_eq!(serde_json::from_str::<FactoryView>(&text).unwrap(), view);
         assert_eq!(serde_json::from_str::<FactoryView>("{}").unwrap(), FactoryView::default());
         assert!(serde_json::from_str::<FactoryView>(r#"{"speed":"warp"}"#).is_err());
