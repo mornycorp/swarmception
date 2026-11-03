@@ -6,3 +6,4 @@
 {"event":"submit","issue":94,"mr":99,"t":"2026-11-03T09:57:19Z"}
 {"event":"claim","issue":95,"mr":102,"t":"2026-11-03T09:57:41Z"}
 {"event":"work","issue":95,"t":"2026-11-03T09:57:43Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-bc2a444","t":"2026-11-03T10:15:05Z"}
