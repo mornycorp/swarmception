@@ -42,8 +42,9 @@ use crate::{Panes, Shell, UiState};
 /// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip; 12:
 /// the timeline's folds (#86, `timeline.folds`; the state's `fold`); 13: the benches folded away
 /// and scrolled out of view (#94, `factory.drawn.benchesFolded`, `benchesHidden`); 14: the window
-/// the rows' lanes are sized over (#97, `timeline.lanesWindow`).
-pub const INSPECT_VERSION: u32 = 14;
+/// the rows' lanes are sized over (#97, `timeline.lanesWindow`); 15: the benches off shift opened
+/// out of their fold (#106, `factory.drawn.benchesUnfolded`; the state's `factory.off_shift`).
+pub const INSPECT_VERSION: u32 = 15;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -78,6 +79,10 @@ pub struct FactoryDrawn {
     /// The benches scrolled out of view (#94).
     #[serde(default)]
     pub benches_hidden: usize,
+    /// The benches off shift with their fold opened (#106): after the rest, in view or scrolled
+    /// away (counted in `benchesHidden`).
+    #[serde(default)]
+    pub benches_unfolded: Vec<String>,
     pub dock: Vec<u64>,
     pub gate: Vec<u64>,
     /// The gate's runs going on, then those before *t*, as their lines read.
@@ -330,8 +335,8 @@ pub enum StepTo {
 }
 
 /// `ui.set`'s params: each part left out stays as it is. They apply in this order: the rows'
-/// collapse and the timeline's folding; the panes, their folds, the workers pane, speed and
-/// steps; `at`; follow and play; the ticket; the step; the details; the window; the strip's hour.
+/// collapse and the timeline's folding; the panes, their folds, the workers pane, speed,
+/// steps and the benches off shift; `at`; follow and play; the ticket; the step; the details; the window; the strip's hour.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
@@ -345,6 +350,9 @@ pub struct UiSet {
     pub speed: Option<Speed>,
     /// The key moments a step goes through.
     pub steps: Option<Steps>,
+    /// The factory's benches off shift opened out of their fold (#106), as a click on its line
+    /// does; false folds them again.
+    pub off_shift: Option<bool>,
     /// The timeline's playhead put at this time (seconds since the epoch or
     /// `YYYY-MM-DDTHH:MM:SSZ`), and the factory, following it, at it (#85); play off.
     pub at: Option<At>,
@@ -611,6 +619,7 @@ impl Shell {
                 benches: drawn.benches.iter().map(|(key, tickets)| BenchDrawn { key: key.clone(), tickets: tickets.clone() }).collect(),
                 benches_folded: drawn.benches_folded.clone(),
                 benches_hidden: drawn.benches_hidden,
+                benches_unfolded: drawn.benches_unfolded.clone(),
                 dock: drawn.dock.clone(),
                 gate: drawn.gate.clone(),
                 runs: drawn.runs.clone(),
@@ -750,6 +759,9 @@ impl Shell {
         }
         if let Some(steps) = set.steps {
             self.ui.factory.steps = steps;
+        }
+        if let Some(off_shift) = set.off_shift {
+            self.ui.factory.off_shift = off_shift;
         }
         if let Some(t) = at {
             self.set_factory_at(t);

@@ -23,8 +23,10 @@ fn temp(what: &str) -> PathBuf {
     std::env::temp_dir().join(format!("swarmception-live-{what}-{}-{nanos}-{n}", std::process::id()))
 }
 
+/// Git in `dir`, with no maintenance run after a commit, a merge or a push: a process each the
+/// tests don't need (#106).
 fn git(dir: &Path, args: &[&str]) {
-    let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
+    let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false"];
     all.extend_from_slice(args);
     let out = std::process::Command::new("git").current_dir(dir).args(&all).output().unwrap();
     assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
@@ -63,7 +65,9 @@ impl Swarm {
         git(&swarm.work, &["add", "."]);
         git(&swarm.work, &["commit", "-q", "-m", "events"]);
         git(&swarm.work, &["clone", "-q", "--bare", swarm.work.to_str().unwrap(), swarm.remote.to_str().unwrap()]);
-        git(&swarm.work, &["clone", "-q", "--no-checkout", swarm.remote.to_str().unwrap(), swarm.clone.to_str().unwrap()]);
+        // The session's fetches into it run no maintenance either.
+        let clone = [swarm.remote.to_str().unwrap(), swarm.clone.to_str().unwrap()];
+        git(&swarm.work, &["clone", "-q", "--no-checkout", "-c", "maintenance.auto=false", clone[0], clone[1]]);
         swarm
     }
 
@@ -198,19 +202,20 @@ fn live_is_on_by_default_only_for_a_swarm_at_work() {
 }
 
 /// A `gh` that answers the issues' requests with an empty page (and an ETag), counting each call
-/// in `<dir>/calls`.
-fn fake_gh(dir: &Path) -> PathBuf {
-    let gh = dir.join("fake-gh");
+/// in `<dir>/calls`, for a session reading the issues of `repo`.
+///
+/// It is the system's `sh`, which runs `<repo>/api`, this script, for `gh api …` (`gh` runs in the
+/// repository, `api` its first argument), so no file the test writes is ever exec'd itself
+/// (#106): macOS checks a new executable on its first exec, which took 0.3 s idle and 10–30 s
+/// under load, past a live check's 30 s fetch deadline once.
+fn fake_gh(dir: &Path, repo: &Path) -> PathBuf {
     let calls = dir.join("calls");
     let script = format!(
-        "#!/bin/sh\necho x >> '{}'\ncase \"$*\" in\n  *--include*) printf 'HTTP/2.0 200 OK\\r\\nEtag: \"e1\"\\r\\n\\r\\n[]' ;;\n  *) printf '[]' ;;\nesac\n",
+        "echo x >> '{}'\ncase \"$*\" in\n  *--include*) printf 'HTTP/2.0 200 OK\\r\\nEtag: \"e1\"\\r\\n\\r\\n[]' ;;\n  *) printf '[]' ;;\nesac\n",
         calls.display()
     );
-    std::fs::write(&gh, script).unwrap();
-    let mut perms = std::fs::metadata(&gh).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-    std::fs::set_permissions(&gh, perms).unwrap();
-    gh
+    std::fs::write(repo.join("api"), script).unwrap();
+    PathBuf::from("/bin/sh")
 }
 
 fn gh_calls(dir: &Path) -> usize {
@@ -224,16 +229,16 @@ fn gh_calls(dir: &Path) -> usize {
 fn every_check_that_brings_events_refreshes_the_issues() {
     let swarm = Swarm::new(old());
     // The clone's origin as GitHub's, so the issues are read through the fake `gh`; its fetches
-    // reach the local remote all the same, through an `ssh` that serves it.
+    // reach the local remote all the same, through an `ssh` that serves it: a script `sh` runs,
+    // never exec'd itself (as the fake `gh`), and a simple ssh, so git doesn't first run it with
+    // `-G` to ask what it is.
     let ssh = swarm.work.join("fake-ssh");
-    std::fs::write(&ssh, format!("#!/bin/sh\nexec git-upload-pack '{}'\n", swarm.remote.display())).unwrap();
-    let mut perms = std::fs::metadata(&ssh).unwrap().permissions();
-    std::os::unix::fs::PermissionsExt::set_mode(&mut perms, 0o755);
-    std::fs::set_permissions(&ssh, perms).unwrap();
+    std::fs::write(&ssh, format!("exec git-upload-pack '{}'\n", swarm.remote.display())).unwrap();
     git(&swarm.clone, &["remote", "set-url", "origin", "git@github.com:them/swarm.git"]);
-    git(&swarm.clone, &["config", "core.sshCommand", ssh.to_str().unwrap()]);
+    git(&swarm.clone, &["config", "core.sshCommand", &format!("sh '{}'", ssh.display())]);
+    git(&swarm.clone, &["config", "ssh.variant", "simple"]);
     let mut session = Session::new();
-    let gh = fake_gh(&swarm.work);
+    let gh = fake_gh(&swarm.work, &swarm.clone);
     let cache = swarm.work.join("cache");
     session.set_github(Github { gh, cache_dir: Some(cache) });
     let path = serde_json::to_string(&swarm.clone.display().to_string()).unwrap();

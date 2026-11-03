@@ -4,7 +4,9 @@
 //!
 //! - `claim` starts a *claimed* stretch, unless the ticket is already claimed, worked on or waiting;
 //! - `work` starts *working*; `submit` starts *waiting* for the merge;
-//! - `sendback` starts *sent back*, until work begins again. Since swarm-core#14 the worker's
+//! - `sendback` starts *sent back*, until work begins again: a logged one, or one a gate's failure
+//!   for the change's cause makes at its stop (#106: [`crate::sendbacks`], the tracking format's
+//!   rule, so the ticket isn't read as waiting until its worker's `work` arrives). Since swarm-core#14 the worker's
 //!   `prwatch` logs `work --issue <n> --mr <m>` when it picks the PR up (#98): that `work` starts
 //!   the rework, *working* again, and the time before it reads as *sent back*, the PR waiting for
 //!   its worker. Older runs logged no `work` before the fix (Swarm Core's `ready` logs the

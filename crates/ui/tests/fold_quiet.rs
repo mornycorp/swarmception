@@ -222,10 +222,10 @@ fn the_gates_hours_line_up_under_the_timeline_through_the_fold() {
     std::fs::remove_dir_all(dir).ok();
 }
 
-/// The fold is the shell's state: kept as UiState version 10, an older state reading as off.
+/// The fold is the shell's state: kept since UiState version 10, an older state reading as off.
 #[test]
 fn folding_is_kept_in_the_shells_state() {
-    assert_eq!(swarmception_ui::UI_STATE_VERSION, 10);
+    assert!(swarmception_ui::UI_STATE_VERSION >= 10);
     let older: UiState = serde_json::from_str(r#"{"version": 9}"#).unwrap();
     assert!(!older.fold.on && older.fold.after_seconds.is_none());
     let on = UiState { fold: swarmception_ui::FoldView { on: true, after_seconds: Some(1_200) }, ..UiState::default() };

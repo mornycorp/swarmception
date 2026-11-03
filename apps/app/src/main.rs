@@ -20,6 +20,7 @@
 //! ([`picker`], #76);
 //! `--step next|previous|first|last` steps the factory to a key moment from there (#33), of the
 //! kinds `--steps all|claims|work|submits|gates|sendBacks|merges` names; bars always carry their tickets' titles (#34);
+//! `--off-shift` opens the factory's fold of the benches off shift (#106), as a click on its line does;
 //! `--zoom <scale>` scales the UI (0.25 to 4: at 0.5 a 1280 × 720 window lays out as 2560 × 1440,
 //! for a screenshot of a larger window than the screen holds); `--screenshot`
 //! saves the window once the timeline has drawn (and the GitHub issues have come), then quits, so
@@ -138,7 +139,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--off-shift] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -169,6 +170,8 @@ struct Options {
     menu: Option<MenuOpen>,
     step: Option<Direction>,
     steps: Option<swarmception_ui::Steps>,
+    /// `--off-shift`: the factory's benches off shift opened out of their fold (#106).
+    off_shift: bool,
     theme: Option<egui::Theme>,
     size: Option<(f32, f32)>,
     /// `--zoom`: the UI's scale (egui's zoom factor), 0.25 to 4.
@@ -231,6 +234,7 @@ impl Options {
                 "--menu" => options.menu = Some(MenuOpen::parse(&value()?)?),
                 "--step" => options.step = Some(direction(&value()?)?),
                 "--steps" => options.steps = Some(steps(&value()?)?),
+                "--off-shift" => options.off_shift = true,
                 "--dark" => options.theme = Some(egui::Theme::Dark),
                 "--light" => options.theme = Some(egui::Theme::Light),
                 "--size" => {
@@ -455,6 +459,10 @@ fn set_up(shell: &mut swarmception_ui::Shell, options: &Options) -> Result<(), S
     if let Some(steps) = options.steps {
         let state = shell.ui_state();
         shell.set_ui_state(swarmception_ui::UiState { factory: swarmception_ui::FactoryView { steps, ..state.factory }, ..state });
+    }
+    if options.off_shift {
+        let state = shell.ui_state();
+        shell.set_ui_state(swarmception_ui::UiState { factory: swarmception_ui::FactoryView { off_shift: true, ..state.factory }, ..state });
     }
     if let Some(direction) = options.step {
         shell.jump_factory(swarmception_ui::Jump::Step(direction));
@@ -702,6 +710,7 @@ mod tests {
         assert_eq!((options.step, options.steps), (Some(Direction::Previous), Some(swarmception_ui::Steps::SendBacks)));
         assert!(parse(&["--step", "sideways"]).is_err());
         assert!(parse(&["--steps", "lunches"]).is_err());
+        assert!(parse(&["--off-shift"]).unwrap().off_shift && !parse(&[]).unwrap().off_shift);
         assert_eq!(parse(&["--control"]).unwrap().control, Some(0));
         let options = parse(&["--control", "7070", "--control-file", "c.json", "--dark"]).unwrap();
         assert_eq!((options.control, options.control_file, options.theme), (Some(7070), Some(PathBuf::from("c.json")), Some(egui::Theme::Dark)));

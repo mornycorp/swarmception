@@ -825,8 +825,39 @@ fn is_coordinator(instances: &[&Agent]) -> bool {
     instances.iter().all(|a| a.role == Role::Coordinator)
 }
 
-/// A bench per worker (every actor not only a coordinator), and one for any other holding a
-/// crate at `t`.
+/// `a` before `b` in natural order (#106): runs of digits compared as numbers, so `worker-2`
+/// comes before `worker-10`, the rest as text; equal numbers with more leading zeros after, and
+/// the whole text at a tie, so it is a total order.
+#[must_use]
+pub fn natural(a: &str, b: &str) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let (mut x, mut y) = (a, b);
+    loop {
+        let (Some(cx), Some(cy)) = (x.chars().next(), y.chars().next()) else { return x.len().cmp(&y.len()).then_with(|| a.cmp(b)) };
+        if cx.is_ascii_digit() && cy.is_ascii_digit() {
+            let run = |s: &str| s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
+            let (nx, ny) = (run(x), run(y));
+            let (dx, dy) = (x.get(..nx).unwrap_or_default(), y.get(..ny).unwrap_or_default());
+            let (tx, ty) = (dx.trim_start_matches('0'), dy.trim_start_matches('0'));
+            let order = tx.len().cmp(&ty.len()).then_with(|| tx.cmp(ty));
+            if order != Ordering::Equal {
+                return order;
+            }
+            if dx.len() != dy.len() {
+                return dx.len().cmp(&dy.len()).then_with(|| a.cmp(b));
+            }
+            (x, y) = (x.get(nx..).unwrap_or_default(), y.get(ny..).unwrap_or_default());
+        } else {
+            if cx != cy {
+                return cx.cmp(&cy);
+            }
+            (x, y) = (x.get(cx.len_utf8()..).unwrap_or_default(), y.get(cy.len_utf8()..).unwrap_or_default());
+        }
+    }
+}
+
+/// A bench per worker (every actor not only a coordinator), in natural order of their keys
+/// (#106: `mini/worker-2` before `mini/worker-10`), then one for any other holding a crate at `t`.
 fn benches(activity: &Activity, t: Timestamp, recent: i64, mut held: BTreeMap<String, Vec<Crate>>) -> Vec<Bench> {
     let mut benches: Vec<Bench> = Vec::new();
     for (key, instances) in actors(activity) {
@@ -836,6 +867,7 @@ fn benches(activity: &Activity, t: Timestamp, recent: i64, mut held: BTreeMap<St
         }
         benches.push(bench(key, actor(&instances, t), crates, helper(&instances, t, recent)));
     }
+    benches.sort_by(|a, b| natural(&a.key, &b.key));
     for (key, crates) in held {
         let actor = Actor { machine: String::new(), name: key.clone(), model: None, effort: None, shift: Shift::Off };
         benches.push(bench(key, actor, crates, None));
@@ -1303,6 +1335,27 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_benches_come_in_natural_order() {
+        use std::cmp::Ordering;
+        let mut names = ["worker-10", "worker-2", "worker-1", "alder", "worker-02", "worker-100", "mini2/w", "mini10/w", "w-9b", "w-9a", ""];
+        names.sort_by(|a, b| natural(a, b));
+        assert_eq!(names, ["", "alder", "mini2/w", "mini10/w", "w-9a", "w-9b", "worker-1", "worker-2", "worker-02", "worker-10", "worker-100"]);
+        assert_eq!(natural("worker-2", "worker-2"), Ordering::Equal);
+        assert_eq!(natural("99999999999999999999999", "100000000000000000000000"), Ordering::Less, "numbers past u64, by their digits");
+
+        let files: Vec<swarmception_model::AgentFile> = [12, 2, 1, 10, 3]
+            .iter()
+            .map(|n| {
+                let start = format!(r#"{{"event":"session.start","machine":"mini","name":"worker-{n}","role":"worker","t":"2026-10-31T01:00:00Z"}}"#);
+                parse_file(&format!("mini-{n:06x}"), &start)
+            })
+            .collect();
+        let scene = scene(&Activity::of(&files), &[], at("2026-10-31T01:05:00Z"), DEFAULT_RECENT);
+        let keys: Vec<&str> = scene.benches.iter().map(|b| b.key.as_str()).collect();
+        assert_eq!(keys, ["mini/worker-1", "mini/worker-2", "mini/worker-3", "mini/worker-10", "mini/worker-12"]);
+    }
+
+    #[test]
     fn before_anything_every_ticket_is_up_next() {
         let scene = sample_scene("2026-10-31T02:00:00Z");
         assert_eq!(scene.upcoming.iter().map(|c| c.issue).collect::<Vec<_>>(), [168, 170], "soonest first");
@@ -1592,10 +1645,10 @@ pub(crate) mod tests {
     fn a_journey_through_the_stations_with_the_time_at_each() {
         let files = [parse_file("mini-w1", FAILING), parse_file("mini-c1", GATES)];
         let activity = Activity::of(&files);
-        // Bench 01:00-01:10, dock 01:10-01:15, gate 01:15-01:19, dock 01:19-01:20 (sent back),
-        // bench 01:20-01:40, dock 01:40-02:00, merged at 02:00 by a gate that logged no start.
+        // Bench 01:00-01:10, dock 01:10-01:15, gate 01:15-01:19, sent back by its failure (#106)
+        // to the bench 01:19-01:40, dock 01:40-02:00, merged at 02:00 by a gate that logged no start.
         let done = journey(&activity, at("2026-10-31T02:05:00Z"), 5).unwrap();
-        assert_eq!(done.text, "bench 10m → dock 5m → gate 4m → dock 1m → bench 20m → dock 20m → main");
+        assert_eq!(done.text, "bench 10m → dock 5m → gate 4m → bench 21m → dock 20m → main");
         assert_eq!(done.legs[2].start, at("2026-10-31T01:15:00Z"));
         let midway = journey(&activity, at("2026-10-31T01:17:00Z"), 5).unwrap();
         assert_eq!(midway.text, "bench 10m → dock 5m → gate 2m", "nothing after t");
@@ -1615,8 +1668,7 @@ pub(crate) mod tests {
                 (CrateState::Working, 595),
                 (CrateState::Waiting, 300),
                 (CrateState::Gating, 240),
-                (CrateState::Waiting, 60),
-                (CrateState::SentBack, 600),
+                (CrateState::SentBack, 660),
                 (CrateState::Working, 600),
                 (CrateState::Waiting, 1_200),
             ]
@@ -1629,9 +1681,9 @@ pub(crate) mod tests {
                 "claim → merge 1 h 00 min",
                 "  claimed: 5 s",
                 "  working: 19 min 55 s",
-                "  waiting for merge: 26 min 00 s",
+                "  waiting for merge: 25 min 00 s",
                 "  in the gate: 4 min 00 s",
-                "  sent back: 10 min 00 s",
+                "  sent back: 11 min 00 s",
                 "sent back once",
             ]
         );

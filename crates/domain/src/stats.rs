@@ -22,7 +22,8 @@
 //!   saying, or never finished, #42) or is still running. A gate read from its merges and send
 //!   backs, with no `sub.start` logged, counts, and `inferred` says how many were. The pass rate
 //!   is passed ÷ (passed + failed).
-//! - **Sendbacks**: the `sendback` events in the window, and their count ÷ the tickets landed.
+//! - **Sendbacks**: the send-backs in the window (a `sendback`, or a gate's failure for the change's
+//!   cause: [`crate::sendbacks`], #106, each once), and their count ÷ the tickets landed.
 //! - **Work in progress**: the mean number of tickets *working* (from `work` to its submit,
 //!   send-back, stop, release or merge) over the active time, and of tickets *in flight*
 //!   (claimed, working, waiting for merge or sent back): each ticket's time in the phase within
