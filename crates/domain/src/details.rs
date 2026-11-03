@@ -1205,13 +1205,14 @@ mod tests {
             let main = BarRef { track: MAIN_KEY.into(), range: 0 };
             let merged = BarRef { track: crate::rows::MERGED_KEY.into(), range: 0 };
 
-            // A ticket: its bar (#110: one a row) and its merge, from its claim to its merge's end.
+            // A ticket: its bar (#110: one a row) and its merge, from its claim to its merge (#115:
+            // a marker of no length).
             let ticket = on(Subject::Ticket { issue: 170 });
             let tickets = of(&|_, bar| bar.ticket == Some(170));
             assert_eq!(ticket.bars, tickets, "{grouping:?}");
             assert_eq!(ticket.bars.len(), 2, "its bar and its merge");
             assert_eq!(ticket.start, Timestamp::parse("2026-10-31T03:53:22Z"));
-            assert_eq!(ticket.end, Timestamp::parse("2026-10-31T04:29:08Z"), "its merge's 10 s");
+            assert_eq!(ticket.end, Timestamp::parse("2026-10-31T04:28:58Z"), "its merge");
             // The groups its rows are in (#68): by worker, its machine's and its worker's.
             let keys: Vec<&str> = tickets.iter().map(|bar| bar.track.as_str()).collect();
             assert_eq!(ticket.groups, crate::rows::groups_holding(&rows, &keys));

@@ -1,6 +1,6 @@
 //! The rows the timeline shows (the owner's directions): what happened to tickets. At the top,
-//! every merge onto `main` (its merge commits), then every ticket's merge, each a span of
-//! [`MERGE_SECONDS`] from its time (#15), all on one row (the widget stacks the rare two that
+//! every merge onto `main` (its merge commits), then every ticket's merge, each a marker of no
+//! length at its time (#115: its start its end), all on one row (the widget stacks the rare two that
 //! overlap); under them the gate's runs (#84): a row of the coordinator's gate runs and one of
 //! the workers' `ready` checks, a bar a run ([`crate::gates`]' one definition, `gates.list`'s
 //! runs) from its start to its end (a running one's to the last event, open), in its result's
@@ -419,9 +419,6 @@ pub const READY_KEY: &str = "ready";
 pub const TOP_KEYS: [&str; 4] = [MAIN_KEY, MERGED_KEY, GATES_KEY, READY_KEY];
 /// The flat view's packed rows are keyed `tickets/1`, `tickets/2`, …
 pub const TICKETS_KEY: &str = "tickets";
-/// How long a merge's span on the top rows lasts, from its time.
-pub const MERGE_SECONDS: i64 = 10;
-
 /// The rows of `activity` and the merges onto main, as `spec` asks, with no issues from GitHub.
 #[must_use]
 pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<Node> {
@@ -772,11 +769,6 @@ fn ticket_marks(ticket: &Ticket) -> Vec<BarMark> {
     marks
 }
 
-/// A merge's span on the top rows: [`MERGE_SECONDS`] from `at`.
-fn merge_end(at: Timestamp) -> Timestamp {
-    Timestamp(at.0.saturating_add(MERGE_SECONDS))
-}
-
 fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     let mut bars: Vec<Bar> = tickets
         .iter()
@@ -793,7 +785,7 @@ fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
             tooltip.push(TipLine::default());
             tooltip.extend(milestones(ticket));
             let pr = merged.pr.or_else(|| ticket_pr(ticket, issues));
-            Some(Bar { pr, ..Bar::new(merged.t, merge_end(merged.t), format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip) })
+            Some(Bar { pr, ..Bar::new(merged.t, merged.t, format!("#{}", ticket.issue), Some(ticket.issue), Style::Merged, tooltip) })
         })
         .collect();
     bars.sort_by_key(|b| (b.start, b.ticket));
@@ -865,7 +857,7 @@ fn main_bar(merge: &MainMerge, tickets: &[Ticket], issues: &Issues) -> Bar {
             TipLine::coloured("merged", PASSED).then(format!(" {}", closed.join(", ")))
         });
     }
-    Bar { pr: merge.pr, ..Bar::new(merge.t, merge_end(merge.t), label, None, Style::MainMerge, tooltip) }
+    Bar { pr: merge.pr, ..Bar::new(merge.t, merge.t, label, None, Style::MainMerge, tooltip) }
 }
 
 #[cfg(test)]
@@ -917,16 +909,17 @@ mod tests {
     }
 
     #[test]
-    fn the_top_rows_are_ten_second_spans_main_green_a_tickets_merge_its_own_colour() {
+    fn the_top_rows_are_markers_of_no_length_main_green_a_tickets_merge_its_own_colour() {
         use crate::colours::{MAIN_MERGE, ticket_colour};
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
         let (Node::Ranges { bars: main, .. }, Node::Ranges { bars: merged, .. }) = (&rows[0], &rows[1]) else { panic!() };
-        assert_eq!(MERGE_SECONDS, 10);
+        // #115: a merge has no duration, so its bar starts and ends at its time.
         for bar in main.iter().chain(merged) {
-            assert_eq!(bar.end.0 - bar.start.0, MERGE_SECONDS, "{}", bar.label);
+            assert_eq!(bar.start, bar.end, "{}", bar.label);
             assert!(!bar.open);
         }
+        assert_eq!(merged[0].start.to_string(), "2026-10-31T04:28:58Z", "#170's merge, at its time");
         assert_eq!(
             main.iter().map(|b| (b.start.0, b.ticket, b.style, b.colour)).collect::<Vec<_>>(),
             [(1_793_420_113, None, Style::MainMerge, MAIN_MERGE), (1_793_420_255, None, Style::MainMerge, MAIN_MERGE)]
