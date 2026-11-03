@@ -368,7 +368,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
         let built = build(&rows, true).unwrap();
-        assert_eq!(built.data.tracks().len(), 4 + 2, "the four top rows (#84: the gate's two), and the tickets' two");
+        assert_eq!(built.data.tracks().len(), 2 + 2, "the two merges rows (#117: no gate rows), and the tickets' two");
         assert_eq!(built.times.len() as u64, built.data.item_count());
         assert_eq!(built.origin.to_string(), "2026-10-31T03:00:00Z");
         assert_eq!(built.data.clock_epoch(), Some(built.origin.0 * 1_000_000_000), "position 0 is the origin, as a Clock ruler reads it");
@@ -420,8 +420,15 @@ mod tests {
         let plain = built.data.range_tooltip(ticket, 0);
         assert_eq!(lines.iter().map(TooltipLine::text).collect::<Vec<_>>(), plain, "the same words");
         assert!(lines[0].spans[0].strong, "the title strong");
+        // #117: each stage in its strip's colour, as the strip's segment for it.
         let working = &lines[2].spans[0];
-        assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::ticket_colour(170)))));
+        assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::WORKING))));
+        let strip = built.data.range_segments(ticket, 0);
+        for segment in strip {
+            let label = segment.label.as_deref().unwrap_or_default();
+            let named: Vec<_> = lines.iter().flat_map(|l| &l.spans).filter(|s| s.text == label).map(|s| s.colour).collect();
+            assert!(!named.is_empty() && named.iter().all(|c| *c == Some(segment.colour)), "{label}: {named:?} and its segment's {:?}", segment.colour);
+        }
         assert!(lines[2].spans.iter().any(|s| s.strong && s.text == "13 min 18 s"));
         assert!(lines.iter().any(|l| l.spans.first().is_some_and(|s| s.text == "merged" && s.colour == Some(colour(crate::tooltip::PASSED)))));
     }
@@ -614,15 +621,14 @@ mod tests {
         assert_eq!(levels.into_iter().collect::<Vec<_>>(), [MERGE, LOW, HIGH], "the merges, the passes and the work, the failures and the send back");
     }
 
-    /// #108, the issue's own case: zoomed out to the whole run, forty items a pixel column, the
-    /// failed gate run and the failed ready check each show red in a packed column, though
-    /// neither is its column's first range (which, before #108, gave it its colour). The send
-    /// back (#110: a ticket's bar in its own colour, its stages a strip) takes its packed column
-    /// for its ticket, and its red mark survives the marks' packing.
+    /// #108: zoomed out to the whole run, forty items a pixel column, the send back (#110: a
+    /// ticket's bar in its own colour, its stages a strip) takes its packed column for its
+    /// ticket, though it is not its column's first range, and its red mark survives the marks'
+    /// packing. (#108's own case, the failed gate run and ready check on their rows, went with
+    /// the rows, #117.)
     #[test]
     fn a_failure_survives_packing() {
         use crate::colours::SENT_BACK;
-        use crate::tooltip::FAILED;
         use timeline_core::axis::{Axis, Domain, PixelMap, Span};
         use timeline_core::range_lod::{RangeIndex, range_bars};
 
@@ -634,14 +640,7 @@ mod tests {
         let end = i64::try_from(count).unwrap();
         let map = PixelMap::new(Axis::new(Domain::Index, Span::new(0, end).unwrap()).window(0, end).unwrap(), count as f32 / 40.0).unwrap();
         let tree = built.data.tracks();
-        for (key, red) in [("gates", FAILED), ("ready", FAILED)] {
-            let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
-            let bars = range_bars(&built.data, track, &scale, &RangeIndex::new(&built.data, track).unwrap(), &map).unwrap();
-            assert!(bars.iter().all(|b| b.packed), "{key}: zoomed out, every column packs: {bars:?}");
-            let shown: Vec<_> = bars.iter().filter(|b| b.colour == Some(colour(red))).collect();
-            assert_eq!(shown.len(), 1, "{key}: one red column, the failure's: {bars:?}");
-            assert_ne!(shown[0].range, shown[0].shown, "{key}: not its column's first range, so only its importance shows it");
-        }
+        assert!(!tree.ids().any(|id| matches!(tree.get(id).unwrap().key(), "gates" | "ready")), "no gate rows (#117)");
         let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/1").unwrap();
         let bars = range_bars(&built.data, track, &scale, &RangeIndex::new(&built.data, track).unwrap(), &map).unwrap();
         let ranges = built.data.ranges(track).unwrap();

@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # Owner directions
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-02 · **Change:** minor (the Collapse decision notes G6's `window` choice) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (no Gate runs or Ready checks rows, #117, reversing #84) · **Target:** M1
 
 The owner's standing directions and decisions for Swarmception, dated, newest first in each
 section. Every agent reads this with `AGENTS.md`. The owner writes it, or an agent records a
@@ -46,6 +46,8 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 | Date | Decision | Why | Where |
 |---|---|---|---|
+| 2026-11-03 | No Gate runs or Ready checks rows on the timeline (reverses #84's): a gate run that merges sits at the end of its tickets and is already their *in the gate* stretch; a failure is already a send-back on its tickets. Kept: the Gates band's figures, the Factory's Gate list (a click tells a run's story), `gates.list`, the details' gate subjects | the owner's | #117 |
+| 2026-11-03 | A stage is drawn and named in one colour everywhere: its strip's (`Stage::colour`), in the tooltip, the widget's segment line and the details' story | the owner's | #117 |
 | 2026-10-31 | The swarm runs on swarm-core's protocol and commands | one process shared with the other swarms | the first commit |
 | 2026-10-31 | The timeline is swarm-timeline's widget, pinned by revision as a git dependency | one timeline for every swarm tool | the first commit |
 | 2026-10-31 | Collapse leaves out rows with no events at all, not rows empty in the window | the rows stay put while panning; a window-relative collapse is G6, built as a third choice, `window` (#74), the default unchanged | the first commit |
@@ -58,6 +60,7 @@ None yet.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | No Gate runs or Ready checks rows (#117, reversing #84); a stage in one colour everywhere (#117) |
 | 2026-11-02 | minor | The Collapse decision notes that a window-relative choice now exists (#74); the default stays |
 | 2026-10-31 | minor | CI once a day on `main` (owner) |
 | 2026-10-31 | major | First version, from swarm-core's template |

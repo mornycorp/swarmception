@@ -112,16 +112,6 @@ fn loaded(dir: &std::path::Path, details: bool) -> (egui::Context, Shell) {
     (ctx, shell)
 }
 
-/// The Ready checks row's bar `range` chosen on the timeline, then frames.
-fn choose_ready_bar(shell: &mut Shell, ctx: &egui::Context, range: usize) {
-    use timeline_engine::engine_cmds::NoParams;
-    use timeline_engine::ranges_cmds::{Clear, RangeParams, Toggle};
-    let session = shell.timeline().widget().session();
-    session.call::<Clear>(NoParams {}).unwrap();
-    session.call::<Toggle>(RangeParams { track: swarmception_domain::rows::READY_KEY.to_owned(), range }).unwrap();
-    frames(shell, ctx);
-}
-
 #[test]
 fn the_gate_list_holds_the_ready_checks_in_time_order_with_its_runs() {
     let dir = repo();
@@ -162,23 +152,25 @@ fn the_gate_list_holds_the_ready_checks_in_time_order_with_its_runs() {
 }
 
 #[test]
-fn a_ready_checks_bar_selects_its_line_and_a_click_on_one_tells_its_story() {
+fn a_click_on_a_ready_checks_line_selects_it_and_tells_its_story() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir, true);
     shell.set_factory_at(at("2026-10-31T03:50:00Z"));
     frames(&mut shell, &ctx);
 
-    // The timeline → the list: ready-a's bar (the row's first) selects its line.
-    choose_ready_bar(&mut shell, &ctx, 0);
+    // #117: no ready check has a bar on the timeline to select its line (#95's, gone); a check
+    // chosen in the details still selects its line.
     let ready_a = Subject::Gate { sub: "ready-a".into(), at: Some(at("2026-10-31T03:20:00Z")) };
-    assert_eq!(shell.ui_state().details.subject, Some(ready_a.clone()));
+    shell.select(ready_a.clone());
+    frames(&mut shell, &ctx);
+    assert_eq!(shell.ui_state().details.subject, Some(ready_a));
     assert_eq!(shell.factory().selected(), Some(&FactorySelected::Run { sub: "ready-a".into(), at: Some(at("2026-10-31T03:20:00Z")) }));
     assert_eq!(shell.factory().drawn().selected, ["run ready-a"]);
     assert_eq!(shell.ui_state().factory.ticket, None, "a check traces no ticket");
     let inspect = shell.inspect().factory;
     assert_eq!(inspect.drawn.selected, ["run ready-a"]);
 
-    // The list → the timeline and the details: a click on ready-b's line.
+    // The list → the details: a click on ready-b's line.
     let drawn = shell.factory().drawn().clone();
     let line = drawn.runs.iter().position(|sub| sub == "ready-b").map(|n| drawn.run_lines[n]).unwrap();
     let on = line.center();
@@ -192,9 +184,9 @@ fn a_ready_checks_bar_selects_its_line_and_a_click_on_one_tells_its_story() {
     assert_eq!(shell.factory().drawn().selected, ["run ready-b"]);
     let details = shell.details().details().cloned().unwrap();
     assert_eq!((details.mark.as_str(), details.title.as_str()), ("ready", "ready check ready-b"));
-    // Its bar, the Ready checks row's second, lit on the timeline.
+    // No bar of its own lit on the timeline: the gate's rows are gone (#117).
     let lit = shell.timeline().highlighted();
-    assert_eq!(lit.get(swarmception_domain::rows::READY_KEY), Some(&vec![1]), "{lit:?}");
+    assert!(!lit.contains_key("ready") && !lit.contains_key("gates"), "{lit:?}");
     std::fs::remove_dir_all(dir).ok();
 }
 

@@ -460,16 +460,6 @@ impl Shell {
         self.set_fold(on);
     }
 
-    /// Where on screen gate run `sub`'s bar on the timeline was drawn last frame (#84).
-    pub fn run_point(&mut self, sub: &str) -> Option<egui::Pos2> {
-        self.timeline.run_point(&mut self.engine, sub)
-    }
-
-    /// The gate run hovered on the timeline (#84), with the tickets it carried.
-    pub fn hovered_run(&mut self) -> Hover {
-        self.timeline.hovered(&mut self.engine)
-    }
-
     /// Whether the window leaves its menu bar out because the app shows the menus in the system
     /// menu bar.
     pub const fn set_native_menu(&mut self, native: bool) {
@@ -760,15 +750,13 @@ impl Shell {
     }
 
     /// The timeline's highlight, apart from the person's selection: the ticket hovered in the
-    /// factory while it is (#48), else the tickets of the gate run hovered on the timeline's own
-    /// Gate runs or Ready checks row (#84), else a worker's hovered in the Workers pane (#67), else
-    /// what the details pane shows (#55, `details.get`'s `timeline`); the pane tells the widget
-    /// only when it changes.
+    /// factory while it is (#48), else a worker's hovered in the Workers pane (#67), else what the
+    /// details pane shows (#55, `details.get`'s `timeline`); the pane tells the widget only when
+    /// it changes.
     fn light_timeline(&mut self, ctx: &egui::Context) {
         let factory = if self.ui.panes.factory { self.factory.hovered() } else { None };
-        let run = if self.ui.panes.timeline { self.timeline.hovered(&mut self.engine) } else { Hover::Nothing };
-        let run = if run == Hover::Nothing && self.ui.panes.workers { self.workers.hovered().clone() } else { run };
-        let hovered = factory.map_or(run, Hover::Ticket);
+        let worker = if self.ui.panes.workers { self.workers.hovered().clone() } else { Hover::Nothing };
+        let hovered = factory.map_or(worker, Hover::Ticket);
         let details = self.details.on_timeline(&self.ui.details).filter(|_| self.ui.panes.details).map(|on| on.bars.as_slice()).unwrap_or_default();
         if self.timeline.light_hover(&mut self.engine, hovered, details) {
             ctx.request_repaint();

@@ -1,20 +1,17 @@
 //! The rows the timeline shows (the owner's directions): what happened to tickets. At the top,
 //! every merge onto `main` (its merge commits), then every ticket's merge, each a marker of no
 //! length at its time (#115: its start its end), all on one row (the widget stacks the rare two that
-//! overlap); under them the gate's runs (#84): a row of the coordinator's gate runs and one of
-//! the workers' `ready` checks, a bar a run ([`crate::gates`]' one definition, `gates.list`'s
-//! runs) from its start to its end (a running one's to the last event, open), in its result's
-//! colour, named by the tickets it carried and a failure's cause, its tooltip `gates.list`'s; then
-//! the tickets' stretches (claimed, working, waiting for merge, sent back, stopped), packed onto
-//! shared rows:
+//! overlap); then the tickets, a bar each, packed onto shared rows. The gate's runs have no rows
+//! of their own (#117, the owner's, reversing #84): a run naming a ticket is its *in the gate*
+//! stretch, and a failure its send-back:
 //! taken in the order they began, each ticket goes on the first row it doesn't overlap, so
 //! tickets that didn't run at once share a row. They are packed all together (flat), or within
 //! each worker that held them last (machine / worker / its rows), never across workers;
 //! collapsed, rows with nothing in them are left out. Each bar carries its label (it names its
-//! ticket), its ticket, its style, its colour ([`crate::colours`]: a ticket's working and its merge
-//! in its own colour, the rest fixed) and its tooltip lines, styled (#35: [`TipLine`], the phases
-//! in their colours, merged green, sent back and abandoned red, durations strong) and as plain
-//! text: what the timeline draws is what this answers.
+//! ticket), its ticket, its style, its colour ([`crate::colours`]: a ticket's bar and its merge
+//! in its own colour) and its tooltip lines, styled (#35: [`TipLine`]; each stage named in its
+//! strip's colour, [`Stage::colour`], #117; merged green, sent back and abandoned red, durations
+//! strong) and as plain text: what the timeline draws is what this answers.
 
 use std::collections::BTreeMap;
 
@@ -23,10 +20,8 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
-use crate::colours::{self, Rgb, phase_colour, style_colour};
-use crate::details::Subject;
-use crate::gates::{GateResult, Lane, Run, told_runs};
-use crate::stats::failure_label;
+use crate::colours::{self, Rgb, style_colour};
+use crate::gates::{Lane, Run, runs};
 use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine, texts};
@@ -128,10 +123,6 @@ pub enum Style {
     Waiting,
     SentBack,
     Stopped,
-    /// A coordinator's gate run (#84), drawn in its result's colour.
-    GateRun,
-    /// A worker's `ready` check (#84), drawn in its result's colour.
-    ReadyCheck,
     /// A ticket on its row (#110): one bar from its first stretch to its last, in its own colour
     /// all along, its phases the [`BarSegment`]s of the strip along its foot.
     Ticket,
@@ -165,7 +156,9 @@ impl Stage {
     }
 
     /// Its colour on the strip: the factory's (a phase's border there): claimed yellow, working
-    /// a warm white, waiting blue, in the gate magenta, sent back red, stopped grey.
+    /// a warm white, waiting blue, in the gate magenta, sent back red, stopped grey. The one
+    /// source of a stage's colour (#117): the strip's segments, the widget's segment line (its ■
+    /// swatch), the tooltip's lines and the details' story all take it from here.
     #[must_use]
     pub const fn colour(self) -> Rgb {
         match self {
@@ -189,7 +182,9 @@ impl Stage {
         }
     }
 
-    const fn of(phase: Phase) -> Self {
+    /// The stage a ticket's phase is.
+    #[must_use]
+    pub const fn of(phase: Phase) -> Self {
         match phase {
             Phase::Claimed => Self::Claimed,
             Phase::Working => Self::Working,
@@ -197,6 +192,12 @@ impl Stage {
             Phase::SentBack => Self::SentBack,
             Phase::Stopped => Self::Stopped,
         }
+    }
+}
+
+impl From<Phase> for Stage {
+    fn from(phase: Phase) -> Self {
+        Self::of(phase)
     }
 }
 
@@ -256,8 +257,7 @@ pub struct Bar {
     pub style: Style,
     /// What it is drawn in: [`style_colour`] of its style and ticket.
     pub colour: Rgb,
-    /// How important it is, 0 to 15 (#108): [`colours::importance`] of its style and its run's
-    /// result. A packed column of the timeline takes its most important bar's colour.
+    /// How important it is, 0 to 15 (#108): [`colours::importance`] of its style. A packed column of the timeline takes its most important bar's colour.
     #[serde(default)]
     pub importance: u8,
     /// Nothing ended it: it runs to the last event.
@@ -266,9 +266,6 @@ pub struct Bar {
     pub tooltip: Vec<String>,
     /// Its tooltip's lines with their styling (#35), what the timeline shows.
     pub tooltip_lines: Vec<TipLine>,
-    /// The gate run it is, on the Gate runs or Ready checks row (#84); none for any other bar.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub run: Option<RunBar>,
     /// A ticket's bar's strip along its foot (#110): its stages, in time order, not overlapping;
     /// none for any other bar.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -281,7 +278,7 @@ pub struct Bar {
 impl Bar {
     fn new(start: Timestamp, end: Timestamp, label: String, ticket: Option<u64>, style: Style, lines: Vec<TipLine>) -> Self {
         let colour = style_colour(style, ticket);
-        let importance = colours::importance(style, None);
+        let importance = colours::importance(style);
         Self {
             start,
             end,
@@ -294,28 +291,10 @@ impl Bar {
             open: false,
             tooltip: texts(&lines),
             tooltip_lines: lines,
-            run: None,
             segments: Vec::new(),
             marks: Vec::new(),
         }
     }
-}
-
-/// The run a bar on the Gate runs or Ready checks row draws (#84): `gates.list`'s run, by its
-/// sub-agent's id and its start (the bar's), how it went, what a hover over it lights and what a
-/// click on it tells the story of. It names its tickets here, not as its bar's `ticket`: a run is
-/// none of them, so a ticket's bars (`timeline.ticketBars`) are its own.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct RunBar {
-    pub sub: String,
-    pub lane: Lane,
-    pub result: GateResult,
-    /// The tickets it carried: their bars are what a hover over it lights.
-    pub tickets: Vec<u64>,
-    /// What the details pane tells when it is chosen, as `gates.list`'s run says: the gate run
-    /// itself; for a `ready` check, the ticket it checked, else its worker's session.
-    pub subject: Subject,
 }
 
 /// A row of the tree: a group, or a leaf of bars. Keys are unique and stable across loads of the
@@ -411,12 +390,9 @@ pub fn groups_holding(rows: &[Node], keys: &[&str]) -> Vec<String> {
 /// The keys of the two rows at the top.
 pub const MAIN_KEY: &str = "main";
 pub const MERGED_KEY: &str = "merged";
-/// The keys of the gate's two rows under them (#84): the coordinator's gate runs, the workers'
-/// `ready` checks.
-pub const GATES_KEY: &str = "gates";
-pub const READY_KEY: &str = "ready";
-/// The keys of the rows above the tickets', top to bottom.
-pub const TOP_KEYS: [&str; 4] = [MAIN_KEY, MERGED_KEY, GATES_KEY, READY_KEY];
+/// The keys of the rows above the tickets', top to bottom (#117: the gate's two rows, `gates` and
+/// `ready`, gone; a saved state naming them reads on without them).
+pub const TOP_KEYS: [&str; 2] = [MAIN_KEY, MERGED_KEY];
 /// The flat view's packed rows are keyed `tickets/1`, `tickets/2`, …
 pub const TICKETS_KEY: &str = "tickets";
 /// The rows of `activity` and the merges onto main, as `spec` asks, with no issues from GitHub.
@@ -430,14 +406,11 @@ pub fn rows(activity: &Activity, merges: &[MainMerge], spec: RowsSpec) -> Vec<No
 #[must_use]
 pub fn rows_with(activity: &Activity, merges: &[MainMerge], spec: RowsSpec, issues: &Issues) -> Vec<Node> {
     let tickets = tickets(activity);
-    let runs = told_runs(activity, &tickets, merges);
+    let runs = runs(activity, &tickets, merges);
     let text = Text { issues, runs: &runs };
-    let last = activity.extent.map_or(Timestamp(0), |(_, last)| last);
     let mut rows = vec![
         Node::Ranges { key: MAIN_KEY.into(), name: "Merges to main".into(), bars: main_bars(merges, &tickets, issues) },
         Node::Ranges { key: MERGED_KEY.into(), name: "Tickets merged".into(), bars: merged_bars(&tickets, issues) },
-        Node::Ranges { key: GATES_KEY.into(), name: "Gate runs".into(), bars: run_bars(&runs, Lane::Gate, last) },
-        Node::Ranges { key: READY_KEY.into(), name: "Ready checks".into(), bars: run_bars(&runs, Lane::Ready, last) },
     ];
     match spec.grouping {
         Grouping::Flat => rows.extend(packed(&tickets.iter().collect::<Vec<_>>(), TICKETS_KEY, text)),
@@ -633,8 +606,8 @@ fn between(start: Timestamp, end: Timestamp) -> String {
 
 /// The ticket's times, those it has: claimed, began, finished, merged, done (a `stop done` while
 /// worked on), and, done with no merge, that and the stop's note. Each milestone's name is in the
-/// colour of what it begins (claimed yellow, began the ticket's working colour, finished waiting
-/// blue, merged green, done grey), the spans between them strong.
+/// colour of the stage it begins on the strip (#117: claimed's, began working's, finished
+/// waiting's, done stopped's; merged green), the spans between them strong.
 fn milestones(ticket: &Ticket) -> Vec<TipLine> {
     let mut lines = Vec::new();
     let mut line = |what: &str, colour: Rgb, t: Option<Timestamp>| {
@@ -643,11 +616,11 @@ fn milestones(ticket: &Ticket) -> Vec<TipLine> {
             lines.push(TipLine::coloured(what, colour).then(format!("{} {t}", padded.get(what.len()..).unwrap_or_default())));
         }
     };
-    line("claimed", colours::CLAIMED, ticket.claimed);
-    line("began", phase_colour(Phase::Working, ticket.issue), ticket.began);
-    line("finished", colours::WAITING, ticket.finished);
+    line("claimed", Stage::Claimed.colour(), ticket.claimed);
+    line("began", Stage::Working.colour(), ticket.began);
+    line("finished", Stage::Waiting.colour(), ticket.finished);
     line("merged", PASSED, ticket.merged.as_ref().map(|m| m.t));
-    line("done", colours::STOPPED, ticket.done.as_ref().map(|d| d.t));
+    line("done", Stage::Stopped.colour(), ticket.done.as_ref().map(|d| d.t));
     let from = ticket.claimed.or(ticket.began);
     if let (Some(from), Some(merged)) = (from, &ticket.merged) {
         lines.push(TipLine::plain("claim to merge: ").then_strong(between(from, merged.t)));
@@ -655,7 +628,7 @@ fn milestones(ticket: &Ticket) -> Vec<TipLine> {
         if let Some(from) = from {
             lines.push(TipLine::plain("claim to done: ").then_strong(between(from, done.t)));
         }
-        let without = TipLine::coloured("done without a merge", colours::STOPPED);
+        let without = TipLine::coloured("done without a merge", Stage::Stopped.colour());
         lines.push(match &done.note {
             Some(note) => without.then(format!(": {note}")),
             None => without,
@@ -664,15 +637,41 @@ fn milestones(ticket: &Ticket) -> Vec<TipLine> {
     lines
 }
 
-/// A stretch's own line: its phase in its colour, its times, its duration strong.
-fn span_line(ticket: &Ticket, stretch: &Stretch) -> TipLine {
-    let phase = TipLine::coloured(stretch.phase.name(), phase_colour(stretch.phase, ticket.issue));
-    let took = between(stretch.start, stretch.end);
-    if stretch.open {
-        phase.then(format!(": {} → … (", stretch.start)).then_strong(took).then(" so far)")
+/// A stage's line: its name in its strip's colour (#117), its times, its duration strong.
+fn stage_line(stage: Stage, start: Timestamp, end: Timestamp, open: bool) -> TipLine {
+    let named = TipLine::coloured(stage.name(), stage.colour());
+    let took = between(start, end);
+    if open {
+        named.then(format!(": {start} → … (")).then_strong(took).then(" so far)")
     } else {
-        phase.then(format!(": {} → {} (", stretch.start, stretch.end)).then_strong(took).then(")")
+        named.then(format!(": {start} → {end} (")).then_strong(took).then(")")
     }
+}
+
+/// A stretch's own line: its phase's stage, its times, its duration strong.
+fn span_line(stretch: &Stretch) -> TipLine {
+    stage_line(Stage::of(stretch.phase), stretch.start, stretch.end, stretch.open)
+}
+
+/// The gate runs inside a wait for merge (#117), as its strip carves them out (*in the gate*), a
+/// line each under the wait's, indented: their times, their duration and the run (`gate-8b`).
+fn gate_lines(ticket: &Ticket, stretch: &Stretch, runs: &[Run]) -> Vec<TipLine> {
+    if stretch.phase != Phase::Waiting {
+        return Vec::new();
+    }
+    gating(ticket, runs)
+        .filter_map(|run| {
+            let (start, end) = (run.start.max(stretch.start), run.end.unwrap_or(run.start).min(stretch.end));
+            (start < end)
+                .then(|| TipLine::plain("  ").then_coloured(Stage::Gating.name(), Stage::Gating.colour()))
+                .map(|line| line.then(format!(": {start} → {end} (")).then_strong(between(start, end)).then(format!(") {}", run.sub)))
+        })
+        .collect()
+}
+
+/// The coordinator's gate runs that named `ticket`: its *in the gate* stretches (#110).
+fn gating<'a>(ticket: &'a Ticket, runs: &'a [Run]) -> impl Iterator<Item = &'a Run> {
+    runs.iter().filter(|run| run.lane == Lane::Gate && run.tickets.contains(&ticket.issue))
 }
 
 /// `abandoned: …`, the word in red.
@@ -695,7 +694,8 @@ const LISTED_STRETCHES: usize = 8;
 /// A ticket's one bar on its row (#110): from its first stretch's start to its last one's end,
 /// in its own colour all along, labelled once; its stages the strip along its foot, its
 /// send-backs and its merge marks on it. Its tooltip: the ticket, its stretches (the last
-/// [`LISTED_STRETCHES`]), and its milestones. None for a ticket with no stretches.
+/// [`LISTED_STRETCHES`]; a wait's gate runs under it, #117), each stage in its strip's colour, and
+/// its milestones. None for a ticket with no stretches.
 fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
     let (first, last) = (ticket.stretches.first()?, ticket.stretches.last()?);
     let mut tooltip = ticket_lines(ticket, text.issues);
@@ -704,7 +704,8 @@ fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
         tooltip.push(TipLine::plain(format!("… {skipped} earlier stretches")));
     }
     for stretch in ticket.stretches.iter().skip(skipped) {
-        tooltip.push(span_line(ticket, stretch).then(format!(" by {}", stretch.by)));
+        tooltip.push(span_line(stretch).then(format!(" by {}", stretch.by)));
+        tooltip.extend(gate_lines(ticket, stretch, text.runs));
         tooltip.extend(stretch.note.iter().map(|note| note_line(stretch, note)));
         tooltip.extend(stretch.abandoned.as_ref().map(abandoned_line));
     }
@@ -729,8 +730,7 @@ fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
 /// where a gate run naming it ran (*in the gate*), touching stretches of one stage joined; none of
 /// no time.
 fn stages(ticket: &Ticket, runs: &[Run]) -> Vec<BarSegment> {
-    let gated: Vec<(Timestamp, Timestamp)> =
-        runs.iter().filter(|run| run.lane == Lane::Gate && run.tickets.contains(&ticket.issue)).map(|run| (run.start, run.end.unwrap_or(run.start))).collect();
+    let gated: Vec<(Timestamp, Timestamp)> = gating(ticket, runs).map(|run| (run.start, run.end.unwrap_or(run.start))).collect();
     let mut segments: Vec<BarSegment> = Vec::new();
     let mut push = |stage: Stage, start: Timestamp, end: Timestamp| {
         if end <= start {
@@ -792,50 +792,6 @@ fn merged_bars(tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     bars
 }
 
-/// The bars of `lane`'s runs (#84), by start: each from its start to its end, a running one's to
-/// `last` (the last event), open.
-fn run_bars(runs: &[Run], lane: Lane, last: Timestamp) -> Vec<Bar> {
-    runs.iter().filter(|run| run.lane == lane).map(|run| run_bar(run, last)).collect()
-}
-
-/// What a run's bar says: the tickets it carried (its pull requests when it named no ticket, its
-/// id when neither), and a failure's cause (`#83 · build/clippy`, `PR #153 · test`).
-pub(crate) fn run_label(run: &Run) -> String {
-    let numbers = |prefix: &str, list: &[u64]| list.iter().map(|n| format!("{prefix}{n}")).collect::<Vec<_>>().join(" ");
-    let what = match (run.tickets.is_empty(), run.prs.is_empty()) {
-        (false, _) => numbers("#", &run.tickets),
-        (true, false) => numbers("PR #", &run.prs),
-        (true, true) => run.sub.clone(),
-    };
-    match run.result {
-        GateResult::Failed if run.cause.is_some() || run.step.is_some() => format!("{what} · {}", failure_label(run.cause.as_deref(), run.step.as_deref())),
-        GateResult::Failed => format!("{what} · failed"),
-        GateResult::Passed | GateResult::NoResult | GateResult::Running => what,
-    }
-}
-
-fn run_bar(run: &Run, last: Timestamp) -> Bar {
-    let end = run.end.unwrap_or(last).max(run.start);
-    let style = match run.lane {
-        Lane::Gate => Style::GateRun,
-        Lane::Ready => Style::ReadyCheck,
-    };
-    let pr = match run.prs.as_slice() {
-        [pr] => Some(*pr),
-        _ => None,
-    };
-    let info = RunBar { sub: run.sub.clone(), lane: run.lane, result: run.result, tickets: run.tickets.clone(), subject: run.subject.clone() };
-    let importance = colours::importance(style, Some(run.result));
-    Bar {
-        pr,
-        open: run.end.is_none(),
-        colour: run.colour,
-        importance,
-        run: Some(info),
-        ..Bar::new(run.start, end, run_label(run), None, style, run.tooltip.clone())
-    }
-}
-
 fn main_bars(merges: &[MainMerge], tickets: &[Ticket], issues: &Issues) -> Vec<Bar> {
     let mut bars: Vec<Bar> = merges.iter().map(|m| main_bar(m, tickets, issues)).collect();
     bars.sort_by_key(|b| b.start);
@@ -894,11 +850,7 @@ mod tests {
     fn main_then_merged_then_the_packed_tickets() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
-        assert_eq!(
-            shape(&rows),
-            ["Merges to main", "Tickets merged", "Gate runs", "Ready checks", "Tickets 1", "Tickets 2"],
-            "#168 runs on past #170, so they can't share"
-        );
+        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "Tickets 1", "Tickets 2"], "#168 runs on past #170, so they can't share");
         let Node::Ranges { bars, .. } = &rows[0] else { panic!() };
         assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["PR #173", "PR #174"]);
         assert_eq!(bars[0].tooltip[2], "merged #170");
@@ -932,7 +884,7 @@ mod tests {
         use crate::colours::{CLAIMED, GATING, LOW, WAITING, WORKING, ticket_colour};
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let Node::Ranges { bars, key, .. } = &rows[5] else { panic!() };
+        let Node::Ranges { bars, key, .. } = &rows[3] else { panic!() };
         assert_eq!(key, "tickets/2");
         let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
         assert_eq!(
@@ -985,7 +937,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
-        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
         let working = &bars[0];
         assert_eq!(
             working.tooltip[..5],
@@ -1100,19 +1052,16 @@ mod tests {
     fn grouped_by_worker() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { grouping: Grouping::Workers, ..RowsSpec::default() });
-        assert_eq!(
-            shape(&rows),
-            ["Merges to main", "Tickets merged", "Gate runs", "Ready checks", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1"]
-        );
+        assert_eq!(shape(&rows), ["Merges to main", "Tickets merged", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1"]);
         let keys: Vec<&str> = rows.iter().flat_map(Node::leaves).map(Node::key).collect();
-        assert_eq!(keys, ["main", "merged", "gates", "ready", "w/mini/worker-1/1", "w/mini/worker-2/1"]);
+        assert_eq!(keys, ["main", "merged", "w/mini/worker-1/1", "w/mini/worker-2/1"]);
     }
 
     #[test]
     fn collapse_leaves_out_empty_rows() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { collapse: Collapse::Empty, ..RowsSpec::default() });
-        assert_eq!(shape(&rows), ["Tickets merged", "Gate runs", "Ready checks", "Tickets 1", "Tickets 2"], "no merges onto main read");
+        assert_eq!(shape(&rows), ["Tickets merged", "Tickets 1", "Tickets 2"], "no merges onto main read");
         let window = super::rows(&activity, &[], RowsSpec { collapse: Collapse::Window, ..RowsSpec::default() });
         assert_eq!(window, rows, "to the window, the rows are those with events: the window leaves out more of them");
     }
@@ -1208,7 +1157,7 @@ mod tests {
         let files = [worker("m-1", "mini", "worker-1", &[(1, 0, 10), (2, 5, 20), (3, 10, 30), (4, 20, 25), (5, 12, 15)])];
         let rows = rows(&Activity::of(&files), &[], RowsSpec::default());
         assert_eq!(packing(&rows), [("tickets/1", vec![1, 3]), ("tickets/2", vec![2, 4]), ("tickets/3", vec![5])].map(|(k, v)| (k.to_owned(), v)));
-        assert_eq!(shape(&rows)[4..], ["Tickets 1", "Tickets 2", "Tickets 3"]);
+        assert_eq!(shape(&rows)[2..], ["Tickets 1", "Tickets 2", "Tickets 3"]);
         assert_no_overlap(&rows);
     }
 
@@ -1240,7 +1189,7 @@ mod tests {
                 .map(|(k, v)| (k.to_owned(), v))
         );
         assert_eq!(
-            shape(&by)[4..],
+            shape(&by)[2..],
             ["box", "  worker-1", "    Tickets 1", "mini", "  worker-1", "    Tickets 1", "  worker-2", "    Tickets 1", "    Tickets 2"]
         );
         assert_no_overlap(&flat);
@@ -1280,6 +1229,32 @@ mod tests {
             .collect()
     }
 
+    /// #117, the owner's: every stage a ticket's tooltip names (its stretches, its waits' gate
+    /// runs, its milestones) is in its strip's segment's colour for that stage, from one source
+    /// ([`Stage::colour`]), and every segment of its strip is named there.
+    #[test]
+    fn a_tooltip_names_each_stage_in_its_strip_segments_colour() {
+        use crate::tickets::tests::{SENT_BACK_169, abandoned, files};
+        let fixtures = [Activity::of(&sample()), Activity::of(&abandoned()), Activity::of(&files(&SENT_BACK_169))];
+        let mut seen = std::collections::BTreeSet::new();
+        for activity in fixtures {
+            for bar in every_bar(&rows(&activity, &merges(), RowsSpec::default())).into_iter().filter(|b| b.style == Style::Ticket) {
+                for segment in &bar.segments {
+                    let named: Vec<Rgb> = bar.tooltip_lines.iter().filter_map(|l| l.colour_of(segment.stage.name())).collect();
+                    assert!(!named.is_empty(), "{}: {:?} named in its tooltip: {:?}", bar.label, segment.stage, bar.tooltip);
+                    assert!(named.iter().all(|c| *c == segment.colour), "{}: {:?} in {named:?}, its segment in {:?}", bar.label, segment.stage, segment.colour);
+                    assert_eq!(segment.colour, segment.stage.colour());
+                    seen.insert(segment.stage.name());
+                }
+                let milestone = |name: &str| bar.tooltip_lines.iter().find(|l| l.spans.first().is_some_and(|s| s.text == name)).and_then(|l| l.spans[0].colour);
+                for (name, stage) in [("claimed", Stage::Claimed), ("began", Stage::Working), ("finished", Stage::Waiting), ("done", Stage::Stopped)] {
+                    assert!(milestone(name).is_none_or(|c| c == stage.colour()), "{}: {name} begins {stage:?}", bar.label);
+                }
+            }
+        }
+        assert_eq!(seen.len(), 6, "every stage met: {seen:?}");
+    }
+
     #[test]
     fn a_tooltips_lines_are_its_plain_text_styled() {
         for activity in [Activity::of(&sample()), Activity::of(&crate::tickets::tests::abandoned())] {
@@ -1292,15 +1267,16 @@ mod tests {
 
     #[test]
     fn a_tooltip_colours_the_phases_merged_green_sent_back_red_and_durations_strong() {
-        use crate::colours::{CLAIMED, SENT_BACK, WAITING, ticket_colour};
+        use crate::colours::{CLAIMED, GATING, SENT_BACK, WAITING, WORKING};
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &merges(), RowsSpec::default());
-        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
-        // The title strong; each stretch's phase in its own colour, its duration strong.
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
+        // The title strong; each stretch's stage in its strip's colour (#117), its duration
+        // strong; the wait's gate run under it, in the gate's.
         let [bar] = bars.as_slice() else { panic!("one bar: {bars:?}") };
         let working = &bar.tooltip_lines;
         assert!(working[0].is_strong("#170 · PR #173"), "{:?}", working[0]);
-        for (line, phase, colour) in [(1, "claimed", CLAIMED), (2, "working", ticket_colour(170)), (3, "waiting for merge", WAITING)] {
+        for (line, phase, colour) in [(1, "claimed", CLAIMED), (2, "working", WORKING), (3, "waiting for merge", WAITING), (4, "in the gate", GATING)] {
             assert_eq!(working[line].colour_of(phase), Some(colour), "{phase}");
             assert!(working[line].spans.iter().any(|s| s.strong && s.text.ends_with(" s")), "the duration strong: {:?}", working[line]);
         }
@@ -1308,7 +1284,7 @@ mod tests {
         // The milestones: each name in the colour of what it begins, merged green, the span strong.
         let milestone = |name: &str| working.iter().find(|l| l.spans.first().is_some_and(|s| s.text == name)).and_then(|l| l.spans[0].colour);
         assert_eq!(milestone("claimed"), Some(CLAIMED));
-        assert_eq!(milestone("began"), Some(ticket_colour(170)));
+        assert_eq!(milestone("began"), Some(WORKING));
         assert_eq!(milestone("finished"), Some(WAITING));
         assert_eq!(milestone("merged"), Some(PASSED));
         assert!(working.iter().any(|l| l.is_strong("35 min 36 s")), "claim to merge strong");
@@ -1341,7 +1317,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let issues = crate::titles::tests::issues();
         let rows = rows_with(&activity, &merges(), RowsSpec::default(), &issues);
-        let Node::Ranges { bars, .. } = &rows[5] else { panic!() };
+        let Node::Ranges { bars, .. } = &rows[3] else { panic!() };
         let tip = &bars[0].tooltip_lines;
         assert!(tip[0].is_strong("#170 The spec, written down"));
         assert!(tip[1].is_plain());

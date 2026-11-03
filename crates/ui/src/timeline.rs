@@ -16,9 +16,8 @@
 //! go on. Nothing is loaded again, so the selection, focus, highlight and the rows' own states
 //! stay as they were; a row holding the selection is kept, so it isn't lost.
 //!
-//! The gate's runs are rows of it (#84, Gate runs and Ready checks): the bar under the pointer is
-//! read back (`query.tooltip`'s bar, `timeline.bar`), and a run's lights the bars of the tickets
-//! it carried ([`TimelinePane::hovered`], which the shell hands to [`TimelinePane::light_hover`]).
+//! The gate's runs are no rows of it (#117, reversing #84): a run naming a ticket is the
+//! ticket's *in the gate* stretch on its bar's strip, and a failure its send-back.
 //!
 //! Folding quiet time (#86): when on, the pane has the widget fold every stretch where no row has
 //! anything for longer than the threshold (the widget's `view.fold`), again after every load and
@@ -45,7 +44,7 @@ use swarmception_engine::Session;
 use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams, TicketBars, TicketParams};
 use swarmception_engine::live_cmds::{CarryBars, CarryParams};
 use swarmception_engine::repo_cmds::StatusResult;
-use swarmception_engine::rows_cmds::{BarParams, GetBar, RunBars, RunParams, TimeAt, TimeAtParams};
+use swarmception_engine::rows_cmds::{TimeAt, TimeAtParams};
 use swarmception_engine::rows_cmds::{WindowParams, WindowRows};
 use swarmception_engine::stats_cmds::At;
 use swarmception_model::Timestamp;
@@ -53,9 +52,9 @@ use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
 use timeline_engine::lanes_cmds::{LanesOverWire, LanesParams, SetLanes};
 use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
-use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
+use timeline_engine::query_cmds::{Bars, BarsParams};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
-use timeline_engine::tracks_cmds::{Expand, GroupParams, HitParams, Layout, LayoutParams, SetTrack, SetTrackParams};
+use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams, SetTrack, SetTrackParams};
 
 use timeline_engine::fold_cmds::{FoldParams, SetFold};
 use timeline_engine::highlight_cmds::HighlightParams;
@@ -154,9 +153,6 @@ pub enum Lit {
     Nothing,
     /// The bars of the ticket hovered in the factory (#48).
     Hovered { ticket: u64 },
-    /// The bars of the tickets a gate run hovered on the timeline's Gate runs or Ready checks row
-    /// carried (#84; the Gates pane's lane before it, #61).
-    HoveredRun,
     /// The bars of the tickets of a worker (or a model × effort) hovered in the Workers pane (#67).
     HoveredWorker,
     /// The bars of what the details pane shows (`details.get`'s `timeline`).
@@ -164,19 +160,12 @@ pub enum Lit {
 }
 
 /// What a hover asks the timeline to highlight, over the details pane's bars: a ticket hovered in
-/// the factory (#48), the tickets of a gate run hovered on the timeline's own Gate runs or Ready
-/// checks row (#84), or a worker's in the Workers pane (#67).
+/// the factory (#48), or a worker's in the Workers pane (#67).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum Hover {
     #[default]
     Nothing,
     Ticket(u64),
-    /// A gate run, by its sub-agent's id and start, and the tickets it carried.
-    Run {
-        sub: String,
-        start: Timestamp,
-        tickets: Vec<u64>,
-    },
     /// A worker in the Workers pane (#67), by its instance (a model × effort's label), and the
     /// tickets it claimed, worked on, landed or abandoned in the pane's window.
     Worker {
@@ -186,21 +175,12 @@ pub enum Hover {
 }
 
 impl Hover {
-    /// A gate run's, `<sub>@<start>`: `ui.inspect`'s `timeline.hoveredRun`.
-    #[must_use]
-    pub fn run(&self) -> Option<String> {
-        match self {
-            Self::Run { sub, start, .. } => Some(format!("{sub}@{start}")),
-            _ => None,
-        }
-    }
-
     /// The tickets whose bars it lights.
     fn tickets(&self) -> &[u64] {
         match self {
             Self::Nothing => &[],
             Self::Ticket(issue) => std::slice::from_ref(issue),
-            Self::Run { tickets, .. } | Self::Worker { tickets, .. } => tickets,
+            Self::Worker { tickets, .. } => tickets,
         }
     }
 }
@@ -289,11 +269,6 @@ pub struct TimelinePane {
     load_time: Option<std::time::Duration>,
     /// The rows collapsed to the window (#74).
     window_rows: WindowRowsState,
-    /// The bar under the pointer last frame, as `query.tooltip` named it: its row's key and its
-    /// place in `query.bars`' ranges of the row.
-    pointed: Option<(String, usize)>,
-    /// The gate run under the pointer (#84), and the rows' generation and bar it was read for.
-    hovered: (Option<(u64, String, usize)>, Hover),
     /// Folding quiet time (#86): the threshold in seconds when on, as the shell wants it.
     fold: Option<i64>,
     /// What the widget was last told to fold: none since a load or a restore, which reset it.
@@ -385,8 +360,6 @@ impl Default for TimelinePane {
             axis: None,
             load_time: None,
             window_rows: WindowRowsState::default(),
-            pointed: None,
-            hovered: (None, Hover::Nothing),
             fold: None,
             folded: None,
             origin: None,
@@ -433,50 +406,6 @@ impl TimelinePane {
         let x = rect.left() + layout.label_width + f32::midpoint(fold.x0, fold.x1);
         let row = layout.rows.get(4).or_else(|| layout.rows.last())?;
         Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
-    }
-
-    /// Where on screen gate run `sub`'s bar drawn last frame is (#84), on the Gate runs or Ready
-    /// checks row, its middle: for a host to put the pointer on it (the app's `--hover-gate`, to see
-    /// its tooltip). None when it isn't drawn.
-    pub fn run_point(&mut self, engine: &mut Session, sub: &str) -> Option<egui::Pos2> {
-        let rect = self.rect.filter(|_| self.has_data)?;
-        let found = engine.call::<RunBars>(RunParams { sub: sub.to_owned(), at: None }).ok()?;
-        let session = self.widget.session();
-        let layout = session.call::<Layout>(LayoutParams { pane: rect.height(), scroll: 0.0 }).ok()?;
-        found.bars.iter().find_map(|bar| {
-            let row = layout.rows.iter().find(|r| r.key == bar.track)?;
-            let drawn = session.call::<Bars>(BarsParams { tracks: Some(vec![bar.track.clone()]), label_char_width: None }).ok()?;
-            let track = drawn.tracks.first()?;
-            let range = track.ranges.iter().find(|r| r.range <= bar.range && bar.range < r.range.saturating_add(r.count.max(1)))?;
-            let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
-            // Runs that overlap stack in lanes: the middle of its own.
-            let lane = row.height / track.lanes.max(1) as f32;
-            Some(egui::pos2(x, rect.top() + row.y + lane * (range.lane as f32 + 0.5))).filter(|p| rect.contains(*p))
-        })
-    }
-
-    /// The gate run whose bar on the Gate runs or Ready checks row (#84) was under the pointer
-    /// last frame, with the tickets it carried (`timeline.bar`'s run): what the timeline lights
-    /// while it lasts. Read again only when the bar under the pointer or the rows move on.
-    pub fn hovered(&mut self, engine: &mut Session) -> Hover {
-        let top = [swarmception_domain::rows::GATES_KEY, swarmception_domain::rows::READY_KEY];
-        let pointed = self.pointed.clone().filter(|(track, _)| self.has_data && top.contains(&track.as_str()));
-        let key = pointed.zip(self.loaded).map(|((track, bar), generation)| (generation, track, bar));
-        if self.hovered.0 != key {
-            let hover = key.as_ref().and_then(|(_, track, bar)| self.run_at(engine, track, *bar)).unwrap_or_default();
-            self.hovered = (key, hover);
-        }
-        self.hovered.1.clone()
-    }
-
-    /// The run drawn as `query.bars`' range `drawn` of row `track` (the first bar it stands for,
-    /// where they are packed).
-    fn run_at(&mut self, engine: &mut Session, track: &str, drawn: usize) -> Option<Hover> {
-        let bars = self.widget.session().call::<Bars>(BarsParams { tracks: Some(vec![track.to_owned()]), label_char_width: None }).ok()?;
-        let range = bars.tracks.first()?.ranges.get(drawn)?.range;
-        let bar = engine.call::<GetBar>(BarParams { track: track.to_owned(), range }).ok()?.bar;
-        let run = bar.run?;
-        Some(Hover::Run { sub: run.sub, start: bar.start, tickets: run.tickets })
     }
 
     /// Where the window's start and end were across the screen last frame (its rows' area, right of
@@ -906,8 +835,8 @@ impl TimelinePane {
         self.light_hover(engine, hovered.map_or(Hover::Nothing, Hover::Ticket), details)
     }
 
-    /// [`Self::light`] for any [`Hover`]: a gate run's lights the bars of every ticket it carried
-    /// (`timeline.ticketBars` of each), over the details' bars while it lasts (#61).
+    /// [`Self::light`] for any [`Hover`]: a worker's lights the bars of every ticket it held
+    /// (`timeline.ticketBars` of each), over the details' bars while it lasts (#67).
     pub fn light_hover(&mut self, engine: &mut Session, hovered: Hover, details: &[BarRef]) -> bool {
         let details = if hovered == Hover::Nothing { details.to_vec() } else { Vec::new() };
         let wanted = Lighting { hovered, details, generation: self.loaded.filter(|_| self.has_data) };
@@ -938,7 +867,6 @@ impl TimelinePane {
     pub fn lit(&self) -> Lit {
         match &self.lit {
             Some(Lighting { hovered: Hover::Ticket(ticket), .. }) => Lit::Hovered { ticket: *ticket },
-            Some(Lighting { hovered: Hover::Run { .. }, .. }) => Lit::HoveredRun,
             Some(Lighting { hovered: Hover::Worker { .. }, .. }) => Lit::HoveredWorker,
             Some(Lighting { details, .. }) if !details.is_empty() => Lit::Details,
             _ => Lit::Nothing,
@@ -1173,7 +1101,6 @@ impl TimelinePane {
 
     /// Draws the pane: the widget's own toolbar and the widget, or why there is nothing to show.
     pub fn ui(&mut self, ui: &mut egui::Ui, status: &StatusResult) {
-        self.pointed = None;
         if !self.has_data {
             let text = match (&status.repo, &status.job, &status.error) {
                 (None, _, _) => "No repository is open: start with --repo <path>.".to_owned(),
@@ -1191,7 +1118,6 @@ impl TimelinePane {
             let response = ui.add(&mut self.widget);
             let rect = response.rect;
             let clip = ui.clip_rect();
-            self.pointed = response.hover_pos().and_then(|p| pointed_bar(&mut self.widget, rect, clip, p));
             let row = self.scroll_to.take().and_then(|tracks| hidden_row(&mut self.widget, rect, clip, &tracks));
             if let Some(row) = row {
                 ui.scroll_to_rect(row, Some(egui::Align::Center));
@@ -1207,15 +1133,6 @@ impl TimelinePane {
         self.time_axis = state.filter(|s| s.scale == TIME).zip(self.origin).zip(self.axis).and_then(|((s, origin), ends)| TimeAxis::new(&s, origin, ends));
         self.links.extend(self.widget.take_host_choices().iter().filter_map(|id| Link::parse(id)));
     }
-}
-
-/// The bar under the pointer at `p` in the widget drawn at `rect`, `clip` of it on screen, as the
-/// widget's tooltip finds it (`query.tooltip`): its row's key and its place in `query.bars`'
-/// ranges of the row.
-fn pointed_bar(widget: &mut timeline_egui::Timeline, rect: egui::Rect, clip: egui::Rect, p: egui::Pos2) -> Option<(String, usize)> {
-    let point = HitParams { pane: clip.height(), scroll: (clip.top() - rect.top()).max(0.0), x: p.x - rect.left(), y: p.y - clip.top() };
-    let found = widget.session().call::<Tooltip>(point).ok()?;
-    found.track.zip(found.bar)
 }
 
 /// Where the first of `tracks`' rows is, when none of them is on screen (`clip`) in the widget

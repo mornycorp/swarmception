@@ -3,11 +3,12 @@
 //!
 //! - **A ticket's own colour** ([`ticket_colour`]): its issue number's entry in [`PALETTE`], a
 //!   fixed, hand-picked set of muted colours (#40, the owner's scheme B, Tableau-like), taken in
-//!   turn so consecutive ids never share one. Its *working* stretches and its merge are drawn in
-//!   it.
-//! - **The fixed colours**: claimed [`CLAIMED`] yellow, waiting for merge [`WAITING`] blue, sent
-//!   back [`SENT_BACK`] red, stopped [`STOPPED`] grey, and every merge onto main [`MAIN_MERGE`]
-//!   green; [`NO_TICKET`], a slate grey for what is no ticket's.
+//!   turn so consecutive ids never share one. Its bar and its merge are drawn in it.
+//! - **The fixed colours**: claimed [`CLAIMED`] yellow, working [`WORKING`] a warm white, waiting
+//!   for merge [`WAITING`] blue, in the gate [`GATING`] magenta, sent back [`SENT_BACK`] red,
+//!   stopped [`STOPPED`] grey, and every merge onto main [`MAIN_MERGE`] green; [`NO_TICKET`], a
+//!   slate grey for what is no ticket's. A stage of a ticket takes its colour from
+//!   [`crate::rows::Stage::colour`] alone (#117), wherever it is named.
 //!
 //! The palette leaves the phases' own hues to them: it has no blue, no mid green, no amber and no
 //! red, and every entry keeps at least [`CLEARANCE`] of hue and [`DISTANCE`] of colour (OKLab)
@@ -16,14 +17,11 @@
 //!
 //! - **Each bar's importance** ([`importance`], #108): zoomed out, the timeline packs a column of
 //!   narrow bars into one in the colour of its most important (swarm-timeline's spec §6.1), so
-//!   what needs attention survives packing: failed gate runs and ready checks, and a ticket's
-//!   *sent back* stretch, [`HIGH`]; a run with no result (`?`) and a *stopped* stretch, work that
-//!   ended unfinished, [`MIDDLE`]; passes, running runs, claimed, working and waiting [`LOW`]; the
+//!   what needs attention survives packing: a ticket's *sent back* stretch [`HIGH`]; a *stopped*
+//!   stretch, work that ended unfinished, [`MIDDLE`]; claimed, working and waiting [`LOW`]; the
 //!   merges the widget's default, 0, as before.
 
-use crate::gates::GateResult;
 use crate::rows::Style;
-use crate::tickets::Phase;
 
 /// A colour as red, green and blue bytes (sRGB).
 pub type Rgb = [u8; 3];
@@ -84,18 +82,6 @@ pub fn ticket_colour(issue: u64) -> Rgb {
     usize::try_from(issue % SIZE).ok().and_then(|i| PALETTE.get(i)).copied().unwrap_or(NO_TICKET)
 }
 
-/// The colour a phase of `issue`'s is drawn in: working in the ticket's own, the rest fixed.
-#[must_use]
-pub fn phase_colour(phase: Phase, issue: u64) -> Rgb {
-    match phase {
-        Phase::Claimed => CLAIMED,
-        Phase::Working => ticket_colour(issue),
-        Phase::Waiting => WAITING,
-        Phase::SentBack => SENT_BACK,
-        Phase::Stopped => STOPPED,
-    }
-}
-
 /// The colour a bar of `style` is drawn in, `ticket` the ticket it is (none for a merge onto
 /// main): a ticket's working and its merge in its own colour, the rest fixed.
 #[must_use]
@@ -108,32 +94,24 @@ pub fn style_colour(style: Style, ticket: Option<u64>) -> Rgb {
         Style::Waiting => WAITING,
         Style::SentBack => SENT_BACK,
         Style::Stopped => STOPPED,
-        // A run's bar is drawn in its result's colour (#84: `GateResult::colour`, which the bar
-        // sets); this is a running one's, waiting's blue.
-        Style::GateRun | Style::ReadyCheck => WAITING,
     }
 }
 
-/// What needs attention (#108): a failed run, a ticket sent back.
+/// What needs attention (#108): a ticket sent back.
 pub const HIGH: u8 = 12;
-/// What ended unfinished (#108): a run with no result, a ticket stopped.
+/// What ended unfinished (#108): a ticket stopped.
 pub const MIDDLE: u8 = 8;
-/// What went as it should (#108): passes, running runs, claimed, working and waiting.
+/// What went as it should (#108): claimed, working and waiting.
 pub const LOW: u8 = 4;
 /// A merge's: the widget's default, as before #108.
 pub const MERGE: u8 = 0;
 
-/// How important a bar of `style` is, 0 to 15, `result` its run's on the Gate runs and Ready
-/// checks rows (none for any other bar): what colour a packed column of the timeline takes, its
-/// most important bar's (swarm-timeline's spec §6.1; [`HIGH`], [`MIDDLE`], [`LOW`], [`MERGE`]).
+/// How important a bar of `style` is, 0 to 15: what colour a packed column of the timeline takes,
+/// its most important bar's (swarm-timeline's spec §6.1; [`HIGH`], [`MIDDLE`], [`LOW`],
+/// [`MERGE`]).
 #[must_use]
-pub const fn importance(style: Style, result: Option<GateResult>) -> u8 {
+pub const fn importance(style: Style) -> u8 {
     match style {
-        Style::GateRun | Style::ReadyCheck => match result {
-            Some(GateResult::Failed) => HIGH,
-            Some(GateResult::NoResult) => MIDDLE,
-            Some(GateResult::Passed | GateResult::Running) | None => LOW,
-        },
         Style::SentBack => HIGH,
         Style::Stopped => MIDDLE,
         // A ticket's bar takes its strip's most important (#110: [`crate::rows`]).
@@ -279,14 +257,21 @@ mod tests {
     }
 
     #[test]
-    fn working_and_merges_take_the_tickets_colour_the_rest_are_fixed() {
-        assert_eq!(phase_colour(Phase::Working, 58), ticket_colour(58));
-        assert_eq!(phase_colour(Phase::Claimed, 58), CLAIMED);
-        assert_eq!(phase_colour(Phase::Waiting, 58), WAITING);
-        assert_eq!(phase_colour(Phase::SentBack, 58), SENT_BACK);
-        assert_eq!(phase_colour(Phase::Stopped, 58), STOPPED);
+    fn a_tickets_bar_and_merge_take_its_colour_the_stages_are_fixed() {
+        use crate::rows::Stage;
+        let stages = [
+            (Stage::Claimed, CLAIMED),
+            (Stage::Working, WORKING),
+            (Stage::Waiting, WAITING),
+            (Stage::Gating, GATING),
+            (Stage::SentBack, SENT_BACK),
+            (Stage::Stopped, STOPPED),
+        ];
+        for (stage, colour) in stages {
+            assert_eq!(stage.colour(), colour, "{stage:?}");
+        }
         assert_eq!(style_colour(Style::Merged, Some(58)), ticket_colour(58));
-        assert_eq!(style_colour(Style::Working, Some(58)), phase_colour(Phase::Working, 58));
+        assert_eq!(style_colour(Style::Ticket, Some(58)), ticket_colour(58));
         assert_eq!(style_colour(Style::MainMerge, Some(58)), MAIN_MERGE);
         assert_eq!(style_colour(Style::MainMerge, None), MAIN_MERGE);
         assert_eq!(style_colour(Style::Merged, None), NO_TICKET);
@@ -295,7 +280,8 @@ mod tests {
     /// #83, the owner's: mc-engine #169 as its tracking branch has it (sent back for a conflict,
     /// fixed and submitted again with no `work` logged), and a ticket sent back then re-claimed
     /// by another worker on a new branch, and #169 with its rework's `work` logged (#98). Every bar, chip, brick, moment and details entry of the
-    /// ticket is in its own colour or a phase's fixed one, and both its runs of work in its own.
+    /// ticket is in its own colour or a stage's fixed one; both its runs of work its strip's
+    /// working (#117: the tooltip and the details as the strip).
     #[test]
     fn a_tickets_colour_holds_across_a_send_back_and_a_re_claim() {
         use crate::activity::Activity;
@@ -328,7 +314,7 @@ mod tests {
                     }
                     for line in &bar.tooltip_lines {
                         for word in ["working", "began"] {
-                            assert!(line.colour_of(word).is_none_or(|c| c == own), "#{issue}'s tooltip's {word} in {:?}", line.colour_of(word));
+                            assert!(line.colour_of(word).is_none_or(|c| c == WORKING), "#{issue}'s tooltip's {word} in {:?}", line.colour_of(word));
                         }
                     }
                 }
@@ -365,30 +351,24 @@ mod tests {
 
             let told = details(&activity, &[], &Issues::default(), &Subject::Ticket { issue });
             let told = told.as_ref().map(|d| (d.colour, d.entries.iter().filter(|e| e.what == "working").map(|e| e.colour).collect::<Vec<_>>()));
-            assert_eq!(told, Some((own, vec![own, own])), "#{issue}'s details: its chip and both runs");
+            assert_eq!(told, Some((own, vec![WORKING, WORKING])), "#{issue}'s details: its chip in its own colour, both runs of work the strip's");
         }
     }
 
     /// #108: every kind of bar's importance, as the table says, each one the widget takes.
     #[test]
     fn every_kind_of_bar_has_its_importance() {
+        use crate::tickets::Phase;
         use timeline_core::data::Importance;
-        let run = |style, result| importance(style, Some(result));
-        for lane in [Style::GateRun, Style::ReadyCheck] {
-            assert_eq!(run(lane, GateResult::Failed), HIGH, "{lane:?} failed");
-            assert_eq!(run(lane, GateResult::NoResult), MIDDLE, "{lane:?} with no result");
-            assert_eq!(run(lane, GateResult::Passed), LOW, "{lane:?} passed");
-            assert_eq!(run(lane, GateResult::Running), LOW, "{lane:?} running");
-            assert_eq!(importance(lane, None), LOW, "{lane:?} without a run");
-        }
         let phases = [(Phase::SentBack, HIGH), (Phase::Stopped, MIDDLE), (Phase::Claimed, LOW), (Phase::Working, LOW), (Phase::Waiting, LOW)];
         for (phase, expected) in phases {
-            assert_eq!(importance(phase.into(), None), expected, "{phase:?}");
+            assert_eq!(importance(phase.into()), expected, "{phase:?}");
         }
-        assert_eq!(importance(Style::MainMerge, None), MERGE);
-        assert_eq!(importance(Style::Merged, None), MERGE);
+        assert_eq!(importance(Style::Ticket), LOW, "a ticket's bar takes its strip's most important (rows)");
+        assert_eq!(importance(Style::MainMerge), MERGE);
+        assert_eq!(importance(Style::Merged), MERGE);
         assert_eq!(MERGE, Importance::default().value(), "merges as before");
-        const { assert!(HIGH > MIDDLE && MIDDLE > LOW && LOW > MERGE, "a failure outranks a `?`, a `?` a pass") };
+        const { assert!(HIGH > MIDDLE && MIDDLE > LOW && LOW > MERGE, "a send-back outranks a stop, a stop the rest") };
         for level in [HIGH, MIDDLE, LOW, MERGE] {
             assert_eq!(Importance::new(level).map(Importance::value), Ok(level), "{level} is the widget's");
         }

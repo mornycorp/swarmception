@@ -11,8 +11,7 @@
 //! (`2026-10-31T13:20:00Z`) and the timeline's playhead there; `--trace <issue>` traces a
 //! ticket's journey through the factory; `--hover <issue>` moves the pointer onto the ticket's
 //! chip once the factory has drawn it, `--hover-bar <issue>` onto its first bar on the timeline,
-//! `--hover-gate <sub>` onto a gate run's bar on the timeline (#84), `--hover-worker <name>`
-//! onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
+//! `--hover-worker <name>` onto a worker's row in the Workers pane (#67: its instance, or the first row of that name);
 //! `--menu file|file.recent` draws the window's own menu bar and clicks File open (and puts the
 //! pointer on Open Recent), for a screenshot of it (#69); File ▸ Open… (⌘O) is AppKit's open
 //! panel on macOS ([`folder`]), elsewhere the desktop's own picker (zenity, kdialog, PowerShell's
@@ -139,7 +138,7 @@ fn issue(text: &str) -> Result<u64, String> {
     text.trim_start_matches('#').parse().map_err(|_| format!("an issue is a number, not {text}"))
 }
 
-const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-gate <sub>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--off-shift] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
+const USAGE: &str = "usage: swarmception [--repo <path>] [--grouping flat|workers] [--collapse [off|empty|window]] [--panes timeline,factory,details,gates,workers] [--details <ticket|gate:<sub>|session:<instance>|merge:<commit>>] [--at <YYYY-MM-DDTHH:MM:SSZ>] [--trace <issue>] [--hover <issue>] [--hover-bar <issue>] [--hover-worker <name>] [--fold] [--hover-fold <n>] [--menu file|file.recent] [--step next|previous|first|last] [--steps all|claims|work|submits|gates|sendBacks|merges] [--off-shift] [--dark | --light] [--size <w> <h>] [--zoom <scale>] [--screenshot <file.png|file.ppm>] [--control [<port>]] [--control-file <path>] [--state-dir <dir>] [--fresh]";
 /// Frames to draw after the timeline has data, before a screenshot.
 const SETTLE_FRAMES: u32 = 10;
 
@@ -159,7 +158,6 @@ struct Options {
     trace: Option<u64>,
     hover: Option<u64>,
     hover_bar: Option<u64>,
-    hover_gate: Option<String>,
     hover_worker: Option<String>,
     /// `--fold`: the timeline folds its quiet time (#86).
     fold: bool,
@@ -190,12 +188,7 @@ impl Options {
     /// Frames to draw once ready before a screenshot: a hover waits a little longer, for its
     /// tooltip.
     fn settle(&self) -> u32 {
-        if self.hover.or(self.hover_bar).is_some()
-            || self.hover_gate.is_some()
-            || self.hover_worker.is_some()
-            || self.hover_fold.is_some()
-            || self.menu.is_some()
-        {
+        if self.hover.or(self.hover_bar).is_some() || self.hover_worker.is_some() || self.hover_fold.is_some() || self.menu.is_some() {
             45
         } else {
             SETTLE_FRAMES
@@ -227,7 +220,6 @@ impl Options {
                 "--trace" => options.trace = Some(issue(&value()?)?),
                 "--hover" => options.hover = Some(issue(&value()?)?),
                 "--hover-bar" => options.hover_bar = Some(issue(&value()?)?),
-                "--hover-gate" => options.hover_gate = Some(value()?),
                 "--hover-worker" => options.hover_worker = Some(value()?),
                 "--fold" => options.fold = true,
                 "--hover-fold" => options.hover_fold = Some(fold_place(&value()?)?),
@@ -309,7 +301,6 @@ fn main() -> ExitCode {
             screenshot: options.screenshot.clone().map(|path| Screenshot::new(path, options.settle())),
             hover: options.hover,
             hover_bar: options.hover_bar,
-            hover_gate: options.hover_gate,
             hover_worker: options.hover_worker,
             hover_fold: options.hover_fold,
             pointer: None,
@@ -479,13 +470,11 @@ struct App {
     hover: Option<u64>,
     /// `--hover-bar`: the ticket whose bar on the timeline the pointer is put on.
     hover_bar: Option<u64>,
-    /// `--hover-gate`: the gate run whose bar on the timeline the pointer is put on (#84).
-    hover_gate: Option<String>,
     /// `--hover-worker`: the worker whose row in the Workers pane the pointer is put on (#67).
     hover_worker: Option<String>,
     /// `--hover-fold`: the fold whose marker on the timeline the pointer is put on (#86).
     hover_fold: Option<usize>,
-    /// Where `--hover`, `--hover-bar`, `--hover-gate` or `--hover-worker` put the pointer last.
+    /// Where `--hover`, `--hover-bar` or `--hover-worker` put the pointer last.
     pointer: Option<egui::Pos2>,
     /// `--control`: the control channel's requests.
     control: Option<control::Control>,
@@ -497,7 +486,6 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         let bar = self.hover_bar.and_then(|issue| self.shell.bar_point(issue));
         let chip = self.hover.and_then(|issue| self.shell.factory().drawn().chips.iter().find(|(i, _)| *i == issue).map(|(_, rect)| rect.center()));
-        let gate = self.hover_gate.clone().and_then(|sub| self.shell.run_point(&sub));
         let rows = &self.shell.workers().drawn().rows;
         let worker = self.hover_worker.as_ref().and_then(|name| {
             let row = rows
@@ -509,7 +497,7 @@ impl eframe::App for App {
         });
         let fold = self.hover_fold.and_then(|n| self.shell.fold_point(n));
         // Moved only when the point moves: each move restarts egui's tooltip delay.
-        if let Some(point) = chip.or(bar).or(gate).or(worker).or(fold).filter(|p| self.pointer.is_none_or(|last| last.distance(*p) > 1.0)) {
+        if let Some(point) = chip.or(bar).or(worker).or(fold).filter(|p| self.pointer.is_none_or(|last| last.distance(*p) > 1.0)) {
             raw_input.events.push(egui::Event::PointerMoved(point));
             self.pointer = Some(point);
         }
@@ -696,8 +684,8 @@ mod tests {
         let options = parse(&["--fold", "--hover-fold", "2"]).unwrap();
         assert_eq!((options.fold, options.hover_fold), (true, Some(2)));
         assert!(parse(&["--hover-fold", "first"]).is_err());
-        let options = parse(&["--hover-gate", "gate-12b", "--panes", "timeline,gates"]).unwrap();
-        assert_eq!(options.hover_gate.as_deref(), Some("gate-12b"));
+        assert!(parse(&["--hover-gate", "gate-12b"]).is_err(), "no gate run has a bar on the timeline (#117)");
+        let options = parse(&["--panes", "timeline,gates"]).unwrap();
         assert_eq!(options.panes, Some(swarmception_ui::Panes { timeline: true, factory: false, details: false, gates: true, workers: false }));
         let options = parse(&["--hover-worker", "alder", "--panes", "timeline,workers"]).unwrap();
         assert_eq!(options.hover_worker.as_deref(), Some("alder"));

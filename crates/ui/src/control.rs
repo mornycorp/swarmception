@@ -43,8 +43,10 @@ use crate::{Panes, Shell, UiState};
 /// the timeline's folds (#86, `timeline.folds`; the state's `fold`); 13: the benches folded away
 /// and scrolled out of view (#94, `factory.drawn.benchesFolded`, `benchesHidden`); 14: the window
 /// the rows' lanes are sized over (#97, `timeline.lanesWindow`); 15: the benches off shift opened
-/// out of their fold (#106, `factory.drawn.benchesUnfolded`; the state's `factory.off_shift`).
-pub const INSPECT_VERSION: u32 = 15;
+/// out of their fold (#106, `factory.drawn.benchesUnfolded`; the state's `factory.off_shift`); 16:
+/// the gate's runs no rows of the timeline (#117: `timeline.hoveredRun` and `lit`'s `hoveredRun`
+/// gone).
+pub const INSPECT_VERSION: u32 = 16;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -177,10 +179,6 @@ pub struct TimelineInspect {
     /// microseconds (#74).
     #[serde(default)]
     pub collapse_us: Option<u64>,
-    /// The gate run whose bar on the Gate runs or Ready checks row is under the pointer (#84),
-    /// `<sub>@<start>`: its tickets' bars are lit.
-    #[serde(default)]
-    pub hovered_run: Option<String>,
     /// The stretches the timeline folds (#86), as clock times: none while folding is off.
     #[serde(default)]
     pub folds: Vec<Span>,
@@ -289,8 +287,7 @@ pub struct WorkersSet {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct GatesInspect {
-    /// The window it drew, as `gates.list` returned it. Its runs are the timeline's Gate runs and
-    /// Ready checks rows (#84).
+    /// The window it drew, as `gates.list` returned it (the timeline's window, #61).
     pub window: Option<Span>,
     /// The headline figures, `label value`.
     pub figures: Vec<String>,
@@ -299,7 +296,7 @@ pub struct GatesInspect {
     /// Each hour's columns drawn (#75), `<start> gate <runs> ready <runs>`.
     #[serde(default)]
     pub hours: Vec<String>,
-    /// The hour under the pointer, its start (#84: the runs are the timeline's).
+    /// The hour under the pointer, its start (#84).
     pub hovered: Option<Timestamp>,
     /// Why there is nothing to draw: `gates.list`'s refusal.
     pub error: Option<String>,
@@ -574,7 +571,6 @@ impl Shell {
             in_view: self.timeline.rows_in_view(),
             left_out: self.timeline.left_out().to_vec(),
             collapse_us: self.timeline.collapse_time().map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
-            hovered_run: self.timeline.hovered(&mut self.engine).run(),
             folds: self.timeline.folds().into_iter().map(|(start, end)| Span { start, end }).collect(),
             lanes_window: self.timeline.lanes_window().map(|(start, end)| Span { start, end }),
         };

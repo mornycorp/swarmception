@@ -127,7 +127,7 @@ fn collapsed_to_the_window_the_pane_draws_the_rows_rows_window_shows() {
     let dir = repo();
     let (ctx, mut shell) = loaded(&dir);
     let all = drawn(&mut shell);
-    assert_eq!(all.len(), 4 + WORKERS, "the four top rows (#84: the gate's two, empty here) and a row a ticket: {all:?}");
+    assert_eq!(all.len(), 2 + WORKERS, "the two merges rows (#117: no gate rows) and a row a ticket: {all:?}");
 
     let inspect = set(&mut shell, &format!(r#"{{"collapse": "window", "window": {EARLY}}}"#));
     assert_eq!(shell.menu_state().collapse, Collapse::Window, "ui.set sets it through rows.set");
@@ -147,7 +147,7 @@ fn collapsed_to_the_window_the_pane_draws_the_rows_rows_window_shows() {
     set(&mut shell, r#"{"collapse": "off"}"#);
     frame(&mut shell, &ctx);
     assert!(shell.inspect().timeline.left_out.is_empty());
-    assert_eq!(drawn(&mut shell).len(), 4 + WORKERS, "the main and gate rows too, empty, with collapse off");
+    assert_eq!(drawn(&mut shell).len(), 2 + WORKERS, "the main row too, empty, with collapse off");
     assert_eq!(drawn(&mut shell), rows_window(&mut shell).shown);
     std::fs::remove_dir_all(dir).ok();
 }

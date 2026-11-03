@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (a stage named everywhere in its strip's colour, `Stage::colour` the one source, and no Gate runs or Ready checks rows, #117; merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -61,13 +61,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   against swarm-core's pinned `prwatch::sendback`. `rows` turns them into the rows asked for (`RowsSpec`: the tickets flat or
   by worker, collapsed: `Collapse` off, `empty` (no events at all) or `window`, #74, which `true`
   and `false` still read as), under two rows at the top, the merges onto `main` and the tickets'
-  merges, each a marker of no length at its time (#115: its bar's start its end), and under them the gate's two (#84:
-  Gate runs and Ready checks, `GATES_KEY` and `READY_KEY`, `TOP_KEYS` the four): a bar a run of
-  `gates`' one definition, `gates.list`'s runs (`gates::told_runs`), from its start to its end (a
-  running one's to the last event, open), in its result's colour, labelled by the tickets it
-  carried and a failure's cause (`#83 · build/clippy`), its tooltip the run's, its `RunBar` (id,
-  lane, result, tickets, its details' `Subject`: a ready check's its own story since #95, as a
-  gate run's, `Subject::Gate` by its id) where a ticket's bar has its `ticket`. A ticket is one
+  merges, each a marker of no length at its time (#115: its bar's start its end; `TOP_KEYS` the
+  two). The gate's runs have no rows (#117, the owner's, reversing #84's Gate runs and Ready
+  checks): a run naming a ticket is the ticket's *in the gate* stage, a failure its send-back; a
+  saved state naming the old rows' keys (`gates`, `ready`) reads on without them. A ticket is one
   bar a row (#110, `Style::Ticket`): from its first stretch to its last, in its own colour all
   along, labelled once; its stages (`Stage`: claimed, working, waiting for merge, in the gate
   where a gate run naming it ran, sent back, stopped) are its `segments`, each in the factory's
@@ -78,13 +75,16 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   rows (`Node::Group` or `Node::Ranges`); each bar carries its label, its ticket (none for a merge onto main), its style,
   its colour and its tooltip, as plain text (`tooltip`) and as styled lines (`tooltip_lines`,
   #35: `tooltip::TipLine`, runs of text each in a colour from `colours` or none, strong or not:
-  the phase names in their colours, merged green, sent back, its cause and abandoned red,
-  durations and the title strong). `colours` is the one source of colours, the timeline's and the
+  each stage named in its strip's colour, `Stage::colour` the one source (#117: the strip's
+  segments, the widget's segment line and its ■ swatch, the tooltip's stretch lines and
+  milestones and the details' story all call it; a wait's gate runs listed under it, *in the
+  gate*, by id), merged green, sent back, its cause and abandoned red, durations and the title
+  strong). `colours` is the one source of colours, the timeline's and the
   factory's (#15): a ticket's own colour from its issue number (its entry in a fixed, curated palette of
   eleven muted colours, the owner's scheme B (#40): consecutive ids never share one, none is
-  near a phase's hue, dark labels legible on every one), in which its *working* bars and
-  its merge are drawn; claimed yellow, waiting for merge blue, sent back red, stopped grey, merges
-  onto main green. `timeline` builds
+  near a phase's hue, dark labels legible on every one), in which its bar and its merge are
+  drawn; claimed yellow, working a warm white, waiting for merge blue, in the gate magenta, sent
+  back red, stopped grey, merges onto main green. `timeline` builds
   swarm-timeline's host data (`TimelineData`) from the rows, each range in its bar's colour: the axis's items are the distinct
   times, with a `Time` (Spans) scale, positions in nanoseconds from the first time floored to
   the hour; a time with a bar of no length at it (a merge, #115) has an item of no width first,
@@ -117,14 +117,13 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   their times and durations, abandonment, its worker's `ready` checks, the gate runs that named
   it, releases, its merge and the commit onto main), a gate run (its start and note, its merges
   and send backs, the commits onto main, how it ended), a session (its claims, work, submits,
-  pauses, helpers and gate runs) or a merge onto main; each `Entry` a line in its colour (the
-  ticket's own for working and merges, the phases' fixed colours, green passed, red failed or
-  sent back), with a header (chip, mark, title, GitHub's state, PR and labels), `Fact`s, the
-  `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket,
-  its merge onto main or its run's subject (#84: the gate run; a `ready` check's ticket, else its
-  worker's session).   `details_on` (#55) adds where the subject is drawn on the rows
+  pauses, helpers and gate runs) or a merge onto main; each `Entry` a line in its colour (a stage
+  in its strip's, #117; the ticket's own for its merges, green passed, red failed or sent back),
+  with a header (chip, mark, title, GitHub's state, PR and labels), `Fact`s, the
+  `Related` subjects it names and its `Page`s. `bar_subject` reads a timeline bar as its ticket
+  or its merge onto main.   `details_on` (#55) adds where the subject is drawn on the rows
   (`OnTimeline`: its bars as `rows::BarRef`s and the times they span): a ticket's bars; a gate
-  run's merges onto main, its tickets' bars and its own on the Gate runs row (#84); a session's, the stretches its events began in
+  run's merges onto main and its tickets' bars; a session's, the stretches its events began in
   its time, the tickets it merged and their merges onto main; a merge onto main's bar and its
   ticket's. `gates` (#61) is how the gate behaved over a window (`GatesList`): every run, the
   coordinator's gates (`factory::gate_runs`, inferred ones too) and the workers' `ready` checks
@@ -183,8 +182,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   `rows.window` (#74: `{start?, end?, keep?}`; collapsed to the window, the rows and groups a
   window leaves out, `rows::left_out`: a row none of whose bars overlaps it unless `keep` names
   it, a group with no row left in place of its rows; and those it shows, top to bottom),
-  `timeline.timeAt`, `timeline.bar` (#84: `{track, range}`, the bar there with its `RunBar`) and
-  `timeline.runBars` (#84: `{sub, at?}`, a gate run's bar, to point at or select), `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
+  `timeline.timeAt`, `timeline.bar` (#84: `{track, range}`, the bar there; `timeline.runBars`
+  gone with the gate's rows, #117), `stats.get` (`{start?, end?}`, each a UTC time or epoch seconds, the whole
   run by default), `timeline.placeAt` (a time's position and item), `timeline.ticketBars` (a
   ticket's bars, to highlight), `factory.at` (the factory at *t*, and a ticket's journey), `factory.moments` (the key moments in
   a window, of the kinds asked for), `factory.step` (the next, previous, first or last key moment
@@ -322,12 +321,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   rows open, by `tracks.expand`, when collapsed (#68: `details.get`'s `timeline.groups`); the
   rows scroll to the first of theirs under the merges rows, which a merged ticket is always on,
   when none is on screen). The highlight has one owner, `TimelinePane::light` (`light_hover`): a factory
-  hover's ticket while it lasts, else the tickets of the run whose bar on the timeline's Gate runs
-  or Ready checks row is under the pointer (#84, `TimelinePane::hovered`: the widget's
-  `query.tooltip` bar read back through `query.bars` and `timeline.bar`; `ui.inspect`'s
-  `timeline.hoveredRun`), else a Workers pane hover's (`Hover`), else the details' bars, so a
-  hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`). A run's bar
-  clicked is the details' subject as any bar is (`details.get`'s `track` and `range`).
+  hover's ticket while it lasts, else a Workers pane hover's (`Hover`), else the details' bars, so
+  a hover's leave gives them back (`TimelinePane::lit`, `ui.inspect`'s `timeline.lit`; #84's
+  hovered run and `timeline.hoveredRun` gone with the gate's rows, `ui.inspect` version 16,
+  #117).
   **Folding quiet time** (#86, swarm-timeline's §5.3): View ▸ Fold Quiet Time, the toolbar's
   checkbox beside the Collapse toggles and `ui.set`'s `foldQuiet` (`UiState::fold`, `FoldView`)
   have the widget fold every stretch where no row has a bar for longer than the threshold
@@ -438,7 +435,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   (`client`). It depends on the engine and on swarm-timeline's `timeline-automation` (same pin),
   never on the UI: the app joins the two.
 - **Apps:** `swarmception` (the window; `--repo`, `--grouping`, `--collapse [off|empty|window]`,
-  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-gate` (#84: a run's bar on the timeline), `--hover-worker`, `--fold` and `--hover-fold <n>` (#86: quiet time folded, the pointer on a fold's marker),
+  `--panes`, `--details`, `--at`, `--hover`, `--hover-bar`, `--hover-worker`, `--fold` and `--hover-fold <n>` (#86: quiet time folded, the pointer on a fold's marker),
   `--menu file|file.recent` (#69: the window's own menu bar, File clicked open and the pointer on
   Open Recent, for a screenshot), `--step`, `--steps`, `--size`, `--zoom` (the UI's
   scale: a 2560 × 1440 layout in a window the screen holds, #68), `--screenshot`, `--control`,
@@ -602,6 +599,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | #117: every place that names a stage takes its colour from `Stage::colour` (`colours::phase_colour` gone): the tooltip's stretch lines and milestones (working the strip's warm white, not the ticket's colour), a wait's gate runs listed under it *in the gate*, the details' story and facts; the Gate runs and Ready checks rows removed (`GATES_KEY`, `READY_KEY`, `RunBar`, `Bar::run`, `Style::GateRun`/`ReadyCheck`, `gates::told_runs`, `timeline.runBars`, the run hover, `--hover-gate`, the rows' importance cases), `ui.inspect` version 16 |
 | 2026-11-03 | minor | #115: the top rows' merges are markers of no length (no `MERGE_SECONDS`); `timeline` gives each such time an item of no width, the bar's |
 | 2026-11-03 | minor | #110: a ticket is one bar a row in its own colour (`Style::Ticket`), its stages (`Stage`, `BarSegment`) a strip along its foot and its send-backs and merge `BarMark`s, through swarm-timeline's range strips (§6.6) and marks' glyphs (§11.5), pinned at its main; a session's bars are the tickets' bars holding the stretches it began |
 | 2026-11-03 | minor | #106: a gate's failure for the change's cause is a send-back with or without a `sendback` (`sendbacks`, `Activity::issue_events`), as swarm-core's `prwatch::sendback` reads it; the Factory's benches in natural order (`factory::natural`), the fold of those off shift opening on a click and closing again (`FactoryView::off_shift`, `UiState` 11, `ui.set`'s `offShift`, `ui.inspect` 15's `benchesUnfolded`); the live test's fakes run by `sh`, never exec'd new |

@@ -1,11 +1,12 @@
-//! Each row's lanes sized over the window (#97, the widget's `view.lanes`): the Ready checks row,
-//! four lanes tall over the whole swarm because four checks overlapped once, is one lane in a
-//! window with one check at a time; the pane turns it on with every load, and the widget packs the
-//! lanes again once the view has held still after a move.
+//! Each row's lanes sized over the window (#97, the widget's `view.lanes`): the pane turns it on
+//! with every load, and the widget packs the lanes again over the new window once the view has
+//! held still after a move, which `ui.inspect` reports. Since #117 (the Ready checks row, the
+//! one that stacked, gone) every row is one lane: the tickets are packed so they never overlap,
+//! and the merges, four of them at once here, are markers of no length (#115).
 
 use std::path::PathBuf;
 
-use swarmception_domain::rows::READY_KEY;
+use swarmception_domain::rows::MERGED_KEY;
 use swarmception_engine::factory_cmds::{PlaceAt, PlaceAtParams};
 use swarmception_model::Timestamp;
 use swarmception_ui::Shell;
@@ -17,8 +18,8 @@ use timeline_engine::wire::SpanWire;
 
 mod support;
 
-/// Four workers each run a ready check over 03:20–03:30, so they overlap once; worker-1 runs four
-/// more one after another from 04:00, each two minutes long.
+/// Four workers each claim a ticket at 03:01, merged all at once at 03:29; worker-1 claims four
+/// more one after another, merged ten minutes apart from 04:00.
 fn repo() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let dir = std::env::temp_dir().join(format!(
@@ -31,13 +32,13 @@ fn repo() -> PathBuf {
         let mut lines = vec![
             format!(r#"{{"event":"session.start","machine":"mini","name":"worker-{w}","role":"worker","t":"2026-10-31T03:00:00Z"}}"#),
             format!(r#"{{"event":"claim","issue":{w},"mr":{},"t":"2026-10-31T03:01:00Z"}}"#, w + 10),
-            format!(r#"{{"event":"sub.start","name":"ready","sub":"ready-{w}","t":"2026-10-31T03:2{w}:00Z"}}"#),
-            format!(r#"{{"event":"sub.stop","note":"rc=0","sub":"ready-{w}","t":"2026-10-31T03:29:00Z"}}"#),
+            format!(r#"{{"event":"merge","issue":{w},"mr":{},"t":"2026-10-31T03:29:00Z"}}"#, w + 10),
         ];
         if w == 1 {
             for k in 0..4 {
-                lines.push(format!(r#"{{"event":"sub.start","name":"ready","sub":"later-{k}","t":"2026-10-31T04:{k}0:00Z"}}"#));
-                lines.push(format!(r#"{{"event":"sub.stop","note":"rc=0","sub":"later-{k}","t":"2026-10-31T04:{k}2:00Z"}}"#));
+                let issue = 5 + k;
+                lines.push(format!(r#"{{"event":"claim","issue":{issue},"mr":{},"t":"2026-10-31T03:5{k}:00Z"}}"#, issue + 10));
+                lines.push(format!(r#"{{"event":"merge","issue":{issue},"mr":{},"t":"2026-10-31T04:{k}0:00Z"}}"#, issue + 10));
             }
         }
         lines.push(r#"{"event":"session.stop","t":"2026-10-31T05:00:00Z"}"#.to_owned());
@@ -74,9 +75,13 @@ fn state(shell: &mut Shell) -> TimelineState {
     shell.timeline().widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap()
 }
 
-fn ready_lanes(shell: &mut Shell) -> u32 {
+fn lanes(shell: &mut Shell) -> Vec<u32> {
+    shell.timeline().widget().session().call::<Rows>(NoParams {}).unwrap().rows.into_iter().map(|row| row.lanes).collect()
+}
+
+fn merged_lanes(shell: &mut Shell) -> u32 {
     let rows = shell.timeline().widget().session().call::<Rows>(NoParams {}).unwrap().rows;
-    rows.into_iter().find(|row| row.key == READY_KEY).map(|row| row.lanes).unwrap()
+    rows.into_iter().find(|row| row.key == MERGED_KEY).map(|row| row.lanes).unwrap()
 }
 
 fn place(shell: &mut Shell, time: &str) -> i64 {
@@ -84,7 +89,7 @@ fn place(shell: &mut Shell, time: &str) -> i64 {
 }
 
 #[test]
-fn ready_checks_are_one_lane_in_a_window_with_one_check_and_four_over_the_overlap() {
+fn the_lanes_are_packed_over_the_window_once_it_holds_still() {
     let dir = repo();
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(&dir));
@@ -94,36 +99,37 @@ fn ready_checks_are_one_lane_in_a_window_with_one_check_and_four_over_the_overla
         time += 0.01;
         shell.has_timeline()
     });
-    // On with the load, packed over the whole swarm shown: the four overlap there.
+    // On with the load, packed over the whole swarm shown.
     let loaded = state(&mut shell);
     assert_eq!(loaded.lanes_over, LanesOverWire::Window, "the pane sizes the lanes over the window");
     assert_eq!(loaded.lanes_window, Some(loaded.window));
-    assert_eq!(ready_lanes(&mut shell), 4);
+    assert_eq!(lanes(&mut shell), [1].repeat(lanes(&mut shell).len()), "every row one lane, the four merges at 03:29 too");
 
-    // The window on the later checks, one at a time: one lane once the view has held still.
-    let (start, end) = (place(&mut shell, "2026-10-31T04:05:00Z"), place(&mut shell, "2026-10-31T04:35:00Z"));
+    // The window on the later merges: packed over it once the view has held still.
+    let (start, end) = (place(&mut shell, "2026-10-31T04:05:00Z"), place(&mut shell, "2026-10-31T04:25:00Z"));
     shell.timeline().widget().session().call::<Set>(SetParams { window: Some(SpanWire { start, end }), ..SetParams::default() }).unwrap();
     frame(&mut shell, &ctx, time);
-    assert_eq!(ready_lanes(&mut shell), 4, "not until the view holds still");
+    assert_eq!(state(&mut shell).lanes_window, Some(loaded.window), "not until the view holds still");
     for _ in 0..3 {
         time += 0.15;
         frame(&mut shell, &ctx, time);
     }
     assert_eq!(state(&mut shell).lanes_window, Some(SpanWire { start, end }));
-    assert_eq!(ready_lanes(&mut shell), 1, "one check at a time in the window");
+    assert_eq!(merged_lanes(&mut shell), 1);
     // ui.inspect reports the window they were packed over, as clock times.
     let inspect = shell.inspect();
     assert!(inspect.version >= 14, "lanesWindow since version 14");
     let packed = inspect.timeline.lanes_window.unwrap();
-    assert_eq!((packed.start, packed.end), (Timestamp::parse("2026-10-31T04:05:00Z").unwrap(), Timestamp::parse("2026-10-31T04:35:00Z").unwrap()));
+    assert_eq!((packed.start, packed.end), (Timestamp::parse("2026-10-31T04:05:00Z").unwrap(), Timestamp::parse("2026-10-31T04:25:00Z").unwrap()));
 
-    // Back over the overlap: four again.
-    let (start, end) = (place(&mut shell, "2026-10-31T03:15:00Z"), place(&mut shell, "2026-10-31T03:35:00Z"));
+    // Back over the four merges at once: still one lane, markers of no length.
+    let (start, end) = (place(&mut shell, "2026-10-31T03:20:00Z"), place(&mut shell, "2026-10-31T03:35:00Z"));
     shell.timeline().widget().session().call::<Set>(SetParams { window: Some(SpanWire { start, end }), ..SetParams::default() }).unwrap();
     for _ in 0..4 {
         time += 0.15;
         frame(&mut shell, &ctx, time);
     }
-    assert_eq!(ready_lanes(&mut shell), 4);
+    assert_eq!(state(&mut shell).lanes_window, Some(SpanWire { start, end }));
+    assert_eq!(merged_lanes(&mut shell), 1);
     let _ = std::fs::remove_dir_all(dir);
 }
