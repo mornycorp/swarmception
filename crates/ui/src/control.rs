@@ -1,7 +1,7 @@
 //! The window's own commands for a control channel (docs/architecture.md › Automation):
 //! `ui.commands` lists them with their schemas, and the widget's forwarded ones as
 //! `timeline.<id>`; `ui.inspect` reads what the shell shows as data ([`Inspect`]: the panes, the
-//! factory's time and what it drew, the timeline's view and selection, the gates pane's runs),
+//! factory's time and what it drew, the timeline's view and selection),
 //! `ui.set` sets it
 //! ([`UiSet`]), `ui.loaded` answers once the window has loaded ([`Loaded`]) and `ui.screenshot`
 //! saves the window as PNG or PPM ([`Screenshot`]); the app answers those two: it owns the
@@ -45,8 +45,9 @@ use crate::{Panes, Shell, UiState};
 /// the rows' lanes are sized over (#97, `timeline.lanesWindow`); 15: the benches off shift opened
 /// out of their fold (#106, `factory.drawn.benchesUnfolded`; the state's `factory.off_shift`); 16:
 /// the gate's runs no rows of the timeline (#117: `timeline.hoveredRun` and `lit`'s `hoveredRun`
-/// gone).
-pub const INSPECT_VERSION: u32 = 16;
+/// gone); 17: the gates pane gone (#128: `gates` gone, and `gates` from the state's panes, sizes
+/// and folds).
+pub const INSPECT_VERSION: u32 = 17;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -208,9 +209,6 @@ pub struct Inspect {
     /// Where the state is kept across a restart, and where it was read from (#53).
     #[serde(default)]
     pub saved: crate::saved::SavedInspect,
-    /// The gates pane (#61).
-    #[serde(default)]
-    pub gates: GatesInspect,
     /// How the panes shared the window last frame (#68): the timeline's height and least, each
     /// band's height, what it asked for and whether it is folded, the details' width.
     #[serde(default)]
@@ -283,25 +281,6 @@ pub struct WorkersSet {
     pub default_place: bool,
 }
 
-/// The gates pane, as `ui.inspect` reads it (#61): what it drew last frame from `gates.list`.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase")]
-pub struct GatesInspect {
-    /// The window it drew, as `gates.list` returned it (the timeline's window, #61).
-    pub window: Option<Span>,
-    /// The headline figures, `label value`.
-    pub figures: Vec<String>,
-    /// The causes table's rows, `cause gate ready`.
-    pub causes: Vec<String>,
-    /// Each hour's columns drawn (#75), `<start> gate <runs> ready <runs>`.
-    #[serde(default)]
-    pub hours: Vec<String>,
-    /// The hour under the pointer, its start (#84).
-    pub hovered: Option<Timestamp>,
-    /// Why there is nothing to draw: `gates.list`'s refusal.
-    pub error: Option<String>,
-}
-
 /// The details pane, as `ui.inspect` reads it (#55).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -338,8 +317,8 @@ pub enum StepTo {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UiSet {
     pub panes: Option<Panes>,
-    /// Folds or opens the panes named (#68), as a click on a title's chevron does: `{"gates":
-    /// true}` folds the Gates band to its header, `{"details": false}` opens the Details; the
+    /// Folds or opens the panes named (#68), as a click on a title's chevron does:
+    /// `{"factory": true}` folds the Factory band to its header, `{"details": false}` opens the Details; the
     /// panes left out stay as they are.
     pub folded: Option<crate::layout::Folded>,
     /// The Workers pane (#76): its window open or not and where, its sort, its window of time.
@@ -575,7 +554,6 @@ impl Shell {
             lanes_window: self.timeline.lanes_window().map(|(start, end)| Span { start, end }),
         };
         let details = self.details_inspect();
-        let gates = self.gates_inspect();
         Inspect {
             version: INSPECT_VERSION,
             state: self.ui.clone(),
@@ -586,7 +564,6 @@ impl Shell {
             timeline,
             details,
             saved: self.saved(),
-            gates,
             layout: self.layout().clone(),
             workers: self.workers_inspect(),
             open: self.open_inspect(),
@@ -648,26 +625,6 @@ impl Shell {
             title: shown.map(|d| d.title.clone()),
             error: self.details.error().map(str::to_owned),
             bars: self.details.on_timeline(&self.ui.details).map(|on| on.bars.clone()).unwrap_or_default(),
-        }
-    }
-
-    /// What the gates pane drew last frame (#61).
-    fn gates_inspect(&self) -> GatesInspect {
-        let drawn = self.gates.drawn();
-        GatesInspect {
-            window: drawn.window.map(|(start, end)| Span { start, end }),
-            figures: drawn.figures.clone(),
-            causes: drawn.causes.clone(),
-            hours: drawn
-                .hour_columns
-                .chunks(2)
-                .filter_map(|pair| match pair {
-                    [gate, ready] => Some(format!("{} gate {} ready {}", gate.start, gate.runs, ready.runs)),
-                    _ => None,
-                })
-                .collect(),
-            hovered: drawn.hovered,
-            error: self.gates.error().map(str::to_owned),
         }
     }
 
@@ -913,8 +870,8 @@ mod tests {
         assert_eq!(inspect.version, INSPECT_VERSION);
         assert_eq!(
             inspect.state.panes,
-            Panes { timeline: false, factory: true, details: true, gates: true, workers: false },
-            "details, gates and workers left out: their defaults"
+            Panes { timeline: false, factory: true, details: true, workers: false },
+            "details and workers left out: their defaults"
         );
         assert_eq!(inspect.factory.t, Timestamp::parse("2026-10-31T03:42:00Z"), "the time it shows");
         assert!(inspect.state.factory.follow, "following the timeline's playhead, put there");

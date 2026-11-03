@@ -118,27 +118,24 @@ fn band(inspect: &Inspect, name: &str) -> swarmception_ui::layout::BandDrawn {
 #[test]
 fn the_timeline_keeps_its_least_with_every_pane_open() {
     let dir = repo();
-    for (size, gates_folded) in [((1440.0, 900.0), false), ((2560.0, 1440.0), false), ((1280.0, 720.0), true)] {
+    for size in [(1440.0, 900.0), (2560.0, 1440.0), (1280.0, 720.0)] {
         let (ctx, mut shell) = loaded(&dir, size);
         frame(&mut shell, &ctx, size);
         let inspect = shell.inspect();
         let layout = &inspect.layout;
         let names: Vec<&str> = layout.bands.iter().map(|b| b.name.as_str()).collect();
-        assert_eq!(names, ["gates", "factory"], "{size:?}: under the timeline, top to bottom");
+        assert_eq!(names, ["factory"], "{size:?}: under the timeline (#128: no Gates band)");
         let timeline = layout.timeline.unwrap();
         assert!(timeline + 1 >= layout.timeline_least, "{size:?}: the timeline keeps its least: {layout:?}");
         assert!(layout.timeline_least > 200, "{size:?}: the merges rows and six more, measured: {layout:?}");
         // The merges rows and at least six ticket rows on screen.
         assert!(inspect.timeline.in_view.len() >= 8, "{size:?}: {:?}", inspect.timeline.in_view);
         assert_eq!(&inspect.timeline.in_view[..2], ["main", "merged"]);
-        // The window's defaults: the Gates fold on a small window; the bands as asked when there is room.
-        let (gates, factory) = (band(&inspect, "gates"), band(&inspect, "factory"));
-        assert_eq!((gates.folded, gates.default_fold, factory.folded), (gates_folded, true, false), "{size:?}");
-        if gates_folded {
-            assert_eq!(gates.size, FOLDED_BAND as u32);
-        }
+        // The window's defaults: the factory open; as asked when there is room.
+        let factory = band(&inspect, "factory");
+        assert_eq!((factory.folded, factory.default_fold), (false, true), "{size:?}");
         if size.1 >= 1_400.0 {
-            assert_eq!((gates.size, factory.size), (gates.wanted, factory.wanted), "room for both: {layout:?}");
+            assert_eq!(factory.size, factory.wanted, "room for it: {layout:?}");
         }
         assert!(layout.details.as_ref().is_some_and(|d| !d.folded && d.size >= 300), "{size:?}: {:?}", layout.details);
         assert_eq!(inspect.state.folded, Folded::default(), "no choice made: the window decides");
@@ -151,21 +148,20 @@ fn the_bands_give_way_and_come_back_as_the_window_changes() {
     let dir = repo();
     let (big, small) = ((1440.0, 1000.0), (1440.0, 640.0));
     let (ctx, mut shell) = loaded(&dir, big);
-    // The person's sizes: tall bands.
+    // The person's size: a tall band.
     let mut state = shell.ui_state();
-    state.sizes.factory = Some(420);
-    state.sizes.gates = Some(160);
-    state.folded = Folded { gates: Some(false), factory: Some(false), details: None };
+    state.sizes.factory = Some(560);
+    state.folded = Folded { factory: Some(false), details: None };
     shell.set_ui_state(state);
     frame(&mut shell, &ctx, small);
     let inspect = shell.inspect();
-    let (gates, factory) = (band(&inspect, "gates"), band(&inspect, "factory"));
-    assert!(gates.size < 160 && factory.size < 420 && gates.size >= 90 && factory.size >= 140, "they give way: {:?}", inspect.layout);
+    let factory = band(&inspect, "factory");
+    assert!(factory.size < 560 && factory.size >= 140, "it gives way: {:?}", inspect.layout);
     assert!(inspect.layout.timeline.unwrap() + 1 >= inspect.layout.timeline_least, "{:?}", inspect.layout);
-    assert_eq!((shell.ui_state().sizes.gates, shell.ui_state().sizes.factory), (Some(160), Some(420)), "what they asked is kept");
+    assert_eq!(shell.ui_state().sizes.factory, Some(560), "what it asked is kept");
     frame(&mut shell, &ctx, (2560.0, 1440.0));
     let inspect = shell.inspect();
-    assert_eq!((band(&inspect, "gates").size, band(&inspect, "factory").size), (160, 420), "room again: as asked");
+    assert_eq!(band(&inspect, "factory").size, 560, "room again: as asked");
     std::fs::remove_dir_all(dir).ok();
 }
 
@@ -179,37 +175,38 @@ fn a_band_folds_from_its_title_and_the_fold_is_kept() {
     let key = saved::repo_key(&dir);
     shell.keep_state(store.clone(), &key, None);
     let texts = frame(&mut shell, &ctx, size);
-    // The Gates band's title, its chevron first: a click folds it to its header.
+    // The Factory band's title, its chevron first: a click folds it to its header.
     let title = |texts: &[(String, egui::Rect)], name: &str| {
         texts.iter().find(|(t, _)| t.ends_with(&format!("  {name}")) && t.chars().count() > name.len() + 4).map(|(_, r)| r.center())
     };
-    let at = title(&texts, "Gates").expect("the Gates' title drawn");
-    let before = band(&shell.inspect(), "gates").size;
+    let at = title(&texts, "Factory").expect("the Factory's title drawn");
+    let before = band(&shell.inspect(), "factory").size;
     click(&mut shell, &ctx, size, at);
     let inspect = shell.inspect();
-    assert_eq!(inspect.state.folded.gates, Some(true), "the person's choice now");
-    let gates = band(&inspect, "gates");
-    assert_eq!((gates.size, gates.folded, gates.default_fold), (FOLDED_BAND as u32, true, false));
+    assert_eq!(inspect.state.folded.factory, Some(true), "the person's choice now");
+    let factory = band(&inspect, "factory");
+    assert_eq!((factory.size, factory.folded, factory.default_fold), (FOLDED_BAND as u32, true, false));
     assert!(inspect.layout.timeline.unwrap() >= inspect.layout.timeline_least + before - FOLDED_BAND as u32 - 1, "the timeline has its room");
     // Folded, its title opens it again.
     let texts = frame(&mut shell, &ctx, size);
-    let at = title(&texts, "Gates").expect("the folded header's title");
+    let at = title(&texts, "Factory").expect("the folded header's title");
     click(&mut shell, &ctx, size, at);
-    assert_eq!(shell.inspect().state.folded.gates, Some(false));
+    assert_eq!(shell.inspect().state.folded.factory, Some(false));
 
     // Through the control channel: the Factory folded and the Details to a strip.
     let inspect = set(&mut shell, r#"{"folded": {"factory": true, "details": true}}"#);
-    assert_eq!(inspect.state.folded, Folded { gates: Some(false), factory: Some(true), details: Some(true) }, "the gates left as they were");
+    assert_eq!(inspect.state.folded, Folded { factory: Some(true), details: Some(true) });
     frame(&mut shell, &ctx, size);
     let inspect = shell.inspect();
     assert!(band(&inspect, "factory").folded && inspect.layout.details.as_ref().is_some_and(|d| d.folded && d.size <= 32), "{:?}", inspect.layout);
     assert!(matches!(shell.answer("ui.set", r#"{"folded": {"timeline": true}}"#), Answer::Now(Err(_))), "the timeline doesn't fold");
+    assert!(matches!(shell.answer("ui.set", r#"{"folded": {"gates": true}}"#), Answer::Now(Err(_))), "no Gates band (#128)");
 
     // Kept across a restart.
     shell.save_state().unwrap();
     let state = store.load(&key).state.expect("saved");
-    assert_eq!(state.ui.folded, Folded { gates: Some(false), factory: Some(true), details: Some(true) });
-    let older: UiState = serde_json::from_str(r#"{"version":5,"panes":{"gates":false}}"#).unwrap();
+    assert_eq!(state.ui.folded, Folded { factory: Some(true), details: Some(true) });
+    let older: UiState = serde_json::from_str(r#"{"version":5,"panes":{"details":false}}"#).unwrap();
     assert_eq!(older.folded, Folded::default(), "an older state folds by the window");
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(home).ok();

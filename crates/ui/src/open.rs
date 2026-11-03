@@ -21,7 +21,7 @@ use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{ClearRecent, Open, OpenParams, Recent, RecentRepo, StatusResult};
 
 use crate::menu::{MenuAction, MenuState, recent_label};
-use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, GatesPane, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
+use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
 
 /// The host's folder picker: shown starting in a folder (the open repository's parent), what it
 /// did. The app's is AppKit's open panel on macOS, elsewhere the desktop's own picker as a child
@@ -226,7 +226,6 @@ impl Shell {
         self.timeline = TimelinePane::default();
         self.factory = FactoryPane::default();
         self.details = DetailsPane::default();
-        self.gates = GatesPane::default();
         self.workers = WorkersPane::default();
         self.followed = (None, None);
         self.revealed = None;

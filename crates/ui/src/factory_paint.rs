@@ -99,7 +99,8 @@ pub struct Marks {
 }
 
 /// What the factory has selected (#85): the details' subject as the factory draws it, which a
-/// bar chosen on the timeline, a gate run chosen in the Gates band or a click in the factory sets.
+/// bar chosen on the timeline, a gate run chosen in the factory's Gate list or a click in the
+/// factory sets.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum Selected {

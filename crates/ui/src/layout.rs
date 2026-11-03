@@ -4,16 +4,16 @@
 //! - **The timeline keeps a minimum** ([`timeline_least`]): its toolbar, its rulers, the merges
 //!   rows and [`LEAST_ROWS`] rows under them (all of them when there are fewer), and its
 //!   scroller.
-//! - **The bands under it give way first** ([`share`]): each band (the Gates, the Factory, and
-//!   any pane that slots in under the timeline) asks for its height, the person's (dragged) or
+//! - **The bands under it give way first** ([`share`]): each band (the Factory, and any pane
+//!   that slots in under the timeline) asks for its height, the person's (dragged) or
 //!   its default; when they don't all fit over the timeline's minimum they shrink, each in
 //!   proportion to what it has over its own least height, down to that least. Only then does the
 //!   timeline give way.
 //! - **A band folds to its header** ([`FOLDED_BAND`] high), a click on its title's chevron; the
 //!   Details pane folds to a strip ([`FOLDED_STRIP`] wide). Folded or not is the person's choice
 //!   once they make it ([`Folded`], saved with the rest of `UiState`); until then the window's
-//!   size decides ([`defaults`]): on a small window the Gates band starts folded and the
-//!   Factory short, on a smaller one both folded.
+//!   size decides ([`defaults`]): on a small window the Factory starts short, on a smaller one
+//!   folded, and the Details folded on a narrow one.
 //! - **Defaults are sized from the window** ([`defaults`]): a band's height, the details' width,
 //!   until the person drags one (then [`crate::PaneSizes`] holds theirs).
 //!
@@ -40,8 +40,6 @@ pub const CENTRAL_LEAST_WIDTH: f32 = 480.0;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Folded {
-    /// The Gates band, to its header.
-    pub gates: Option<bool>,
     /// The Factory band, to its header.
     pub factory: Option<bool>,
     /// The Details pane, to a narrow strip.
@@ -52,7 +50,7 @@ impl Folded {
     /// Each choice made, else the default's.
     #[must_use]
     pub fn or(self, default: Self) -> Self {
-        Self { gates: self.gates.or(default.gates), factory: self.factory.or(default.factory), details: self.details.or(default.details) }
+        Self { factory: self.factory.or(default.factory), details: self.details.or(default.details) }
     }
 
     /// What `set` chooses over this; what it leaves out stays.
@@ -66,24 +64,21 @@ impl Folded {
 /// ([`defaults`]): in points, the folds all chosen.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Defaults {
-    pub gates: f32,
     pub factory: f32,
     pub details: f32,
     pub folded: Folded,
 }
 
 /// What a window of `size` (its inner size, in points) gives the panes until the person chooses:
-/// the Factory about a third of the height (220 to 520), the Gates 170 on a tall window, 130
-/// otherwise, the Details about 28% of the width (300 to 460); the Gates folded under 760 high,
-/// the Factory too under 560, the Details under 1000 wide.
+/// the Factory about a third of the height (220 to 520), the Details about 28% of the width (300
+/// to 460); the Factory folded under 560 high, the Details under 1000 wide.
 #[must_use]
 pub fn defaults(size: egui::Vec2) -> Defaults {
     let (w, h) = (size.x.max(0.0), size.y.max(0.0));
     Defaults {
-        gates: if h >= 1_100.0 { 170.0 } else { 130.0 },
         factory: (h * 0.36).clamp(220.0, 520.0),
         details: (w * 0.28).clamp(300.0, 460.0),
-        folded: Folded { gates: Some(h < 760.0), factory: Some(h < 560.0), details: Some(w < 1_000.0) },
+        folded: Folded { factory: Some(h < 560.0), details: Some(w < 1_000.0) },
     }
 }
 
@@ -148,7 +143,7 @@ pub fn timeline_least(chrome: f32, rows: &[f32]) -> f32 {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct BandDrawn {
-    /// `gates`, `factory`, `details`, …
+    /// `factory`, `details`, …
     pub name: String,
     /// Its height (its width for the Details) last frame.
     pub size: u32,
@@ -266,26 +261,27 @@ mod tests {
     #[test]
     fn defaults_follow_the_windows_size() {
         let laptop = defaults(egui::vec2(1_440.0, 900.0));
-        assert_eq!(laptop.folded, Folded { gates: Some(false), factory: Some(false), details: Some(false) });
-        assert_eq!((laptop.gates, laptop.factory), (130.0, 324.0), "short on a laptop");
+        assert_eq!(laptop.folded, Folded { factory: Some(false), details: Some(false) });
+        assert_eq!(laptop.factory, 324.0, "short on a laptop");
         let big = defaults(egui::vec2(2_560.0, 1_440.0));
-        assert_eq!((big.gates, big.factory, big.details), (170.0, 518.4, 460.0));
+        assert_eq!((big.factory, big.details), (518.4, 460.0));
         let small = defaults(egui::vec2(1_280.0, 720.0));
-        assert_eq!(small.folded, Folded { gates: Some(true), factory: Some(false), details: Some(false) }, "the Gates start folded");
+        assert_eq!(small.folded, Folded { factory: Some(false), details: Some(false) });
         let tiny = defaults(egui::vec2(800.0, 500.0));
-        assert_eq!(tiny.folded, Folded { gates: Some(true), factory: Some(true), details: Some(true) });
+        assert_eq!(tiny.folded, Folded { factory: Some(true), details: Some(true) });
         assert_eq!(tiny.factory, 220.0);
     }
 
     #[test]
     fn a_choice_goes_over_the_default_and_a_set_over_a_choice() {
-        let default = Folded { gates: Some(true), factory: Some(false), details: Some(false) };
-        let chosen = Folded { gates: Some(false), ..Folded::default() };
-        assert_eq!(chosen.or(default), Folded { gates: Some(false), factory: Some(false), details: Some(false) });
+        let default = Folded { factory: Some(true), details: Some(false) };
+        let chosen = Folded { factory: Some(false), ..Folded::default() };
+        assert_eq!(chosen.or(default), Folded { factory: Some(false), details: Some(false) });
         let set = Folded { details: Some(true), ..Folded::default() };
-        assert_eq!(chosen.with(set), Folded { gates: Some(false), factory: None, details: Some(true) });
-        let read: Folded = serde_json::from_str(r#"{"gates": true}"#).unwrap();
-        assert_eq!(read, Folded { gates: Some(true), ..Folded::default() });
+        assert_eq!(chosen.with(set), Folded { factory: Some(false), details: Some(true) });
+        let read: Folded = serde_json::from_str(r#"{"factory": true}"#).unwrap();
+        assert_eq!(read, Folded { factory: Some(true), ..Folded::default() });
+        assert!(serde_json::from_str::<Folded>(r#"{"gates": true}"#).is_err(), "no Gates band (#128)");
         assert!(serde_json::from_str::<Folded>(r#"{"timeline": true}"#).is_err(), "the timeline never folds");
     }
 }

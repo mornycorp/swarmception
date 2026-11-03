@@ -331,7 +331,7 @@ impl StatsStrip {
     }
 }
 
-/// How the gates' pass rate is made up, for its tooltip: the runs as the Gates band counts them
+/// How the gates' pass rate is made up, for its tooltip: the runs as `gates.list` counts them
 /// (#75).
 fn gates_text(stats: &Stats) -> String {
     let (gates, ready) = (&stats.gates, &stats.ready);

@@ -387,6 +387,15 @@ fn without_time(mut factory: serde_json::Value) -> serde_json::Value {
     factory
 }
 
+/// A pane's section without the gates pane an older state kept (#128, `gates` in the panes, the
+/// sizes and the folds up to version 11 of the shell's state): it is gone.
+fn without_gates(mut section: serde_json::Value) -> serde_json::Value {
+    if let Some(fields) = section.as_object_mut() {
+        fields.remove("gates");
+    }
+    section
+}
+
 /// The state in `text`, saved for `repo`, and a note on what was left out; an error saying why
 /// none of it reads.
 fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
@@ -399,11 +408,11 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
     let ui: Option<UiSections> = section(sections.ui, "ui", &mut skipped);
     let ui = ui.map_or_else(UiState::default, |ui| UiState {
         version: UI_STATE_VERSION,
-        panes: section::<Panes>(ui.panes, "panes", &mut skipped),
+        panes: section::<Panes>(ui.panes.map(without_gates), "panes", &mut skipped),
         factory: section::<FactoryView>(ui.factory.map(without_time), "factory", &mut skipped),
         details: section::<DetailsView>(ui.details, "details", &mut skipped),
-        sizes: section::<PaneSizes>(ui.sizes, "sizes", &mut skipped),
-        folded: section::<crate::layout::Folded>(ui.folded, "folded", &mut skipped),
+        sizes: section::<PaneSizes>(ui.sizes.map(without_gates), "sizes", &mut skipped),
+        folded: section::<crate::layout::Folded>(ui.folded.map(without_gates), "folded", &mut skipped),
         workers: section::<WorkersView>(ui.workers, "workers", &mut skipped),
         fold: section::<crate::FoldView>(ui.fold, "fold", &mut skipped),
     });
@@ -669,6 +678,13 @@ mod tests {
         );
         let factory = FactoryView { follow: false, speed: crate::Speed::Hour, ticket: Some(7), steps: crate::Steps::Merges, ..FactoryView::default() };
         assert_eq!((eight.state.unwrap().ui.factory, eight.note), (factory, None));
+        // Version 11 kept the gates pane (#128): its choices are dropped, the rest kept, nothing said.
+        let eleven = load(
+            r#"{"version": 2, "repo": "/r/swarm", "ui": {"version": 11, "panes": {"gates": false, "details": false},
+                "sizes": {"gates": 160, "factory": 300}, "folded": {"gates": true, "factory": true}}}"#,
+        );
+        let ui = eleven.state.unwrap().ui;
+        assert_eq!((ui.panes.details, ui.sizes.factory, ui.folded.factory, eleven.note), (false, Some(300), Some(true), None));
 
         // A newer one: its new sections skipped, a section that changed shape left out, the rest kept.
         let newer = load(
