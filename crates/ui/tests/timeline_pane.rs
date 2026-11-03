@@ -449,3 +449,91 @@ fn a_tickets_tooltip_over_a_short_pane_is_whole() {
     assert!(top < area.top() + 40.0, "above the rows: {top}");
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// #124 (swarm-timeline#215): a ticket's tooltip box fits its text. Its lines are long (stretches
+/// with timestamps, the worker and its instance), and the box was sized at 7 px a character
+/// while egui lays the text out wider, so they ran past its right edge. Each line now ends inside
+/// the box, and the box is inside the screen, wherever the pointer is on the bar.
+#[test]
+fn a_long_ticket_tooltips_lines_end_inside_its_box() {
+    use swarmception_domain::rows::Node;
+    use swarmception_engine::repo_cmds::Status;
+    let (dir, mut engine, mut pane) =
+        opened_then(&[r#"{"event":"work","issue":7,"t":"2026-10-31T03:05:00Z"}"#, r#"{"event":"merge","issue":7,"mr":8,"t":"2026-10-31T03:45:00Z"}"#]);
+    let list: swarmception_engine::rows_cmds::ListResult = serde_json::from_str(&engine.execute("rows.list", "").unwrap()).unwrap();
+    let bar = list
+        .rows
+        .iter()
+        .flat_map(Node::leaves)
+        .find_map(|leaf| match leaf {
+            Node::Ranges { key, bars, .. } if key != "merged" => bars.iter().find(|b| b.ticket == Some(7)).cloned(),
+            _ => None,
+        })
+        .unwrap();
+    // The bar's lines as the widget draws them: each plain line whole, each coloured one its runs.
+    let wanted: Vec<String> = bar
+        .tooltip_lines
+        .iter()
+        .flat_map(|line| if line.is_plain() { vec![line.text()] } else { line.spans.iter().map(|s| s.text.clone()).collect() })
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    let longest = bar.tooltip_lines.iter().map(|line| line.text().chars().count()).max().unwrap_or(0);
+    assert!(longest >= 40, "a long line, where 7 px a character falls short: {:?}", bar.tooltip);
+    let first = bar.tooltip_lines.first().map(|line| line.text()).unwrap();
+    let status = engine.call::<Status>(swarmception_engine::engine_cmds::NoParams {}).unwrap();
+    let ctx = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    let alt = egui::Modifiers { alt: true, ..Default::default() };
+    let run = |pane: &mut TimelinePane, mut events: Vec<egui::Event>| {
+        // Alt held: the tooltip shows at once.
+        events.insert(0, egui::Event::ModifiersChanged(alt));
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| {
+            pane.ui(ui, &status);
+        });
+        output.textures_delta.clear();
+        output.shapes
+    };
+    run(&mut pane, Vec::new());
+    let middle = pane.bar_point(&mut engine, 7).expect("#7's bar is drawn");
+    // The pointer at two places on the bar: the box goes right of it where it fits, else left of
+    // it, else from the screen's left edge (a box of ~740 px on a 1000 px screen).
+    for x in [middle.x.min(300.0), middle.x.max(900.0)] {
+        let at = egui::pos2(x, middle.y);
+        run(&mut pane, vec![egui::Event::PointerMoved(at)]);
+        let shapes = run(&mut pane, vec![egui::Event::PointerMoved(at)]);
+        // The tooltip's first line, the last drawn of that text (a bar's label can read the same),
+        // and its box, the filled rect drawn just before it.
+        let Some(start) = shapes.iter().rposition(|c| matches!(&c.shape, egui::Shape::Text(t) if t.galley.text() == first)) else {
+            panic!("{x}: #7's tooltip drawn at {at:?}: {:?}", bar.tooltip);
+        };
+        let boxed = shapes[..start]
+            .iter()
+            .rev()
+            .find_map(|c| match &c.shape {
+                egui::Shape::Rect(rect) if rect.fill != egui::Color32::TRANSPARENT => Some(rect.rect),
+                _ => None,
+            })
+            .expect("the tooltip's box");
+        assert!(screen.contains_rect(boxed), "{x}: the box inside the screen: {boxed:?}");
+        let drawn: Vec<(String, egui::Rect)> = shapes[start..]
+            .iter()
+            .filter_map(|clipped| match &clipped.shape {
+                egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.visual_bounding_rect())),
+                _ => None,
+            })
+            .collect();
+        for text in &wanted {
+            assert!(drawn.iter().any(|(t, _)| t == text), "{x}: {text:?} drawn: {drawn:?}");
+        }
+        // Every run of every line, each copy of a strong one too (runs repeat across lines: " by
+        // mini-aa1111" ends each stretch's line, the longest last).
+        for (text, rect) in drawn.iter().filter(|(t, _)| wanted.contains(t)) {
+            assert!(boxed.contains_rect(*rect), "{x}: {text:?} ends inside the box: {rect:?} in {boxed:?}");
+        }
+        // And the box fits its text: no wider than its widest line and its padding (5 px a side).
+        let widest = drawn.iter().filter(|(t, _)| wanted.contains(t)).map(|(_, r)| r.right()).fold(f32::MIN, f32::max);
+        assert!(boxed.right() - widest <= 2.0 * 5.0 + 1.0, "{x}: the box fits its text, no wider: {widest} in {boxed:?}");
+    }
+    std::fs::remove_dir_all(dir).ok();
+}
