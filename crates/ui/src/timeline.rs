@@ -25,6 +25,11 @@
 //! restore; the bands drawn under it line their times up through the folds ([`TimeAxis`], the
 //! widget's own mapping from time to x).
 //!
+//! Each row's lanes are sized over the window (#97, the widget's `view.lanes`): a row is as tall
+//! as the most of its bars that overlap in the window, not anywhere in the swarm, packed again
+//! once the view holds still after a pan or zoom (the widget's own 250 ms settle), and after
+//! every load and restore.
+//!
 //! What the owner fixed (#35) the pane sets by command on every load, and the widget's toolbar
 //! leaves out: the `Time` scale, the absolute origin, the minimap always and a click selecting
 //! the nearest bar. The toolbar shows only [`TOOLBAR`]: Fit, Zoom to Selection, Undo Zoom, the
@@ -46,6 +51,7 @@ use swarmception_engine::stats_cmds::At;
 use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
+use timeline_engine::lanes_cmds::{LanesOverWire, LanesParams, SetLanes};
 use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams, Tooltip};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
@@ -529,6 +535,17 @@ impl TimelinePane {
         state.folds.iter().map(|f| (at(f.start), at(f.end))).collect()
     }
 
+    /// The window the rows' lanes were last packed over (#97), as clock times: they are sized over
+    /// the window, packed again once it holds still. None before data, or with them over the
+    /// whole swarm.
+    pub fn lanes_window(&mut self) -> Option<(Timestamp, Timestamp)> {
+        let origin = self.origin.filter(|_| self.has_data)?;
+        let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
+        let window = state.lanes_window.filter(|_| state.lanes_over == LanesOverWire::Window)?;
+        let at = |position: i64| Timestamp(origin.0.saturating_add(position.div_euclid(NANOS)));
+        Some((at(window.start), at(window.end)))
+    }
+
     /// The pages chosen from bars' context menus since the last call (#17): a bar's Open Issue
     /// and Open PR, the widget's host items read back as [`Link`]s.
     pub fn take_links(&mut self) -> Vec<Link> {
@@ -609,6 +626,7 @@ impl TimelinePane {
                 let _ = session.call::<SetRuler>(SetRulerParams { ruler: 0, domain: Some(RulerDomainWire::Clock), origin: None });
             }
         }
+        Self::pack_lanes(self.widget.session());
         self.load_time = Some(started.elapsed());
         Ok(())
     }
@@ -702,6 +720,7 @@ impl TimelinePane {
         if let Some(t) = view.playhead {
             self.put_playhead(engine, t);
         }
+        Self::pack_lanes(self.widget.session());
         true
     }
 
@@ -736,22 +755,35 @@ impl TimelinePane {
     }
 
     /// What the owner fixed (#35), by command: the `Time` scale, the absolute origin, the minimap
-    /// always, a click selecting the nearest bar.
+    /// always, a click selecting the nearest bar; and each row's lanes sized over the window
+    /// (#97), so a row is as tall as what the window shows.
     fn fix_view(session: &mut timeline_engine::Session) {
         let _ = session.call::<Set>(SetParams { scale: Some(TIME.to_owned()), origin: Some(OriginWire::Absolute), ..SetParams::default() });
         let _ = session.call::<SetVisibility>(VisibilityParams { visibility: VisibilityWire::Always });
         let _ = session.call::<SetClickMode>(ClickModeParams { mode: ClickModeWire::Nearest });
+        Self::pack_lanes(session);
+    }
+
+    /// The rows' lanes packed over the window now (the widget's `view.lanes`, #97): after a load or
+    /// a restore has put the window where it stays. The widget packs them again itself once the
+    /// view holds still after a pan or zoom.
+    fn pack_lanes(session: &mut timeline_engine::Session) {
+        let _ = session.call::<SetLanes>(LanesParams { over: LanesOverWire::Window });
     }
 
     /// Shows the whole swarm.
     pub fn fit(&mut self) {
-        let _ = self.widget.session().call::<Fit>(NoParams {});
+        let session = self.widget.session();
+        let _ = session.call::<Fit>(NoParams {});
+        Self::pack_lanes(session);
     }
 
     /// Zooms about the window's centre: 2 shows half as much. (The widget's toolbar has the zoom
     /// buttons since #35; this is for a host or a test to drive it.)
     pub fn zoom(&mut self, factor: f64) {
-        let _ = self.widget.session().call::<Zoom>(ZoomParams { factor, ..ZoomParams::default() });
+        let session = self.widget.session();
+        let _ = session.call::<Zoom>(ZoomParams { factor, ..ZoomParams::default() });
+        Self::pack_lanes(session);
     }
 
     /// Shows `start` to `end` (clock times, `timeline.placeAt`'s positions) in the window, on the
@@ -772,6 +804,8 @@ impl TimelinePane {
         let (start, end) = (start.max(extent.start), end.min(extent.end));
         if end > start {
             let _ = session.call::<Set>(SetParams { window: Some(SpanWire { start, end }), ..SetParams::default() });
+            // The host moved the view, not the pointer: the lanes follow at once (#97).
+            Self::pack_lanes(session);
         }
     }
 

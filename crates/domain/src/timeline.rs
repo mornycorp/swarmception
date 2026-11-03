@@ -195,7 +195,13 @@ impl Adder<'_> {
     fn bar(&mut self, track: TrackId, place: usize, bar: &Bar) -> Result<(), DataError> {
         let first = self.item(bar.start);
         let last = self.item(bar.end).saturating_sub(1).max(first);
-        let range = Range { name: bar.label.clone(), extent: RangeExtent::Items { first, last }, colour: Some(colour(bar.colour)), lane: None };
+        let range = Range {
+            name: bar.label.clone(),
+            extent: RangeExtent::Items { first, last },
+            colour: Some(colour(bar.colour)),
+            lane: None,
+            importance: timeline_core::data::Importance::default(),
+        };
         self.built.data.add_range(track, range)?;
         if bar.open {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
