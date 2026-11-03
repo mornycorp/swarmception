@@ -136,7 +136,7 @@ fn fold_quiet_time_folds_the_stretch_where_nothing_happened() {
     set(&mut shell, &ctx, r#"{"foldQuiet": true}"#);
     let inspect = shell.inspect();
     assert!(inspect.state.fold.on);
-    assert_eq!(inspect.version, 12);
+    assert_eq!(inspect.version, 13);
     let folds = inspect.timeline.folds.clone();
     assert_eq!(folds.len(), 1, "{folds:?}");
     assert_eq!((folds[0].start, folds[0].end), (t("2026-10-31T03:29:00Z"), t("2026-10-31T09:01:00Z")), "{folds:?}");

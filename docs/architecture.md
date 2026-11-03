@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -245,7 +245,10 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   The factory pane, under the timeline, draws what `factory.at` returns, its stations left to
   right and the key along the bottom in one row (two when narrow); the benches are short strips
   (name, model and helper on one line, the status under it) in more columns when many workers
-  would not fit in one, the gate is its list of runs (✔/✖, tickets, cause, age) under what it is
+  would not fit in one; when even those squash them, the workers off shift holding nothing fold
+  into one line under the rest (`+22 off shift: …`), the busy come first and the rest scroll, each
+  strip at least a line high, the bench holding a newly selected ticket scrolled into view (#94:
+  `ui.inspect` version 13's `factory.drawn.benchesFolded` and `benchesHidden`), the gate is its list of runs (✔/✖, tickets, cause, age) under what it is
   gating (#31). The tooltips are the scene's lines in colour (`factory_tip`: phases in their
   colours, passes green, failures red, durations emphasised, clock times quiet). Each ticket is
   the same chip at every station (its fill its colour, its border its phase, its size by station),
@@ -564,6 +567,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | The Factory's benches with dozens of workers (#94): those off shift holding nothing fold into a line when the rest lack room, the busy first, the rest scrolling (`BenchGrid`, `WallView::benches`), never shorter than a line; `Drawn::bench_cells`, `benches_folded`, `benches_hidden`; `ui.inspect` version 13 |
 | 2026-11-02 | minor | Folding the timeline's quiet time (#86): swarm-timeline at efdf212 (its §5.3); View ▸ Fold Quiet Time, the toolbar's checkbox, `ui.set`'s `foldQuiet` and `foldAfterSeconds`, `UiState` version 10 (`fold`), `ui.inspect` version 12 (`timeline.folds`); `TimelinePane::fold_quiet` and `time_axis`, the Gates band's hours through the folds (`TimeAxis`) |
 | 2026-11-02 | minor | The Factory follows the timeline (#85): no clock of its own (its *t* the playhead's, a time put on it kept while the playhead stays on its item; `UiState` version 9 without `t`), its header's buttons first at fixed places, the details' subject selected in it and brought into view (`Selected`, `Block::commit`), the strip keeping its range after an hour's click (`ui.set`'s `hour`); `ui.inspect` version 11 |
 | 2026-11-02 | minor | Gate runs and ready checks as rows on the timeline (#84): the domain's Gate runs and Ready checks rows under the merges rows (`Style::GateRun`, `Style::ReadyCheck`, `Bar::run`, `RunBar`, `TOP_KEYS`), `gates.list`'s runs a bar each; `bar_subject` and a gate run's `OnTimeline` read them; `timeline.bar`, `timeline.runBars`; the timeline's hovered run lights its tickets (`TimelinePane::hovered`); the Gates band keeps its figures, causes and hours, its lanes gone; `ui.inspect` version 10 (`timeline.hoveredRun`; `gates.runs` gone, `gates.hovered` an hour) |
