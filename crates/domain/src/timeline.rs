@@ -11,16 +11,19 @@
 use std::collections::BTreeMap;
 
 use timeline_core::axis::Position;
+use timeline_core::data::InstantAt;
 use timeline_core::data::{
     CategoryId, Colour, DataError, Importance, Instant, Item, ItemIndex, MemoryData, Range, RangeExtent, RangeFlags, TimelineData, TooltipLine, TooltipSpan,
     TrackId, TrackKind, TrackTree,
 };
+use timeline_core::marks::{Glyph, Mark, MarkEdge};
 use timeline_core::scale::{Availability, NamedScale, Scale};
+use timeline_core::strip::Segment;
 
 use swarmception_model::Timestamp;
 
 use crate::colours::Rgb;
-use crate::rows::{Bar, Node};
+use crate::rows::{Bar, MarkKind, Node};
 use crate::tooltip::TipLine;
 
 /// The time scale's name.
@@ -128,6 +131,9 @@ pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     for leaf in rows.iter().flat_map(Node::leaves) {
         if let Node::Ranges { bars, .. } = leaf {
             times.extend(bars.iter().flat_map(|b| [b.start, b.end]));
+            // A ticket's strip's stages and its marks (#110) fall between its ends.
+            times.extend(bars.iter().flat_map(|b| b.segments.iter().flat_map(|s| [s.start, s.end])));
+            times.extend(bars.iter().flat_map(|b| b.marks.iter().map(|m| m.t)));
         }
     }
     times.sort_unstable();
@@ -207,12 +213,48 @@ impl Adder<'_> {
         if bar.open {
             self.built.data.set_range_flags(track, place, RangeFlags { open_ended: true, ..RangeFlags::default() })?;
         }
+        self.strip(track, place, bar, (first, last))?;
+        for mark in &bar.marks {
+            let at = InstantAt::Item(self.item(mark.t));
+            let (glyph, edge, importance) = match mark.kind {
+                MarkKind::SentBack => (Glyph::Diamond, MarkEdge::Bottom, crate::colours::HIGH),
+                MarkKind::Merged => (Glyph::Dot, MarkEdge::Middle, crate::colours::LOW),
+            };
+            let importance = Importance::new(importance).unwrap_or(Importance::MAXIMUM);
+            self.built
+                .data
+                .add_mark(Mark::dot(track, at, colour(mark.colour), mark.name.clone()).with_glyph(glyph).with_edge(edge).with_importance(importance))?;
+        }
         self.built.range_tips.insert((track, place), bar.tooltip_lines.clone());
         let links = Link::of(bar);
         if !links.is_empty() {
             self.built.range_links.insert((track, place), links);
         }
         Ok(())
+    }
+}
+
+impl Adder<'_> {
+    /// A ticket's bar's strip (#110): each stage the run of items from its start's up to the one
+    /// before its end's, within the bar's `first..=last`; a stage that would overlap the one
+    /// before (one of no items) is left out, so the widget takes them.
+    fn strip(&mut self, track: TrackId, place: usize, bar: &Bar, (first, last): (ItemIndex, ItemIndex)) -> Result<(), DataError> {
+        let mut segments: Vec<Segment> = Vec::new();
+        let mut next = first;
+        for stage in &bar.segments {
+            let start = self.item(stage.start).max(next);
+            let end = self.item(stage.end).saturating_sub(1).min(last);
+            if end < start {
+                continue;
+            }
+            let importance = Importance::new(stage.importance).unwrap_or(Importance::MAXIMUM);
+            // The widget's tooltip line adds its duration on the `Time` scale.
+            segments.push(
+                Segment::new(RangeExtent::Items { first: start, last: end }, colour(stage.colour)).with_label(stage.stage.name()).with_importance(importance),
+            );
+            next = end + 1;
+        }
+        if segments.is_empty() { Ok(()) } else { self.built.data.set_range_segments(track, place, segments) }
     }
 }
 
@@ -261,6 +303,14 @@ impl TimelineData for SwarmData {
         self.data.range_flags(track, place)
     }
 
+    fn range_segments(&self, track: TrackId, place: usize) -> &[Segment] {
+        self.data.range_segments(track, place)
+    }
+
+    fn marks(&self) -> &[Mark] {
+        self.data.marks()
+    }
+
     fn menu_items(&self, track: Option<TrackId>, range: Option<usize>, _item: Option<ItemIndex>) -> Vec<(String, String)> {
         track.zip(range).and_then(|key| self.range_links.get(&key)).map(|links| links.iter().map(|l| (l.label(), l.id())).collect()).unwrap_or_default()
     }
@@ -302,11 +352,29 @@ mod tests {
         let tree = built.data.tracks();
         let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
         let ranges = built.data.ranges(ticket).unwrap();
-        let RangeExtent::Items { first, last } = ranges[1].extent else { panic!() };
+        let RangeExtent::Items { first, last } = ranges[0].extent else { panic!() };
         let span = scale.range_span(first, last).unwrap();
-        assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:25Z");
-        assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:06:43Z", "up to the submit");
-        assert_eq!(built.data.range_tooltip(ticket, 1)[0], "#170 · PR #173");
+        assert_eq!(built.time_at(span.start()).to_string(), "2026-10-31T03:53:22Z", "from its claim");
+        assert_eq!(built.time_at(span.end()).to_string(), "2026-10-31T04:28:58Z", "up to its merge");
+        assert_eq!(built.data.range_tooltip(ticket, 0)[0], "#170 · PR #173");
+        // #110: its stages its strip's segments, each from its start up to its end, in its colour.
+        let time = |extent: RangeExtent| {
+            let RangeExtent::Items { first, last } = extent else { panic!() };
+            let span = scale.range_span(first, last).unwrap();
+            (built.time_at(span.start()).to_string(), built.time_at(span.end()).to_string())
+        };
+        let strip = built.data.range_segments(ticket, 0);
+        let stages: Vec<(Option<&str>, (String, String))> = strip.iter().map(|s| (s.label.as_deref(), time(s.extent))).collect();
+        assert_eq!(stages[1], (Some("working"), ("2026-10-31T03:53:25Z".to_owned(), "2026-10-31T04:06:43Z".to_owned())));
+        assert_eq!(stages.iter().map(|(label, _)| label.unwrap_or_default()).collect::<Vec<_>>(), ["claimed", "working", "waiting for merge", "in the gate"]);
+        assert_eq!(strip[1].colour, colour(crate::colours::WORKING));
+        assert!(timeline_core::strip::in_order(strip));
+        // Its merge, a green dot at its end.
+        let marks: Vec<_> = built.data.marks().iter().filter(|m| m.track == ticket).collect();
+        assert_eq!(marks.len(), 1);
+        assert_eq!((marks[0].drawn_as(), marks[0].colour), (timeline_core::marks::Glyph::Dot, colour(crate::tooltip::PASSED)));
+        let timeline_core::marks::MarkShape::Dot(InstantAt::Item(at)) = marks[0].shape else { panic!() };
+        assert_eq!(built.time_at(scale.span(at).unwrap().start()).to_string(), "2026-10-31T04:28:58Z");
     }
 
     #[test]
@@ -316,13 +384,13 @@ mod tests {
         let built = build(&rows, false).unwrap();
         let tree = built.data.tracks();
         let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
-        let lines = built.data.range_tooltip_lines(ticket, 1);
-        let plain = built.data.range_tooltip(ticket, 1);
+        let lines = built.data.range_tooltip_lines(ticket, 0);
+        let plain = built.data.range_tooltip(ticket, 0);
         assert_eq!(lines.iter().map(TooltipLine::text).collect::<Vec<_>>(), plain, "the same words");
         assert!(lines[0].spans[0].strong, "the title strong");
-        let working = &lines[1].spans[0];
+        let working = &lines[2].spans[0];
         assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::ticket_colour(170)))));
-        assert!(lines[1].spans.iter().any(|s| s.strong && s.text == "13 min 18 s"));
+        assert!(lines[2].spans.iter().any(|s| s.strong && s.text == "13 min 18 s"));
         assert!(lines.iter().any(|l| l.spans.first().is_some_and(|s| s.text == "merged" && s.colour == Some(colour(crate::tooltip::PASSED)))));
     }
 
@@ -357,7 +425,7 @@ mod tests {
         let built = build(&rows, false).unwrap();
         let tree = built.data.tracks();
         let track = |key: &str| tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
-        let items = built.data.menu_items(Some(track("tickets/2")), Some(1), None);
+        let items = built.data.menu_items(Some(track("tickets/2")), Some(0), None);
         assert_eq!(items, [("Open Issue #170".to_owned(), "github.issue:170".to_owned()), ("Open PR #173".to_owned(), "github.pull:173".to_owned())]);
         assert_eq!(built.data.menu_items(Some(track("main")), Some(0), None), [("Open PR #173".to_owned(), "github.pull:173".to_owned())]);
         assert!(built.data.menu_items(Some(track("main")), None, None).is_empty(), "a row's own menu has none");
@@ -427,8 +495,10 @@ mod tests {
     }
 
     /// #108, the issue's own case: zoomed out to the whole run, forty items a pixel column, the
-    /// failed gate run, the failed ready check and the send back each show red in a packed
-    /// column, though none is its column's first range (which, before #108, gave it its colour).
+    /// failed gate run and the failed ready check each show red in a packed column, though
+    /// neither is its column's first range (which, before #108, gave it its colour). The send
+    /// back (#110: a ticket's bar in its own colour, its stages a strip) takes its packed column
+    /// for its ticket, and its red mark survives the marks' packing.
     #[test]
     fn a_failure_survives_packing() {
         use crate::colours::SENT_BACK;
@@ -444,7 +514,7 @@ mod tests {
         let end = i64::try_from(count).unwrap();
         let map = PixelMap::new(Axis::new(Domain::Index, Span::new(0, end).unwrap()).window(0, end).unwrap(), count as f32 / 40.0).unwrap();
         let tree = built.data.tracks();
-        for (key, red) in [("gates", FAILED), ("ready", FAILED), ("tickets/1", SENT_BACK)] {
+        for (key, red) in [("gates", FAILED), ("ready", FAILED)] {
             let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
             let bars = range_bars(&built.data, track, &scale, &RangeIndex::new(&built.data, track).unwrap(), &map).unwrap();
             assert!(bars.iter().all(|b| b.packed), "{key}: zoomed out, every column packs: {bars:?}");
@@ -452,6 +522,20 @@ mod tests {
             assert_eq!(shown.len(), 1, "{key}: one red column, the failure's: {bars:?}");
             assert_ne!(shown[0].range, shown[0].shown, "{key}: not its column's first range, so only its importance shows it");
         }
+        let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/1").unwrap();
+        let bars = range_bars(&built.data, track, &scale, &RangeIndex::new(&built.data, track).unwrap(), &map).unwrap();
+        let ranges = built.data.ranges(track).unwrap();
+        let sent: Vec<usize> = (0..ranges.len()).filter(|&i| ranges[i].importance.value() == crate::colours::HIGH).collect();
+        assert_eq!(sent.len(), 1, "one ticket sent back");
+        let column = bars.iter().find(|b| b.range <= sent[0] && sent[0] < b.range + b.count).unwrap();
+        assert_eq!(column.shown, sent[0], "its ticket shows for its column");
+        assert_ne!(column.range, column.shown, "not its column's first");
+        let marks = built.data.marks();
+        let index = timeline_core::marks::MarkIndex::new(marks, &scale);
+        let drawn = timeline_core::marks::draw(marks, &index, track, &scale, &map);
+        assert!(drawn.len() < marks.iter().filter(|m| m.track == track).count(), "packed");
+        let red: Vec<_> = drawn.iter().filter(|m| m.colour == colour(SENT_BACK)).collect();
+        assert_eq!(red.len(), 1, "the send back's mark stands for its neighbours: {drawn:?}");
     }
 
     #[test]

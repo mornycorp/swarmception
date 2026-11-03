@@ -376,7 +376,7 @@ fn on_timeline(ctx: &Ctx<'_>, rows: &[Node], subject: &Subject) -> OnTimeline {
     OnTimeline { bars, start, end, groups }
 }
 
-/// A session's bars: the stretches its events began in its time, the tickets it merged then and
+/// A session's bars: the tickets' bars holding the stretches its events began in its time, the tickets it merged then and
 /// their merges onto main.
 fn session_bars<'r>(ctx: &Ctx<'_>, rows: &'r [Node], instance: &str, at: Option<Timestamp>) -> Vec<(BarRef, &'r Bar)> {
     let Some(session) = ctx.activity.agent(instance).and_then(|agent| session_at(agent, at)) else { return Vec::new() };
@@ -385,13 +385,14 @@ fn session_bars<'r>(ctx: &Ctx<'_>, rows: &'r [Node], instance: &str, at: Option<
     let mut merged = Vec::new();
     for ticket in &ctx.tickets {
         let mine = ticket.stretches.iter().filter(|s| s.by == instance && inside(s.start));
-        began.extend(mine.map(|s| (ticket.issue, Style::from(s.phase), s.start, s.end)));
+        began.extend(mine.map(|s| (ticket.issue, s.start)));
         merged.extend(ticket.merged.as_ref().filter(|m| m.by == instance && inside(m.t)).map(|m| (ticket.issue, m)));
     }
     let commits: Vec<&MainMerge> = merged.iter().filter_map(|(_, m)| main_commit(ctx, m.pr, m.t)).collect();
     bars_where(rows, |key, bar| match bar.ticket {
         Some(issue) if bar.style == Style::Merged => merged.iter().any(|(merged, _)| *merged == issue),
-        Some(issue) => began.contains(&(issue, bar.style, bar.start, bar.end)),
+        // A ticket's bar holding a stretch the session began (#110: one bar a ticket a row).
+        Some(issue) => began.iter().any(|&(began, t)| began == issue && bar.start <= t && t <= bar.end),
         None => on_main(key, bar, &commits),
     })
 }
@@ -1179,7 +1180,7 @@ mod tests {
         let rows = crate::rows::rows(&activity, &merges(), crate::RowsSpec::default());
         assert_eq!(bar_subject(&rows, &merges(), crate::rows::MAIN_KEY, 0), Some(Subject::Merge { commit: "be043bc0aa".into() }));
         assert_eq!(bar_subject(&rows, &merges(), crate::rows::MERGED_KEY, 0), Some(Subject::Ticket { issue: 170 }));
-        assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 1), Some(Subject::Ticket { issue: 170 }));
+        assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 0), Some(Subject::Ticket { issue: 170 }), "#110: its one bar");
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 99), None);
         assert_eq!(bar_subject(&rows, &merges(), "nope", 0), None);
         // #84: a gate run's bar is the run; #95: a ready check's, the check.
@@ -1204,11 +1205,11 @@ mod tests {
             let main = BarRef { track: MAIN_KEY.into(), range: 0 };
             let merged = BarRef { track: crate::rows::MERGED_KEY.into(), range: 0 };
 
-            // A ticket: its stretches and its merge, from its claim to its merge's end.
+            // A ticket: its bar (#110: one a row) and its merge, from its claim to its merge's end.
             let ticket = on(Subject::Ticket { issue: 170 });
             let tickets = of(&|_, bar| bar.ticket == Some(170));
             assert_eq!(ticket.bars, tickets, "{grouping:?}");
-            assert_eq!(ticket.bars.len(), 4, "claimed, working, waiting and its merge");
+            assert_eq!(ticket.bars.len(), 2, "its bar and its merge");
             assert_eq!(ticket.start, Timestamp::parse("2026-10-31T03:53:22Z"));
             assert_eq!(ticket.end, Timestamp::parse("2026-10-31T04:29:08Z"), "its merge's 10 s");
             // The groups its rows are in (#68): by worker, its machine's and its worker's.

@@ -136,7 +136,7 @@ fn a_load_with_no_github_remote_still_loads_the_timeline() {
     assert!(status.issues.error.as_deref().is_some_and(|e| e.contains("no origin remote")), "{:?}", status.issues);
     assert_eq!((status.issues.github, status.issues.source, status.issues.issues), (None, None, 0));
     assert!(session.widget_timeline().unwrap().is_some(), "the timeline loads all the same");
-    assert_eq!(bars_of(&mut session, 7)[0].label, "#7 claimed", "no titles: the phase, as before");
+    assert_eq!(bars_of(&mut session, 7)[0].label, "#7", "no titles: its number (#110: one bar, its phases its strip)");
     let error = session.execute("ticket.urls", r#"{"issue":7}"#).unwrap_err();
     assert_eq!(error, EngineError::Disabled { command: "ticket.urls".into(), reason: Unavailable::NoGithub });
     assert!(std::fs::read_dir(&cache).unwrap().next().is_none(), "nothing cached");
@@ -190,16 +190,9 @@ fn issues_from_gh_reach_the_tooltips_the_labels_and_the_cache() {
     assert!(cached.is_file(), "the issues cached");
 
     let bars = bars_of(&mut session, 7);
-    assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#7 Seven: the ticket's own title"; 2], "claimed, then waiting");
-    assert_eq!(
-        bars[0].tooltip[..4],
-        [
-            "#7 Seven: the ticket's own title",
-            "closed · type::task · by owner",
-            "PR #8 The fix for seven (merged)",
-            "claimed: 2026-10-31T03:01:00Z → 2026-10-31T03:30:00Z (29 min 00 s)"
-        ]
-    );
+    assert_eq!(bars.iter().map(|b| b.label.as_str()).collect::<Vec<_>>(), ["#7 Seven: the ticket's own title"], "its one bar (#110)");
+    assert_eq!(bars[0].tooltip[..3], ["#7 Seven: the ticket's own title", "closed · type::task · by owner", "PR #8 The fix for seven (merged)"]);
+    assert!(bars[0].tooltip[3].starts_with("claimed: 2026-10-31T03:01:00Z → 2026-10-31T03:30:00Z (29 min 00 s) by "), "{:?}", bars[0].tooltip);
     let urls: TicketUrlsResult = call(&mut session, "ticket.urls", r#"{"issue":7}"#);
     assert_eq!(urls.title.as_deref(), Some("Seven: the ticket's own title"));
     assert_eq!((urls.issue_url.as_str(), urls.pr_url.as_deref()), ("https://github.com/o/n/issues/7", Some("https://github.com/o/n/pull/8")));
