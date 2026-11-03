@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-03 · **Change:** minor (each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -219,8 +219,11 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   live and when it last checked, paused, or that the last check failed and when it tries again,
   the why on hover; the shell asks for a frame when the next check is due. On every load it fixes
   what the owner fixed (#35) by command: the `Time` scale and the absolute origin (`state.set`),
-  the minimap always (`view.minimap`), a click selecting the nearest bar (`view.clickMode`); the
-  widget's toolbar shows only `TIMELINE_TOOLBAR` (`toolbar.set`: Fit, Zoom to Selection, Undo
+  the minimap always (`view.minimap`), a click selecting the nearest bar (`view.clickMode`), and
+  each row's lanes sized over the window (`view.lanes`, #97: a row is as tall as the most of its
+  bars that overlap in the window, the widget packing them again once the view holds still; the
+  pane packs them at once after a load, a restore and its own moves, and `ui.inspect`'s
+  `timeline.lanesWindow` says over which window); the widget's toolbar shows only `TIMELINE_TOOLBAR` (`toolbar.set`: Fit, Zoom to Selection, Undo
   Zoom, its zoom in / out / fit buttons, the measurement), and the app's own toolbar has no zoom
   buttons. The bars' tooltips reach the widget in colour (`timeline::tooltip_line`, the host
   data's `range_tooltip_lines`).
@@ -577,6 +580,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Each row's lanes sized over the window (`view.lanes`, #97), the widget pinned at swarm-timeline 3692af8 (with the minimap's fold marks); `ui.inspect` 14: `timeline.lanesWindow` |
 | 2026-11-03 | minor | Background reads under load (#96): a last wake when the issues' read is over; the engine's tests block on the waker, the UI's wait to a deadline; the source looks up its refs in one `cat-file --batch-check` |
 | 2026-11-03 | minor | Ready checks in the Factory's Gate list (#95): `Gate::checks` (`ready_checks`, `GateRun::lane` and `worker`), in time order with the gate's runs, a flask apart; `factory.at`'s `run` keeps a run selected in the lists (`keep_run`, `is_run`); a selected run running past *t* drawn selected, one after it `not yet run`; a ready check's details its own story (`Subject::Gate` by its id: `details`' `Ctx::checks`; its bar's subject and its line in its ticket's story go to it); `Drawn::run_lines` |
 | 2026-11-03 | minor | The Factory's benches with dozens of workers (#94): those off shift holding nothing fold into a line when the rest lack room, the busy first, the rest scrolling (`BenchGrid`, `WallView::benches`), never shorter than a line; `Drawn::bench_cells`, `benches_folded`, `benches_hidden`; `ui.inspect` version 13 |

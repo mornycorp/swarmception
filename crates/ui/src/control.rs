@@ -41,8 +41,9 @@ use crate::{Panes, Shell, UiState};
 /// factory follows the timeline (#85): its `t` the time it shows, its sources the timeline's, what
 /// it has selected (`factory.selected`, `factory.drawn.selected`), its header and its strip; 12:
 /// the timeline's folds (#86, `timeline.folds`; the state's `fold`); 13: the benches folded away
-/// and scrolled out of view (#94, `factory.drawn.benchesFolded`, `benchesHidden`).
-pub const INSPECT_VERSION: u32 = 13;
+/// and scrolled out of view (#94, `factory.drawn.benchesFolded`, `benchesHidden`); 14: the window
+/// the rows' lanes are sized over (#97, `timeline.lanesWindow`).
+pub const INSPECT_VERSION: u32 = 14;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -178,6 +179,10 @@ pub struct TimelineInspect {
     /// The stretches the timeline folds (#86), as clock times: none while folding is off.
     #[serde(default)]
     pub folds: Vec<Span>,
+    /// The window the rows' lanes were last packed over (#97), as clock times: each row is as
+    /// tall as what that window shows, packed again once the view holds still.
+    #[serde(default)]
+    pub lanes_window: Option<Span>,
 }
 
 /// `ui.inspect`'s answer: the shell's state and what its panes show.
@@ -563,6 +568,7 @@ impl Shell {
             collapse_us: self.timeline.collapse_time().map(|d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX)),
             hovered_run: self.timeline.hovered(&mut self.engine).run(),
             folds: self.timeline.folds().into_iter().map(|(start, end)| Span { start, end }).collect(),
+            lanes_window: self.timeline.lanes_window().map(|(start, end)| Span { start, end }),
         };
         let details = self.details_inspect();
         let gates = self.gates_inspect();
