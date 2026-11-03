@@ -3,7 +3,6 @@
 //! selection, the playhead, the highlight and the details' subject are kept.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use swarmception_domain::details::Subject;
 use swarmception_engine::factory_cmds::{TicketBars, TicketParams};
@@ -15,6 +14,8 @@ use swarmception_ui::{Shell, TimelinePane};
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::state_cmds::{Get, Set, SetParams};
 use timeline_engine::wire::SpanWire;
+
+mod support;
 
 fn git(dir: &Path, args: &[&str]) {
     let mut all = vec!["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"];
@@ -156,17 +157,13 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) {
     output.textures_delta.clear();
 }
 
-/// Frames until `done`, or ten seconds.
+/// Frames until `done`, then one more.
 fn frames_until(shell: &mut Shell, ctx: &egui::Context, done: impl Fn(&mut Shell) -> bool) {
-    for _ in 0..1_000 {
+    support::until("what the test waits for", || {
         frame(shell, ctx);
-        if done(shell) {
-            frame(shell, ctx);
-            return;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    panic!("never happened");
+        done(shell)
+    });
+    frame(shell, ctx);
 }
 
 fn answer(shell: &mut Shell, command: &str, params: &str) -> String {

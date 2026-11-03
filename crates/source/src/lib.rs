@@ -106,7 +106,8 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     let top = git.run(&["rev-parse", "--show-toplevel"], None).map_err(|e| SourceError::NotARepo { path: repo.to_path_buf(), message: e.to_string() })?;
     let top = PathBuf::from(String::from_utf8_lossy(&top).trim());
     let git = Git::new(&top, READ_DEADLINE, MAX_BYTES);
-    let (reference, commit) = first_ref(&git, &REFS).ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
+    let [tracking, main] = first_refs(&git, [&REFS, &MAIN_REFS]);
+    let (reference, commit) = tracking.ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
     let listing = git.run(&["ls-tree", "-r", "-z", "--name-only", &commit, "--", "tracking/"], None)?;
     let mut paths = Vec::new();
     let mut skipped = Vec::new();
@@ -119,7 +120,7 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     }
     let texts = git.cat_files(&commit, &paths)?;
     let files = paths.iter().zip(texts).filter_map(|(path, text)| Some(parse_file(instance_of(path)?, &text))).collect();
-    let (main, main_commit, merges) = match first_ref(&git, &MAIN_REFS) {
+    let (main, main_commit, merges) = match main {
         Some((main, head)) => {
             let merges = merges(&git, &head)?;
             (Some(main), Some(head), merges)
@@ -129,7 +130,7 @@ pub fn read(repo: &Path) -> Result<Tracking, SourceError> {
     Ok(Tracking { repo: top, reference, commit, files, skipped, main, main_commit, merges })
 }
 
-/// How long [`probe`] may take: a few `rev-parse`s, before a repository is opened (#69).
+/// How long [`probe`] may take: two git calls, before a repository is opened (#69).
 pub const PROBE_DEADLINE: Duration = Duration::from_secs(5);
 
 /// What [`probe`] found: a git repository with a tracking branch.
@@ -142,8 +143,8 @@ pub struct Probe {
 }
 
 /// Whether `repo` is a swarm's clone, before it is opened (#69): a git repository (its top
-/// level) with a tracking branch. A few `rev-parse`s, each within [`PROBE_DEADLINE`]; nothing
-/// is read or fetched.
+/// level) with a tracking branch. Two git calls (`rev-parse`, then one `cat-file --batch-check`
+/// for the refs), each within [`PROBE_DEADLINE`]; nothing is read or fetched.
 ///
 /// # Errors
 ///
@@ -157,12 +158,13 @@ pub fn probe(repo: &Path) -> Result<Probe, SourceError> {
         return Err(SourceError::NotARepo { path: repo.to_path_buf(), message: "a bare repository has no working tree".into() });
     }
     let git = Git::new(&top, PROBE_DEADLINE, 64 * 1024);
-    let (reference, _) = first_ref(&git, &REFS).ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
+    let [tracking] = first_refs(&git, [&REFS]);
+    let (reference, _) = tracking.ok_or_else(|| SourceError::NoTrackingBranch { path: top.clone() })?;
     Ok(Probe { top, reference })
 }
 
 /// The commits a read would take now: the tracking ref's and main's, the first of [`REFS`] and
-/// of [`MAIN_REFS`] there. A few `rev-parse`s, so a live watch (#54) reads the branch again only
+/// of [`MAIN_REFS`] there. Two git calls, so a live watch (#54) reads the branch again only
 /// when one of them moved.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Heads {
@@ -186,15 +188,33 @@ impl Heads {
 pub fn heads(repo: &Path) -> Result<Heads, SourceError> {
     let git = Git::new(repo, READ_DEADLINE, 64 * 1024);
     git.run(&["rev-parse", "--git-dir"], None).map_err(|e| SourceError::NotARepo { path: repo.to_path_buf(), message: e.to_string() })?;
-    Ok(Heads { tracking: first_ref(&git, &REFS).map(|(_, commit)| commit), main: first_ref(&git, &MAIN_REFS).map(|(_, commit)| commit) })
+    let [tracking, main] = first_refs(&git, [&REFS, &MAIN_REFS]);
+    Ok(Heads { tracking: tracking.map(|(_, commit)| commit), main: main.map(|(_, commit)| commit) })
 }
 
-/// The first of `refs` there, and its commit.
-fn first_ref(git: &Git, refs: &[&str]) -> Option<(String, String)> {
-    refs.iter().find_map(|r| {
-        let spec = format!("{r}^{{commit}}");
-        let out = git.run(&["rev-parse", "--verify", "--quiet", &spec], None).ok()?;
-        Some(((*r).to_owned(), String::from_utf8_lossy(&out).trim().to_owned()))
+/// The first of each of `lists` of refs there, and its commit: one `git cat-file --batch-check`
+/// for them all, not a `rev-parse` a ref (#96: a git child each was most of what a read waited
+/// on, the more so on a loaded machine). None for a list none of which is there, or when git
+/// can't say.
+fn first_refs<const N: usize>(git: &Git, lists: [&[&str]; N]) -> [Option<(String, String)>; N] {
+    let input: String = lists.iter().flat_map(|list| list.iter()).map(|r| format!("{r}^{{commit}}\n")).collect();
+    // A line an input: `<commit> commit`, or `<input> missing` for a ref that isn't there.
+    let commits: Vec<Option<String>> = git
+        .run(&["cat-file", "--batch-check=%(objectname) %(objecttype)"], Some(input.into_bytes()))
+        .map(|out| {
+            let out = String::from_utf8_lossy(&out);
+            let commit = |line: &str| match line.split_once(' ') {
+                Some((name, "commit")) if !name.is_empty() && name.bytes().all(|b| b.is_ascii_hexdigit()) => Some(name.to_owned()),
+                _ => None,
+            };
+            out.lines().map(commit).collect()
+        })
+        .unwrap_or_default();
+    let mut at = 0;
+    lists.map(|list| {
+        let found = commits.get(at..).unwrap_or_default();
+        at += list.len();
+        list.iter().zip(found).find_map(|(r, commit)| Some(((*r).to_owned(), commit.clone()?)))
     })
 }
 
@@ -319,6 +339,31 @@ mod tests {
         git(&dir, &["switch", "-q", "main"]);
         git(&dir, &["branch", "-q", "-D", "tracking"]);
         assert!(matches!(probe(&dir), Err(SourceError::NoTrackingBranch { .. })));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// #96: every ref looked for in one git call, in order: the first of each list there, one
+    /// that isn't skipped, a tag peeled to its commit, a ref to something else than a commit
+    /// skipped as `rev-parse --verify <ref>^{commit}` would.
+    #[test]
+    fn the_refs_are_looked_up_together_in_order() {
+        let dir = repo();
+        let commit = |name: &str| {
+            let out = std::process::Command::new("git").current_dir(&dir).args(["rev-parse", &format!("{name}^{{commit}}")]).output().unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_owned()
+        };
+        git(&dir, &["branch", "-q", "-m", "main", "master"]);
+        git(&dir, &["tag", "-a", "-m", "a tag", "v1", "tracking"]);
+        git(&dir, &["update-ref", "refs/remotes/origin/tracking", "refs/tags/v1"]);
+        git(&dir, &["update-ref", "refs/remotes/origin/main", "tracking^{tree}"]);
+        let looked = Git::new(&dir, READ_DEADLINE, 64 * 1024);
+        let [tracking, main, none] = first_refs(&looked, [&REFS, &MAIN_REFS, &["refs/heads/nope", "refs/tags/nope"]]);
+        assert_eq!(tracking, Some(("refs/remotes/origin/tracking".to_owned(), commit("tracking"))), "the tag peeled, before the local branch");
+        assert_eq!(main, Some(("refs/heads/master".to_owned(), commit("master"))), "origin/main is a tree, main isn't there: master");
+        assert_eq!(none, None);
+        let read = read(&dir).unwrap();
+        assert_eq!((read.reference.as_str(), read.main.as_deref()), ("refs/remotes/origin/tracking", Some("refs/heads/master")));
+        assert_eq!(heads(&dir).unwrap(), Heads::of(&read));
         std::fs::remove_dir_all(dir).ok();
     }
 

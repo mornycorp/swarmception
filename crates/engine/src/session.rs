@@ -307,6 +307,10 @@ impl Session {
                 let _ = sender.send(news);
                 waker();
             });
+            // The read is over once the channel closes: woken once more after that (#96), so a
+            // front end that draws only when woken sees it end (no longer fetching).
+            drop(sender);
+            waker();
         });
         self.issues.job = Some(receiver);
     }

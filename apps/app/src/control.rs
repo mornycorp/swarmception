@@ -257,12 +257,11 @@ mod tests {
         let mut shell = Shell::new(&ctx, Some(&dir));
         let t = Timestamp::parse("2026-10-31T03:42:00Z").unwrap();
         let (set, inspect, wrong) = drive(&mut shell, &ctx, move |client| {
-            // Wait for the read to land, then put the factory at 03:42 with #7 selected.
-            for _ in 0..500 {
-                let inspect: Inspect = client.call("ui.inspect", &()).unwrap();
-                if inspect.timeline.has_data {
-                    break;
-                }
+            // Wait for the read to land, then put the factory at 03:42 with #7 selected. A
+            // deadline only a failure reaches (#96): a count of tries shrinks with a loaded machine.
+            let deadline = Instant::now() + Duration::from_secs(120);
+            while !client.call::<Inspect>("ui.inspect", &()).unwrap().timeline.has_data {
+                assert!(Instant::now() < deadline, "the read never landed");
                 std::thread::sleep(Duration::from_millis(10));
             }
             let set: Inspect = client.call("ui.set", &serde_json::json!({"at": "2026-10-31T03:42:00Z", "ticket": 7})).unwrap();

@@ -14,6 +14,8 @@ use swarmception_ui::control::{Answer, Inspect};
 use swarmception_ui::saved::{self, StateStore};
 use swarmception_ui::{MenuAction, Picked, Shell};
 
+mod support;
+
 fn scratch(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -66,14 +68,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) -> Vec<String> {
 
 /// Frames until the read has landed and the timeline has drawn it.
 fn settle(shell: &mut Shell, ctx: &egui::Context) {
-    for _ in 0..500 {
+    support::until("the repository loaded", || {
         frame(shell, ctx);
-        if shell.has_timeline() && !shell.fetching_issues() && !shell.loading() {
-            return;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    panic!("the repository never loaded");
+        shell.has_timeline() && !shell.fetching_issues() && !shell.loading()
+    });
 }
 
 fn inspect(shell: &mut Shell) -> Inspect {

@@ -19,6 +19,8 @@ use swarmception_engine::stats_cmds::{At, GetParams};
 use swarmception_ui::{Lit, MenuAction, Shell};
 use timeline_engine::query_cmds::{Bars, BarsParams};
 
+mod support;
+
 /// #7 (PR #8) worked on by worker-1, with a failed `ready` check and its rerun; gate-8 sends it
 /// back on a conflict, gate-8b merges it; #9 (PR #10) worked on by worker-2 and merged by gate-10;
 /// main merges PRs #8 and #10.
@@ -115,13 +117,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) {
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     for _ in 0..3 {
         frame(&mut shell, &ctx);

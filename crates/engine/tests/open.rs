@@ -8,6 +8,9 @@ use swarmception_engine::error::Refusal;
 use swarmception_engine::repo_cmds::{MAX_RECENT, RecentResult, StatusResult};
 use swarmception_engine::{EngineError, Github, Session};
 
+mod support;
+use support::Wakes;
+
 fn temp(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -154,15 +157,11 @@ fn another_repository_replaces_the_one_open_and_goes_first_in_the_recent_list() 
 #[test]
 fn an_open_while_a_read_goes_on_lands_the_new_repository() {
     let (a, b) = (swarm("busy-a", 7), swarm("busy-b", 9));
-    let mut session = Session::with_waker(std::sync::Arc::new(|| {}));
+    let (mut session, wakes) = Wakes::session();
     session.set_github(Github { gh: PathBuf::from("/no/such/gh"), cache_dir: None });
     open(&mut session, &a).unwrap();
     open(&mut session, &b).unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    while (session.job().is_some() || session.reading_issues()) && std::time::Instant::now() < deadline {
-        session.poll();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    wakes.settle(&mut session);
     let status: StatusResult = serde_json::from_str(&session.execute("repo.status", "").unwrap()).unwrap();
     assert_eq!(status.repo.as_deref(), Some(b.display().to_string().as_str()));
     let bars: swarmception_engine::factory_cmds::TicketBarsResult =

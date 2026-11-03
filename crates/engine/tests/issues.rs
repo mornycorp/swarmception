@@ -16,6 +16,9 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::ListResult;
 use swarmception_source::Github;
 
+mod support;
+use support::Wakes;
+
 fn temp(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -49,7 +52,7 @@ fn repo(remote: Option<&str>) -> PathBuf {
     .unwrap();
     git(&dir, &["init", "-q", "-b", "tracking"]);
     git(&dir, &["add", "."]);
-    git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "events"]);
+    git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "commit", "-q", "-m", "events"]);
     if let Some(remote) = remote {
         git(&dir, &["remote", "add", "origin", remote]);
     }
@@ -231,22 +234,19 @@ fn issues_from_gh_reach_the_tooltips_the_labels_and_the_cache() {
 fn in_the_background_the_issues_land_through_poll() {
     let dir = repo(Some("https://github.com/o/n.git"));
     let tools = temp("gh-bg");
-    let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let count = woken.clone();
-    let mut session = Session::with_waker(std::sync::Arc::new(move || {
-        count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }));
+    let (mut session, wakes) = Wakes::session();
     session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: None });
-    let _ = open(&mut session, &dir);
-    let started = std::time::Instant::now();
-    while (session.reading_issues() || session.has_data().is_err()) && started.elapsed() < std::time::Duration::from_secs(20) {
-        session.poll();
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+    let opened = open(&mut session, &dir);
+    assert!(opened.issues.fetching, "the issues are read in the background");
+    // Polled only when woken, as the app draws: the last wake comes once the reads are over, so
+    // a front end sees the issues stop fetching with no input of its own (#96).
+    wakes.settle(&mut session);
     let status: StatusResult = call(&mut session, "repo.status", "");
     assert!(!status.issues.fetching);
+    assert_eq!(status.error, None);
+    assert!(session.has_data().is_ok(), "the branch read");
     assert_eq!((status.issues.source, status.issues.issues), (Some(IssuesSource::Github), 3));
-    assert!(woken.load(std::sync::atomic::Ordering::Relaxed) >= 2, "woken for the branch and the issues");
+    assert!(wakes.count() >= 3, "woken for the branch, the issues and the end of their read");
     assert_eq!(bars_of(&mut session, 7)[0].label, "#7 Seven: the ticket's own title");
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(tools).ok();

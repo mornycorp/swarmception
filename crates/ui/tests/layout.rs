@@ -14,6 +14,8 @@ use swarmception_ui::{Shell, UiState};
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::state_cmds::Get as GetState;
 
+mod support;
+
 const WORKERS: usize = 12;
 
 fn scratch(what: &str) -> PathBuf {
@@ -91,13 +93,10 @@ fn click(shell: &mut Shell, ctx: &egui::Context, size: (f32, f32), at: egui::Pos
 fn loaded(dir: &Path, size: (f32, f32)) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx, size);
-        if shell.has_timeline() && !shell.loading() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline() && !shell.loading()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     for _ in 0..3 {
         frame(&mut shell, &ctx, size);

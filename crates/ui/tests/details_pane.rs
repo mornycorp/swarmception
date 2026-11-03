@@ -16,6 +16,8 @@ use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::ranges_cmds::{RangeParams, Toggle};
 use timeline_engine::state_cmds::Get as GetState;
 
+mod support;
+
 /// #7 (PR #8) claimed, worked on, submitted and merged by gate-pr8; #9 claimed by another
 /// worker; main merges PR #8.
 fn repo() -> PathBuf {
@@ -101,13 +103,10 @@ fn frame(shell: &mut Shell, ctx: &egui::Context) -> Vec<String> {
 fn loaded(dir: &Path) -> (egui::Context, Shell) {
     let ctx = egui::Context::default();
     let mut shell = Shell::new(&ctx, Some(dir));
-    for _ in 0..500 {
+    support::until("the tracking branch loaded", || {
         frame(&mut shell, &ctx);
-        if shell.has_timeline() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
+        shell.has_timeline()
+    });
     assert!(shell.has_timeline(), "the tracking branch loaded");
     (ctx, shell)
 }

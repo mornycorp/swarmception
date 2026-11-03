@@ -13,6 +13,9 @@ use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::{EngineError, Github, Session};
 use swarmception_model::Timestamp;
 
+mod support;
+use support::Wakes;
+
 fn temp(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -289,20 +292,9 @@ fn a_failed_check_backs_off_and_leaves_the_timeline_alone() {
 #[test]
 fn a_session_with_a_waker_checks_on_the_interval_in_the_background() {
     let swarm = Swarm::new(old());
-    let woken = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let counter = std::sync::Arc::clone(&woken);
-    let mut session = Session::with_waker(std::sync::Arc::new(move || {
-        counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    }));
+    let (mut session, wakes) = Wakes::session();
     swarm.open(&mut session);
-    let wait = |session: &mut Session| {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        while session.job().is_some() && Instant::now() < deadline {
-            session.poll();
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        assert!(session.job().is_none(), "the read landed");
-    };
+    let wait = |session: &mut Session| wakes.poll_until(session, "the read landed", |s| s.job().is_none());
     wait(&mut session);
     assert_eq!(session.live_wait(Instant::now()), None, "off by default: an old swarm");
 
@@ -317,7 +309,7 @@ fn a_session_with_a_waker_checks_on_the_interval_in_the_background() {
     assert!(fetch.is_ok(), "{fetch:?}");
     assert_eq!(session.job(), Some(swarmception_engine::session::Job::Fetch));
     wait(&mut session);
-    assert!(woken.load(std::sync::atomic::Ordering::Relaxed) > 0);
+    assert!(wakes.count() > 0);
     let status: StatusResult = call(&mut session, "repo.status", "");
     assert_eq!(status.events, 4, "the fetch brought the new event");
 
