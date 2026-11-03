@@ -28,6 +28,7 @@ use swarmception_model::{IssueKind, IssueState, Issues, Kind, MainMerge, Role, T
 use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
 use crate::colours::{self, Rgb, phase_colour, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
+use crate::gates::Lane;
 use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Style, bars_where, duration, groups_holding};
 use crate::stats::{cause_of, failure_label, step_of};
 use crate::tickets::{Merged, Phase, Stretch, Ticket, tickets};
@@ -269,11 +270,14 @@ struct Ctx<'a> {
     issues: &'a Issues,
     tickets: Vec<Ticket>,
     runs: Vec<GateRun>,
+    /// The workers' `ready` checks (#95): a `Gate` subject names one by its id as a gate run.
+    checks: Vec<GateRun>,
 }
 
 impl<'a> Ctx<'a> {
     fn new(activity: &'a Activity, merges: &'a [MainMerge], issues: &'a Issues) -> Self {
-        Self { activity, merges, issues, tickets: tickets(activity), runs: gate_runs(activity, Timestamp(i64::MAX)) }
+        let end = Timestamp(i64::MAX);
+        Self { activity, merges, issues, tickets: tickets(activity), runs: gate_runs(activity, end), checks: crate::factory::ready_checks(activity, end) }
     }
 
     fn who(&self, instance: &str) -> Who {
@@ -301,9 +305,10 @@ impl<'a> Ctx<'a> {
         Related { subject: Subject::Ticket { issue }, mark: format!("#{issue}"), label, colour: ticket_colour(issue) }
     }
 
-    /// The gate run `sub` that holds `at` (began by it, ended at or after it), else the first.
+    /// The gate run `sub` that holds `at` (began by it, ended at or after it), else the first;
+    /// a worker's `ready` check by its id too (#95).
     fn run(&self, sub: &str, at: Option<Timestamp>) -> Option<&GateRun> {
-        let mut runs = self.runs.iter().filter(|r| r.sub == sub);
+        let mut runs = self.runs.iter().chain(&self.checks).filter(|r| r.sub == sub);
         let first = runs.clone().next();
         let Some(at) = at else { return first };
         runs.rfind(|r| r.start <= at).or(first)
@@ -516,6 +521,10 @@ fn helper_entry(ctx: &Ctx<'_>, agent: &Agent, sub: &Sub) -> Entry {
     let notes = sub.start_note.iter().chain(&sub.stop_note).map(TipLine::plain);
     let mut entry = entry.detail(detail.unwrap_or_default()).note(why);
     entry.notes.extend(notes);
+    // A ready check tells its own story (#95).
+    if crate::stats::is_ready(sub) {
+        entry = entry.goes_to(Some(Subject::Gate { sub: sub.sub.clone(), at: Some(sub.span.start) }));
+    }
     entry
 }
 
@@ -668,8 +677,8 @@ fn gate_details(ctx: &Ctx<'_>, sub: &str, at: Option<Timestamp>) -> Option<Detai
     Some(Details {
         subject: Subject::Gate { sub: run.sub.clone(), at: Some(run.start) },
         colour,
-        mark: "gate".to_owned(),
-        title: format!("gate run {}", run.sub),
+        mark: if run.lane == Lane::Ready { "ready" } else { "gate" }.to_owned(),
+        title: format!("{} {}", if run.lane == Lane::Ready { "ready check" } else { "gate run" }, run.sub),
         lines: gate_lines(ctx, run, owner.as_ref(), verb, colour),
         labels: Vec::new(),
         facts: gate_facts(run, &merged_prs, &events),
@@ -1093,6 +1102,21 @@ mod tests {
     }
 
     #[test]
+    fn a_ready_check_tells_its_own_story() {
+        // #95: as a gate run's, by its id; the ticket it checked one click away.
+        let d = of(Subject::Gate { sub: "ready-4bb1de4".into(), at: None });
+        assert_eq!((d.mark.as_str(), d.title.as_str()), ("ready", "ready check ready-4bb1de4"));
+        assert_eq!(d.subject, Subject::Gate { sub: "ready-4bb1de4".into(), at: Timestamp::parse("2026-10-31T04:06:00Z") });
+        assert!(d.lines[0].text().contains("by worker-2"), "{:?}", d.lines[0].text());
+        assert_eq!(whats(&d), ["started", "passed"]);
+        assert_eq!(d.related.iter().map(|r| r.subject.clone()).collect::<Vec<_>>(), [Subject::Ticket { issue: 170 }]);
+        // Its line in the ticket's story goes to it.
+        let ticket = of(Subject::Ticket { issue: 170 });
+        let entry = ticket.entries.iter().find(|e| e.what == "ready check passed").unwrap();
+        assert_eq!(entry.goes_to, Some(d.subject.clone()));
+    }
+
+    #[test]
     fn a_gate_runs_story_is_its_start_its_merges_and_its_end() {
         let d = of(Subject::Gate { sub: "gate-pr173".into(), at: None });
         assert_eq!(d.title, "gate run gate-pr173");
@@ -1158,10 +1182,11 @@ mod tests {
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 1), Some(Subject::Ticket { issue: 170 }));
         assert_eq!(bar_subject(&rows, &merges(), "tickets/2", 99), None);
         assert_eq!(bar_subject(&rows, &merges(), "nope", 0), None);
-        // #84: a gate run's bar is the run; a ready check's, the ticket it checked.
+        // #84: a gate run's bar is the run; #95: a ready check's, the check.
         let at = Timestamp::parse("2026-10-31T04:20:00Z");
         assert_eq!(bar_subject(&rows, &merges(), crate::rows::GATES_KEY, 0), Some(Subject::Gate { sub: "gate-pr173".into(), at }));
-        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 0), Some(Subject::Ticket { issue: 170 }));
+        let ready = activity.agents.iter().flat_map(|a| &a.subs).find(|s| crate::stats::is_ready(s)).unwrap();
+        assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 0), Some(Subject::Gate { sub: ready.sub.clone(), at: Some(ready.span.start) }));
         assert_eq!(bar_subject(&rows, &merges(), crate::rows::READY_KEY, 1), None);
     }
 

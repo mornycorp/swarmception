@@ -198,6 +198,11 @@ fn the_factory_at_a_moment_and_the_timeline_place_of_a_time() {
     let end: FactoryScene = call(&mut session, "factory.at", "");
     assert_eq!(end.text, "2026-10-31T03:46:00Z");
     assert_eq!((end.counts.merged, end.shipping.landed, end.gate.passed), (1, 1, 1));
+    // #95: a run to keep in the gate's lists is a parameter; one begun after t stays out.
+    let early: FactoryScene = call(&mut session, "factory.at", &format!("{{\"t\":{},\"run\":{{\"sub\":\"gate-pr8\"}}}}", t("2026-10-31T03:10:00Z")));
+    assert!(early.gate.running.iter().chain(&early.gate.recent).all(|r| r.sub != "gate-pr8"), "nothing after t told");
+    let kept: FactoryScene = call(&mut session, "factory.at", "{\"run\":{\"sub\":\"gate-pr8\",\"at\":null}}");
+    assert_eq!(kept.gate.recent.iter().map(|r| r.sub.as_str()).collect::<Vec<_>>(), ["gate-pr8"]);
 
     let place: PlaceAtResult = call(&mut session, "timeline.placeAt", &format!("{{\"time\":{}}}", t("2026-10-31T03:01:30Z")));
     assert_eq!(place.position, 90_000_000_000, "90 s past the origin, 03:00");

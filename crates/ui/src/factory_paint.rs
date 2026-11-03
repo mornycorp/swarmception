@@ -19,7 +19,8 @@
 //! the glow of what just happened follow *t*, so a still *t* draws a still factory.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
-use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScene, GateRun, Outcome, Shift, Station, short};
+use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScene, Gate, GateRun, Outcome, Shift, Station, short};
+use swarmception_domain::gates::Lane;
 use swarmception_domain::timeline::Link;
 
 use crate::factory_chip::{CLAIMED, Chip, GATING, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb};
@@ -40,8 +41,11 @@ pub struct Drawn {
     pub benches_hidden: usize,
     pub dock: Vec<u64>,
     pub gate: Vec<u64>,
-    /// The runs going on, then the runs before *t*.
+    /// The gate's list: its runs and the workers' ready checks (#95), those going on, then those
+    /// before *t*, by their sub-agents' ids.
     pub runs: Vec<String>,
+    /// Where each of [`Drawn::runs`] was drawn (#95).
+    pub run_lines: Vec<Rect>,
     /// A gate run clicked this frame, its sub-agent's id and its start: the details pane shows it.
     pub run_clicked: Option<(String, swarmception_model::Timestamp)>,
     /// A brick of a merge no ticket names clicked this frame, its commit (#85): the details
@@ -133,10 +137,11 @@ impl Selected {
         }
     }
 
-    /// Whether it is gate run `run`: its sub, and the run `at` falls in (its start, or within it).
+    /// Whether it is gate run or ready check `run`: its sub, and the run `at` falls in (its start,
+    /// or within it).
     fn is_run(&self, run: &GateRun) -> bool {
         match self {
-            Self::Run { sub, at } => *sub == run.sub && at.is_none_or(|at| at == run.start || (run.start <= at && run.end.is_none_or(|end| at <= end))),
+            Self::Run { sub, at } => swarmception_domain::factory::is_run(run, sub, *at),
             _ => false,
         }
     }
@@ -264,6 +269,14 @@ fn pack(widths: &[f32], width: f32) -> Vec<Place> {
 /// An idle bench: a quiet sea green (hue 150°, saturation 0.34, value 0.76), softer than main's.
 const IDLE: Color32 = Color32::from_rgb(0x80, 0xc2, 0xa1);
 
+/// The gate's list (#95): its runs and the workers' `ready` checks together, those going on first
+/// (the last begun first), then those ended (the last ended first).
+fn run_list(gate: &Gate) -> Vec<&GateRun> {
+    let mut runs: Vec<&GateRun> = gate.running.iter().chain(&gate.recent).chain(&gate.checks).collect();
+    runs.sort_by_key(|r| (r.outcome != Outcome::Running, std::cmp::Reverse(r.end), std::cmp::Reverse(r.start)));
+    runs
+}
+
 /// A row of the key along the bottom.
 const LEGEND_ROW: f32 = 17.0;
 /// A run in the gate's list.
@@ -370,6 +383,16 @@ const fn bench_colour(status: BenchStatus) -> Color32 {
         BenchStatus::Stopped | BenchStatus::Off => STOPPED,
         BenchStatus::Idle => IDLE,
         BenchStatus::Paused => CLAIMED,
+    }
+}
+
+/// A run's mark in the gate's list: a cog while it runs, ✔, ✖, or ? with no result.
+const fn outcome_mark(outcome: Outcome) -> &'static str {
+    match outcome {
+        Outcome::Running => icons::COG,
+        Outcome::Passed => icons::CHECK,
+        Outcome::Failed => icons::CROSS,
+        Outcome::Unknown => "?",
     }
 }
 
@@ -921,10 +944,31 @@ impl Floor<'_> {
             self.drawn.hidden += gate.crates.len() - shown;
             y += chip.y + 12.0;
         }
-        let runs: Vec<&GateRun> = gate.running.iter().chain(&gate.recent).collect();
         let bottom = room.bottom() - if gate.inspectors.is_empty() { 0.0 } else { 15.0 };
-        let fits = ((bottom - y) / RUN_LINE).floor().max(0.0) as usize;
+        self.run_lines(room.with_min_y(y).with_max_y(bottom));
+        let inspectors: Vec<String> = gate.inspectors.iter().map(|a| format!("{} · {}", a.name, shift_word(a.shift))).collect();
+        if !inspectors.is_empty() {
+            fit(&self.painter, room.left_bottom(), Align2::LEFT_BOTTOM, &inspectors.join("  "), (Self::font(10.0), self.pal.weak), room.width());
+        }
+    }
+
+    /// The gate's list in `room` (#95): its runs and the workers' ready checks, a run selected
+    /// first when it hasn't begun by *t*, else brought into view.
+    fn run_lines(&mut self, room: Rect) {
+        let runs = run_list(&self.scene.gate);
+        let (mut y, bottom) = (room.top(), room.bottom());
+        let mut fits = ((bottom - y) / RUN_LINE).floor().max(0.0) as usize;
         let selected = self.marks.selected.clone();
+        // A run selected that hasn't begun by t (#95): first, not yet run, but selected.
+        if let Some(Selected::Run { sub, at }) = &selected
+            && !runs.iter().any(|run| selected.as_ref().is_some_and(|s| s.is_run(run)))
+            && at.is_none_or(|at| at > self.scene.t)
+            && fits > 0
+        {
+            self.ahead_line(Rect::from_min_size(pos2(room.left(), y), vec2(room.width(), RUN_LINE)), sub);
+            y += RUN_LINE;
+            fits -= 1;
+        }
         let runs = into_view(runs, fits, |run: &GateRun| selected.as_ref().is_some_and(|s| s.is_run(run)));
         for (n, run) in runs.iter().enumerate() {
             if y + RUN_LINE > bottom {
@@ -933,35 +977,29 @@ impl Floor<'_> {
             self.run_line(Rect::from_min_size(pos2(room.left(), y), vec2(room.width(), RUN_LINE)), run, n);
             y += RUN_LINE;
         }
-        let inspectors: Vec<String> = gate.inspectors.iter().map(|a| format!("{} · {}", a.name, shift_word(a.shift))).collect();
-        if !inspectors.is_empty() {
-            fit(&self.painter, room.left_bottom(), Align2::LEFT_BOTTOM, &inspectors.join("  "), (Self::font(10.0), self.pal.weak), room.width());
-        }
     }
 
-    /// A run in the gate's list: its mark in its outcome's colour, the run, the tickets it gated,
-    /// its cause (red when it failed) and its age; a glow while it is fresh.
-    fn run_line(&mut self, line: Rect, run: &GateRun, n: usize) {
-        let colour = outcome_colour(run.outcome);
-        let fresh = if run.outcome == Outcome::Running { 1.0 } else { self.fresh(run.age) };
-        if fresh > 0.0 {
-            self.painter.rect_filled(line, 3.0, colour.gamma_multiply(0.22 * fresh));
-        }
-        if self.marks.selected.as_ref().is_some_and(|s| s.is_run(run)) {
-            self.painter.rect_filled(line, 3.0, self.pal.selected.gamma_multiply(0.25));
-            self.painter.rect_stroke(line, 3.0, Stroke::new(1.5, self.pal.selected), StrokeKind::Inside);
-            self.drawn.selected.push(format!("run {}", run.sub));
-        }
-        let mark = match run.outcome {
-            Outcome::Running => icons::COG,
-            Outcome::Passed => icons::CHECK,
-            Outcome::Failed => icons::CROSS,
-            Outcome::Unknown => "?",
+    /// A line of the gate's list selected: the selection's fill and ring, in place of any glow.
+    fn selected_line(&mut self, line: Rect, sub: &str) {
+        self.painter.rect_filled(line, 3.0, self.pal.selected.gamma_multiply(0.25));
+        self.painter.rect_stroke(line, 3.0, Stroke::new(1.5, self.pal.selected), StrokeKind::Inside);
+        self.drawn.selected.push(format!("run {sub}"));
+    }
+
+    /// The mark of a worker's `ready` check in the gate's list (#95), in its second column; a gate
+    /// run has none there.
+    fn ready_mark(&self, line: Rect) {
+        self.painter.text(line.left_center() + vec2(18.0, 0.0), Align2::LEFT_CENTER, icons::FLASK, Self::font(10.0), self.pal.weak);
+    }
+
+    /// What a run's line says: the run (a ready check by its worker, #95), the tickets it gated or
+    /// checked, and its cause, red when it failed.
+    fn run_words(&self, run: &GateRun) -> Vec<(String, Color32)> {
+        let name = match (run.lane, &run.worker) {
+            (Lane::Ready, Some(worker)) => worker.clone(),
+            _ => run.sub.clone(),
         };
-        let font = Self::font(11.0);
-        self.painter.text(line.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER, mark, font.clone(), colour);
-        let age = self.painter.text(line.right_center() - vec2(3.0, 0.0), Align2::RIGHT_CENTER, short(run.age), font.clone(), self.pal.weak);
-        let mut what = vec![(run.sub.clone(), self.pal.text)];
+        let mut what = vec![(name, self.pal.text)];
         if !run.issues.is_empty() {
             let tickets: Vec<String> = run.issues.iter().map(|i| format!("#{i}")).collect();
             what.push((format!("  {}", tickets.join(" ")), self.pal.weak));
@@ -970,14 +1008,48 @@ impl Floor<'_> {
             let red = matches!(run.outcome, Outcome::Failed);
             what.push((format!("  {cause}"), if red { SENT_BACK } else { self.pal.weak }));
         }
-        let width = age.left() - line.left() - 24.0;
-        pieces(&self.painter, line.left_center() + vec2(19.0, 0.0), Align2::LEFT_CENTER, &what, font, width);
+        what
+    }
+
+    /// A run selected that hasn't begun by *t* (#95): its id and `not yet run`, selected.
+    fn ahead_line(&mut self, line: Rect, sub: &str) {
+        self.selected_line(line, sub);
+        let font = Self::font(11.0);
+        self.painter.text(line.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, "·", font.clone(), self.pal.weak);
+        if sub.starts_with("ready") {
+            self.ready_mark(line);
+        }
+        let what = [(sub.to_owned(), self.pal.text), ("  not yet run".to_owned(), self.pal.weak)];
+        pieces(&self.painter, line.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &what, font, line.width() - 36.0);
+    }
+
+    /// A run in the gate's list: its mark in its outcome's colour, a flask for a worker's `ready`
+    /// check (#95), the run (a check by its worker), the tickets it gated or checked, its cause
+    /// (red when it failed) and its age; a glow while it is fresh, the selection's look when it is
+    /// selected.
+    fn run_line(&mut self, line: Rect, run: &GateRun, n: usize) {
+        let colour = outcome_colour(run.outcome);
+        let fresh = if run.outcome == Outcome::Running { 1.0 } else { self.fresh(run.age) };
+        if self.marks.selected.as_ref().is_some_and(|s| s.is_run(run)) {
+            self.selected_line(line, &run.sub);
+        } else if fresh > 0.0 {
+            self.painter.rect_filled(line, 3.0, colour.gamma_multiply(0.22 * fresh));
+        }
+        if run.lane == Lane::Ready {
+            self.ready_mark(line);
+        }
+        let font = Self::font(11.0);
+        self.painter.text(line.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER, outcome_mark(run.outcome), font.clone(), colour);
+        let age = self.painter.text(line.right_center() - vec2(3.0, 0.0), Align2::RIGHT_CENTER, short(run.age), font.clone(), self.pal.weak);
+        let width = age.left() - line.left() - 36.0;
+        pieces(&self.painter, line.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &self.run_words(run), font, width);
         let id = self.ui.scope_id().with(("factory", ("run", n, &run.sub)));
         let response = factory_tip::show(self.ui.interact(line, id, egui::Sense::click()), &run.tooltip);
         if response.clicked() {
             self.drawn.run_clicked = Some((run.sub.clone(), run.start));
         }
         self.drawn.runs.push(run.sub.clone());
+        self.drawn.run_lines.push(line);
     }
 
     fn shipping(&mut self, column: Rect) {
@@ -1395,6 +1467,8 @@ mod tests {
             inferred: false,
             age: 0,
             tooltip: Vec::new(),
+            lane: Lane::Gate,
+            worker: None,
         };
         let selected = |at| Selected::of(&Subject::Gate { sub: "gate-pr8".into(), at }).unwrap();
         assert!(selected(None).is_run(&run) && selected(Some(t(100))).is_run(&run) && selected(Some(t(150))).is_run(&run));
