@@ -510,7 +510,7 @@ struct Floor<'a> {
     wall: &'a mut WallView,
 }
 
-impl Floor<'_> {
+impl<'a> Floor<'a> {
     fn font(size: f32) -> FontId {
         FontId::proportional(size)
     }
@@ -693,30 +693,7 @@ impl Floor<'_> {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
             return;
         }
-        // Every bench while each gets room for two lines; else those off shift holding nothing
-        // fold into a line under the others (#94), and the rest, the busy first, scroll when they
-        // still don't fit; each group in the scene's natural order (#106). The fold opened puts
-        // its benches after the rest, scrolling with them, its line under them to close it.
-        let all: Vec<&Bench> = scene.benches.iter().collect();
-        let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(n, room.size()).roomy() {
-            (all, Vec::new())
-        } else {
-            let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = all.into_iter().partition(|b| !folds(b));
-            open.sort_by_key(|b| busy_rank(b.status));
-            (open, folded)
-        };
-        let (room, fold) =
-            if folded.is_empty() { (room, None) } else { (room.with_max_y(room.bottom() - BENCH_FOLD), Some(room.with_min_y(room.bottom() - BENCH_FOLD))) };
-        if let Some(fold) = fold {
-            self.folded(fold, &folded);
-        }
-        let unfolded = if self.marks.off_shift { folded.len() } else { 0 };
-        if unfolded > 0 {
-            self.drawn.benches_unfolded = std::mem::take(&mut self.drawn.benches_folded);
-            open.extend(folded);
-        } else {
-            self.wall.reveal_unfolded = false;
-        }
+        let (room, open, unfolded) = self.bench_lists(room);
         if open.is_empty() {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
             return;
@@ -739,6 +716,36 @@ impl Floor<'_> {
             self.drawn.bench_cells.push(cell);
             self.bench(cell, bench);
         }
+    }
+
+    /// The benches to lay out in `room`, the room left for them and how many of them, at the end,
+    /// are those off shift opened out of their fold. Every bench while each gets room for two
+    /// lines; else those off shift holding nothing fold into a line under the others (#94), drawn
+    /// here, and the rest, the busy first, scroll when they still don't fit; each group in the
+    /// scene's natural order (#106). The fold opened puts its benches after the rest, scrolling
+    /// with them, its line under them to close it.
+    fn bench_lists(&mut self, room: Rect) -> (Rect, Vec<&'a Bench>, usize) {
+        let scene = self.scene;
+        let all: Vec<&Bench> = scene.benches.iter().collect();
+        let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(all.len(), room.size()).roomy() {
+            (all, Vec::new())
+        } else {
+            let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = all.into_iter().partition(|b| !folds(b));
+            open.sort_by_key(|b| busy_rank(b.status));
+            (open, folded)
+        };
+        if folded.is_empty() {
+            return (room, open, 0);
+        }
+        self.folded(room.with_min_y(room.bottom() - BENCH_FOLD), &folded);
+        let unfolded = if self.marks.off_shift { folded.len() } else { 0 };
+        if unfolded > 0 {
+            self.drawn.benches_unfolded = std::mem::take(&mut self.drawn.benches_folded);
+            open.extend(folded);
+        } else {
+            self.wall.reveal_unfolded = false;
+        }
+        (room.with_max_y(room.bottom() - BENCH_FOLD), open, unfolded)
     }
 
     /// The first row of benches in view (#94): scrolled by the wheel over them, to the bench
