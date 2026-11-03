@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 10: the review's loose ends, the Factory's benches, debug-build markers) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 11: a ticket in its own colour, failures survive packing, G25's small ends) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -27,8 +27,8 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | What | Number | Source |
 |---|---|---|
-| Tests | 370 passed | `cargo nextest run --workspace`, 2026-11-03 |
-| Landed per active hour | mc-engine 5.8, swarm-timeline 10.0, Swarmception 6.4 | `stats.get`, 2026-11-03 |
+| Tests | 383 passed | `cargo nextest run --workspace`, 2026-11-03 |
+| Landed per active hour | mc-engine 5.7, swarm-timeline 9.3, Swarmception 6.5 | `stats.get`, 2026-11-03 |
 | Rows for swarm-timeline's tickets | 12 flat | `rows.list`, 2026-10-31 |
 
 ## Timeline (M1)
@@ -41,7 +41,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 | TL-4 | Tickets flat or by worker (machine / worker / ticket) | done | `rows.set {grouping}`; `rows.rs` tests |
 | TL-5 | Collapse: no empty rows | done | `rows.set {collapse}`; `rows.rs` tests; or none outside the window, following a pan: `rows.window`, `crates/ui/tests/collapse_window.rs`, screenshots checked 2026-11-02 (#74) |
 | TL-6 | Pan and zoom in time; View menu of panes; Font Awesome toolbar | done | `crates/ui`; screenshots checked 2026-10-31; Ctrl + drag pans on macOS (#11); the widget's toolbar cut to Fit, Zoom to Selection, Undo Zoom, zoom buttons and Δ, the scale, origin, minimap and click fixed by command (#35); its zoom buttons as plain as Fit (#48); quiet time folded (#86, swarm-timeline#191); a row's lanes sized over the visible window, the minimap marking folds (#97, swarm-timeline#197, #198) |
-| TL-7 | A colour per ticket; merges as green 10 s spans; coloured tooltips; durations in h/min/s | done | `crates/domain/src/colours.rs`, `tooltip.rs` tests; scheme B; `timeline_pane.rs` durations test; screenshots checked 2026-11-02 (#15, #40, #35, #48); a send-back's rework from a logged `work` (#98, swarm-core#14) |
+| TL-7 | A colour per ticket; merges as green 10 s spans; coloured tooltips; durations in h/min/s | done | `crates/domain/src/colours.rs`, `tooltip.rs` tests; scheme B; `timeline_pane.rs` durations test; screenshots checked 2026-11-02 (#15, #40, #35, #48); a send-back's rework from a logged `work` (#98, swarm-core#14); a ticket one bar in its own colour, its stages a strip along its foot, send-backs and merge as marks (#110, swarm-timeline#205, #206); failures keep their packed columns (#108) |
 | TL-8 | Titles on bars and tooltips; open the issue or PR from a bar | done | `crates/source/src/github.rs`, `crates/ui/tests/ticket_links.rs` (#17) |
 
 ## Read and drive (M2)
@@ -57,7 +57,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Id | Target | Status | Evidence |
 |---|---|---|---|
-| UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18); a hovered chip highlights its bars, leaving the selection alone (#48); no clock of its own, the timeline's selection selects in it (#85); dozens of workers' benches read apart (#94); ready checks in its Gate list (#95) |
+| UN-1 | The Factory: the swarm at a time as a factory, following the timeline | done | `factory.at`; `crates/ui/tests/factory_pane.rs`; screenshots checked 2026-11-01 (#18); a hovered chip highlights its bars, leaving the selection alone (#48); no clock of its own, the timeline's selection selects in it (#85); dozens of workers' benches read apart (#94); ready checks in its Gate list (#95); benches in natural order, the off-shift fold opens (#106) |
 | UN-5 | The Factory steps back and forth by key moment | done | `factory.moments`, `factory.step`; `crates/domain/src/moments.rs` tests; UI test by clicks and keys (#33) |
 | UN-2 | Statistics: landed per active hour and the rest, for the visible window | done | `stats.get`; `crates/domain/src/stats.rs` tests; checked by hand 2026-11-01 (#20, #22) |
 | UN-3 | Gates analytics: runs, causes, durations | done | `gates.list`; the Gates band; `crates/domain/src/gates.rs`, `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-02 (#61); both lanes per hour, one gate-run definition with `stats.get` (#75); a failed ready check's cause and step (#77, swarm-core#12); runs as timeline rows (#84) |
@@ -68,6 +68,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 11: TL-7, UN-1 evidence (#106, #108, #110); measured numbers |
 | 2026-11-03 | minor | Batch 10: TL-6, TL-7, UN-1 evidence (#94, #95, #97, #98); measured numbers |
 | 2026-11-02 | minor | Batch 9: TL-6, UN-1, UN-3 evidence (#84–#86); measured numbers |
 | 2026-11-02 | minor | Batch 8: TL-5, RD-3, UN-3 evidence (#74–#77); measured numbers |

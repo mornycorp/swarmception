@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 10: the review's loose ends, the Factory's benches, debug-build markers) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 11: a ticket in its own colour, failures survive packing, G25's small ends) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,10 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G25 Small ends after batch 10](#g25-small-ends-after-batch-10) | open | | 1–2 h |
+| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | open | | 1–2 h |
+| — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
+| — | [G26 Failures survive packing](#g26-failures-survive-packing) | done | #108 | |
+| — | [G25 Small ends after batch 10](#g25-small-ends-after-batch-10) | done | #106 | |
 | — | [G24 Loose ends from the owner's review](#g24-loose-ends-from-the-owners-review) | done | #92–#98, swarm-timeline#197, swarm-core#14 | |
 | — | [G20 A ticket keeps its colour across a send-back](#g20-a-ticket-keeps-its-colour-across-a-send-back) | done | #83 | |
 | — | [G21 Gate runs and ready checks on the timeline](#g21-gate-runs-and-ready-checks-on-the-timeline) | done | #84 | |
@@ -270,12 +273,48 @@ marked **Human:** with what is needed.
 
 ## G25 Small ends after batch 10
 
-- **Missing:** a gate's failure with no `sendback` event doesn't read as sent back until
-  prwatch's `work` arrives; the Factory's benches are in key order (`worker-1`, `worker-10`, …),
-  not natural order, and the folded line of workers off shift doesn't open on a click;
-  `live::every_check_that_brings_events_refreshes_the_issues` takes 4–22 s under load (no limit,
-  so slow but not flaky).
-- **Estimate:** 1–2 agent-hours.
+- **Done** (#106, PR #107): a gate's failure reads as sent back at its stop, with no `sendback`
+  needed (`crates/domain/src/sendbacks.rs`, the tracking format's rule, checked against swarm-core's
+  `prwatch::sendback` on the same files; swarm-timeline's #142 and #185 now read sent back); the
+  Factory's benches in natural order, and the off-shift fold opens on a click (`UiState` 11,
+  `ui.inspect` 15, `--off-shift`); the slow live test's cause was macOS vetting a newly written
+  executable on its first exec (10–34 s at times): its fakes now run through `/bin/sh`.
+- **Measured:** the live test, 12 copies at once: median 3.18 s, max 3.35 s (was 7.86 s, 9.84 s;
+  single runs 28 s and 73 s) (2026-11-03).
+- **Left:** [G28](#g28-small-ends-after-batch-11).
+- **Evidence:** `crates/domain/src/sendbacks.rs`, `crates/ui/tests/factory_benches.rs`,
+  `crates/engine/tests/live.rs`.
+
+## G26 Failures survive packing
+
+- **Done** (#108, PR #109): every bar carries an importance from one table beside the phase
+  colours (`colours::importance`): a failed run or check and a sent-back stretch high, a `?` run
+  and a stopped stretch middle, the rest low, merges the default; zoomed out, a packed column takes
+  its most important bar's colour (swarm-timeline#202).
+- **Measured:** mc-engine fitted, 1600 px: red columns in Ready checks 75 → 79, sent-back in the
+  ticket rows 14 → 22 (2026-11-03).
+- **Evidence:** `colours::tests::every_kind_of_bar_has_its_importance`,
+  `timeline::tests::a_failure_survives_packing`.
+
+## G27 A ticket in its own colour all along
+
+- **Done** (#110, PR #111; swarm-timeline#205, #206, PRs #207–#209): the owner, on mc-engine's
+  #169, saw a ticket's *waiting* stretch filled blue and read it as another colour. Each ticket is
+  now one bar per row in its own colour, labelled once; its stages (claimed, working, waiting, in
+  the gate, sent back, stopped) are a strip along its foot in the Factory's phase colours, as on
+  Main's bricks; a send-back is a red diamond at its foot and the merge a green dot at its end
+  (the widget's new range strips and mark glyphs). Details, selection with the Factory, highlight,
+  collapse and lanes over the window work as before.
+- **Evidence:** `rows::tests::a_ticket_is_one_bar_in_its_colour_its_stages_a_strip_and_its_merge_a_mark`,
+  `crates/ui/tests/timeline_pane.rs`; screenshots of #169 checked 2026-11-03.
+
+## G28 Small ends after batch 11
+
+- **Missing:** other tests still exec a freshly written fake `gh` (engine `issues`, `details`;
+  source `github`) and can hit macOS's first-exec delay (G25's fix applies); a gate rerun that
+  doesn't say `rerun of <sub>:` doesn't answer the failure, so its ticket reads sent back until it
+  merges (swarm-core's rule: this repo's gate-43 → gate-43b); the minimap draws no strips.
+- **Estimate:** 1–2 agent-hours, part in swarm-core.
 
 ## G1 The ruler reads clock time
 
@@ -428,6 +467,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 11: G25 done (#106); G26, G27 new and done (#108, #110, swarm-timeline#205, #206); G28 new |
 | 2026-11-03 | minor | Batch 10: G24 done (#92–#98, swarm-timeline#197, #198, swarm-core#14); G25 new |
 | 2026-11-02 | minor | Batch 9: the owner's review: G20–G23 done (#83–#86, swarm-timeline#191); G24 new |
 | 2026-11-02 | minor | Batch 8: G6, G19 done (#74–#77, swarm-core#12); no gaps open |
