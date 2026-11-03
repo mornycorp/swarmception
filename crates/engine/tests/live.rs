@@ -202,20 +202,15 @@ fn live_is_on_by_default_only_for_a_swarm_at_work() {
 }
 
 /// A `gh` that answers the issues' requests with an empty page (and an ETag), counting each call
-/// in `<dir>/calls`, for a session reading the issues of `repo`.
-///
-/// It is the system's `sh`, which runs `<repo>/api`, this script, for `gh api …` (`gh` runs in the
-/// repository, `api` its first argument), so no file the test writes is ever exec'd itself
-/// (#106): macOS checks a new executable on its first exec, which took 0.3 s idle and 10–30 s
-/// under load, past a live check's 30 s fetch deadline once.
+/// in `<dir>/calls`, for a session reading the issues of `repo`: run by `sh`, never exec'd
+/// (`support::fake_gh`).
 fn fake_gh(dir: &Path, repo: &Path) -> PathBuf {
     let calls = dir.join("calls");
     let script = format!(
         "echo x >> '{}'\ncase \"$*\" in\n  *--include*) printf 'HTTP/2.0 200 OK\\r\\nEtag: \"e1\"\\r\\n\\r\\n[]' ;;\n  *) printf '[]' ;;\nesac\n",
         calls.display()
     );
-    std::fs::write(repo.join("api"), script).unwrap();
-    PathBuf::from("/bin/sh")
+    support::fake_gh(repo, &script)
 }
 
 fn gh_calls(dir: &Path) -> usize {
@@ -229,14 +224,9 @@ fn gh_calls(dir: &Path) -> usize {
 fn every_check_that_brings_events_refreshes_the_issues() {
     let swarm = Swarm::new(old());
     // The clone's origin as GitHub's, so the issues are read through the fake `gh`; its fetches
-    // reach the local remote all the same, through an `ssh` that serves it: a script `sh` runs,
-    // never exec'd itself (as the fake `gh`), and a simple ssh, so git doesn't first run it with
-    // `-G` to ask what it is.
-    let ssh = swarm.work.join("fake-ssh");
-    std::fs::write(&ssh, format!("exec git-upload-pack '{}'\n", swarm.remote.display())).unwrap();
+    // reach the local remote all the same, through an `ssh` that serves it.
     git(&swarm.clone, &["remote", "set-url", "origin", "git@github.com:them/swarm.git"]);
-    git(&swarm.clone, &["config", "core.sshCommand", &format!("sh '{}'", ssh.display())]);
-    git(&swarm.clone, &["config", "ssh.variant", "simple"]);
+    support::fake_ssh(&swarm.clone, &swarm.work, &swarm.remote);
     let mut session = Session::new();
     let gh = fake_gh(&swarm.work, &swarm.clone);
     let cache = swarm.work.join("cache");

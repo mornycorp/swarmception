@@ -15,6 +15,8 @@ use swarm_core::gate::rerun::Test;
 use swarm_core::project::{Branches, GitHub, Labels, Limits, ReadyWatch};
 use swarm_core::{Hooks, Project};
 
+mod fakes;
+
 /// What this swarm is.
 pub const PROJECT: Project = Project {
     name: "swarmception",
@@ -137,6 +139,7 @@ fn main() -> ExitCode {
     let result = match args.split_first() {
         Some((&"ci", rest)) => ci(&root, rest),
         Some((&"layers", rest)) => swarm_core::layers::run(&Ours, &root, rest),
+        Some((&"fakes", rest)) => fakes::run(&root, rest),
         // The swarm's commands: claim, event, gate, stack, land, prwatch, swarm-core, …
         Some((command, rest)) if swarm_core::serves(command) => swarm_core::run(&PROJECT, &Ours, &root, command, rest),
         _ => {
@@ -144,6 +147,7 @@ fn main() -> ExitCode {
                 "cargo xtask ci [--changed --base <ref> [--plan [--head <ref>]] | --smoke] [--test-alone \"<binary id> <test>\"]… [--doctests] [--only <step>,…]"
             );
             println!("{}", swarm_core::layers::USAGE);
+            println!("{}", fakes::USAGE);
             for (_, usage) in swarm_core::COMMANDS {
                 println!("{usage}");
             }
@@ -284,6 +288,7 @@ fn steps(c: &Ci, scope: &[String]) -> Vec<(String, Vec<String>)> {
         gate.push(("test".into(), scoped(&["nextest", "run", "--profile", "ci"], &[])));
     }
     gate.push(("layers".into(), args(&["xtask", "layers"])));
+    gate.push(("fakes".into(), args(&["xtask", "fakes"])));
     gate.push(("assets".into(), args(&["xtask", "swarm-core", "sync-assets", "--check"])));
     let mut out: Vec<(String, Vec<String>)> = c.alone.iter().map(|t| (format!("alone {}", t.spec()), t.nextest_args())).collect();
     if c.doctests {

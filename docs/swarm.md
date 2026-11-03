@@ -3,7 +3,7 @@
      Each batch. -->
 # Running the swarm
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (the smoke runs `fakes`, #113) · **Target:** M1
 
 Swarmception's part of running many agents. The protocol every swarm shares (the roles, starting a
 worker, picking and claiming work, tracking, watching PRs, helpers, the coordinator's loop,
@@ -47,7 +47,7 @@ machine lacks (the protocol's [Picking work](swarm-protocol.md#picking-work)).
 - **tooling:** what this repo's planner counts as tooling (`Hooks::gate_kind` in `xtask/`): until
   it has one, nothing is, and every code change is smoked.
 - **smoke:** anything else. This repo's `cargo xtask ci --smoke` runs: fmt, clippy, the build,
-  `layers` and the pinned copies' check.
+  `layers`, `fakes` (no test execs a fake it wrote, #113) and the pinned copies' check.
 - **full:** the whole `cargo xtask ci`, the periodic full gate's.
 
 The shared files that conflict most in a stack are AGENTS.md §6's.
@@ -89,5 +89,6 @@ step 4), after folding the batch into `docs/gaps.md`:
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | The smoke runs `fakes` too (#113) |
 | 2026-10-31 | minor | CI runs once a day on `main` (owner), not on pushes or PRs |
 | 2026-10-31 | major | First version, from swarm-core's template |

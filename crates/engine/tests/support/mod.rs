@@ -1,8 +1,10 @@
-//! What the engine's tests share (#96): a session that reads in the background with a waker the
-//! test can block on, so a test waits for its reads to land, not for a clock. Each test binary
-//! takes in this module and uses what it needs of it.
+//! What the engine's tests share: a session that reads in the background with a waker the test
+//! can block on, so a test waits for its reads to land, not for a clock (#96); and fakes of `gh`
+//! and `ssh` that are scripts the system's `sh` runs, never executables of their own (#106,
+//! #113). Each test binary takes in this module and uses what it needs of it.
 #![allow(dead_code)]
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
@@ -61,5 +63,30 @@ impl Wakes {
     /// Polls `session` until its reads (the branch's and the issues') have all landed.
     pub fn settle(&self, session: &mut Session) {
         self.poll_until(session, "the reads landed", |s| s.job().is_none() && !s.reading_issues());
+    }
+}
+
+/// A `gh` for a session reading the issues of `repo`, that runs `script` (shell, no `#!` line)
+/// for each `gh api …`, gh's arguments in `$@`.
+///
+/// It is the system's `sh`, which runs `<repo>/api`, the script: `gh` runs in the repository,
+/// `api` its first argument (put back in `$@`). So no file a test writes is ever exec'd itself (#106, #113): macOS
+/// checks a new executable on its first exec, which took 0.3 s idle and 10–34 s under load, past
+/// a 30 s deadline once. `cargo xtask fakes` fails on a test that writes one to exec. A second
+/// fake for `repo` replaces the first.
+pub fn fake_gh(repo: &Path, script: &str) -> PathBuf {
+    std::fs::write(repo.join("api"), format!("set -- api \"$@\"\n{script}")).unwrap();
+    PathBuf::from("/bin/sh")
+}
+
+/// Points `clone`'s fetches over ssh at the local bare repository `remote`, through an `ssh`
+/// written in `dir`: a script `sh` runs, never exec'd itself (as [`fake_gh`]), and a simple ssh,
+/// so git doesn't first run it with `-G` to ask what it is.
+pub fn fake_ssh(clone: &Path, dir: &Path, remote: &Path) {
+    let ssh = dir.join("fake-ssh");
+    std::fs::write(&ssh, format!("exec git-upload-pack '{}'\n", remote.display())).unwrap();
+    for (key, value) in [("core.sshCommand", format!("sh '{}'", ssh.display())), ("ssh.variant", "simple".to_owned())] {
+        let out = std::process::Command::new("git").current_dir(clone).args(["config", key, &value]).output().unwrap();
+        assert!(out.status.success(), "git config {key}: {}", String::from_utf8_lossy(&out.stderr));
     }
 }

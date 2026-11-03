@@ -503,19 +503,27 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// A `gh` run in `dir` that runs `script` (shell, no `#!` line) for each `gh api …`, gh's
+    /// arguments in `$@`: the system's `sh`, which runs `<dir>/api`, the script (`api` its first
+    /// argument, put back in `$@`). So no file a test writes is ever exec'd itself (#106, #113):
+    /// macOS checks a new executable on its first exec, which took 10–34 s under load. `cargo
+    /// xtask fakes` fails on a test that writes one to exec; the engine's tests have the same
+    /// helper.
+    #[cfg(unix)]
+    fn sh_gh(dir: &Path, script: &str) -> PathBuf {
+        std::fs::write(dir.join("api"), format!("set -- api \"$@\"\n{script}")).unwrap();
+        PathBuf::from("/bin/sh")
+    }
+
     /// A `gh` that prints `out` (or fails with `err`), and writes its arguments down.
     #[cfg(unix)]
     fn fake_gh(dir: &Path, out: &str, fail: Option<&str>) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::write(dir.join("out.json"), out).unwrap();
-        let body = match fail {
-            Some(err) => format!("#!/bin/sh\necho \"$@\" >> '{0}/args'\necho '{err}' >&2\nexit 1\n", dir.display()),
-            None => format!("#!/bin/sh\necho \"$@\" >> '{0}/args'\ncat '{0}/out.json'\n", dir.display()),
+        let script = match fail {
+            Some(err) => format!("echo \"$@\" >> '{0}/args'\necho '{err}' >&2\nexit 1\n", dir.display()),
+            None => format!("echo \"$@\" >> '{0}/args'\ncat '{0}/out.json'\n", dir.display()),
         };
-        let gh = dir.join("gh");
-        std::fs::write(&gh, body).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        gh
+        sh_gh(dir, &script)
     }
 
     #[cfg(unix)]
@@ -578,18 +586,16 @@ mod tests {
     /// down, a line each.
     #[cfg(unix)]
     fn github_gh(dir: &Path, issues: &str, pulls: &str, since: &str) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
         std::fs::write(dir.join("issues.json"), issues).unwrap();
         std::fs::write(dir.join("pulls.json"), pulls).unwrap();
         std::fs::write(dir.join("since.txt"), since).unwrap();
         let d = dir.display();
-        let body = format!(
-            "#!/bin/sh\necho \"$@\" >> '{d}/args'\ncase \"$*\" in\n  *If-None-Match*) echo 'gh: HTTP 304' >&2; exit 1 ;;\n  *since=*) cat '{d}/since.txt' ;;\n  *pulls*) cat '{d}/pulls.json' ;;\n  *) cat '{d}/issues.json' ;;\nesac\n"
-        );
-        let gh = dir.join("gh");
-        std::fs::write(&gh, body).unwrap();
-        std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        gh
+        sh_gh(
+            dir,
+            &format!(
+                "echo \"$@\" >> '{d}/args'\ncase \"$*\" in\n  *If-None-Match*) echo 'gh: HTTP 304' >&2; exit 1 ;;\n  *since=*) cat '{d}/since.txt' ;;\n  *pulls*) cat '{d}/pulls.json' ;;\n  *) cat '{d}/issues.json' ;;\nesac\n"
+            ),
+        )
     }
 
     fn calls(dir: &Path) -> Vec<String> {

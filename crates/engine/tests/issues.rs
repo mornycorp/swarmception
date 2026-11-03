@@ -81,25 +81,22 @@ const SINCE: &str = "HTTP/2.0 200 OK\nEtag: W/\"e1\"\r\n\r\n[\
    \"html_url\":\"https://github.com/o/n/pull/13\",\"pull_request\":{}}]";
 
 /// A `gh` that prints `PAGES` for the issues, `PULLS` for the pulls, `SINCE` for what changed and
-/// a 304 for a request with an ETag (each call's arguments a line of `args`), or fails saying
-/// `fail`.
+/// a 304 for a request with an ETag (each call's arguments a line of `<dir>/args`), or fails
+/// saying `fail`, for a session reading the issues of `repo`: run by `sh`, never exec'd
+/// (`support::fake_gh`).
 #[cfg(unix)]
-fn fake_gh(dir: &Path, fail: Option<&str>) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
+fn fake_gh(dir: &Path, repo: &Path, fail: Option<&str>) -> PathBuf {
     std::fs::write(dir.join("pages.json"), PAGES).unwrap();
     std::fs::write(dir.join("pulls.json"), PULLS).unwrap();
     std::fs::write(dir.join("since.txt"), SINCE).unwrap();
     let d = dir.display();
-    let body = match fail {
-        Some(why) => format!("#!/bin/sh\necho '{why}' >&2\nexit 1\n"),
+    let script = match fail {
+        Some(why) => format!("echo '{why}' >&2\nexit 1\n"),
         None => format!(
-            "#!/bin/sh\necho \"$@\" >> '{d}/args'\ncase \"$*\" in\n  *If-None-Match*) echo 'gh: HTTP 304' >&2; exit 1 ;;\n  *since=*) cat '{d}/since.txt' ;;\n  *pulls*) cat '{d}/pulls.json' ;;\n  *) cat '{d}/pages.json' ;;\nesac\n"
+            "echo \"$@\" >> '{d}/args'\ncase \"$*\" in\n  *If-None-Match*) echo 'gh: HTTP 304' >&2; exit 1 ;;\n  *since=*) cat '{d}/since.txt' ;;\n  *pulls*) cat '{d}/pulls.json' ;;\n  *) cat '{d}/pages.json' ;;\nesac\n"
         ),
     };
-    let gh = dir.join("gh");
-    std::fs::write(&gh, body).unwrap();
-    std::fs::set_permissions(&gh, std::fs::Permissions::from_mode(0o755)).unwrap();
-    gh
+    support::fake_gh(repo, &script)
 }
 
 fn call<T: serde::de::DeserializeOwned>(session: &mut Session, id: &str, params: &str) -> T {
@@ -180,7 +177,7 @@ fn issues_from_gh_reach_the_tooltips_the_labels_and_the_cache() {
     let tools = temp("gh");
     let cache = temp("cache");
     let mut session = Session::new();
-    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    session.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: Some(cache.clone()) });
     let status = open(&mut session, &dir);
     assert_eq!(status.issues.error, None, "{:?}", status.issues);
     assert_eq!((status.issues.source, status.issues.issues, status.issues.pulls), (Some(IssuesSource::Github), 3, 1));
@@ -212,7 +209,7 @@ fn issues_from_gh_reach_the_tooltips_the_labels_and_the_cache() {
 
     // Another load with gh failing: the cache's issues, and why the fetch failed.
     let mut later = Session::new();
-    later.set_github(Github { gh: fake_gh(&tools, Some("error connecting to api.github.com")), cache_dir: Some(cache.clone()) });
+    later.set_github(Github { gh: fake_gh(&tools, &dir, Some("error connecting to api.github.com")), cache_dir: Some(cache.clone()) });
     let status = open(&mut later, &dir);
     assert_eq!((status.issues.source, status.issues.issues), (Some(IssuesSource::Cache), 3));
     assert!(status.issues.error.as_deref().is_some_and(|e| e.contains("error connecting")), "{:?}", status.issues);
@@ -228,7 +225,7 @@ fn in_the_background_the_issues_land_through_poll() {
     let dir = repo(Some("https://github.com/o/n.git"));
     let tools = temp("gh-bg");
     let (mut session, wakes) = Wakes::session();
-    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: None });
+    session.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: None });
     let opened = open(&mut session, &dir);
     assert!(opened.issues.fetching, "the issues are read in the background");
     // Polled only when woken, as the app draws: the last wake comes once the reads are over, so
@@ -261,7 +258,7 @@ fn a_load_with_a_cache_merges_what_changed_since() {
     let tools = temp("gh-since");
     let cache = temp("cache-since");
     let mut session = Session::new();
-    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    session.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: Some(cache.clone()) });
     let status = open(&mut session, &dir);
     let refresh = status.issues.refresh.unwrap();
     assert_eq!((refresh.kind, refresh.why.as_deref()), (RefreshKind::Full, Some("no cache")));
@@ -283,7 +280,7 @@ fn a_load_with_a_cache_merges_what_changed_since() {
 
     // Another session from the cache: the same issues before GitHub answers, then nothing new.
     let mut later = Session::new();
-    later.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    later.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: Some(cache.clone()) });
     let status = open(&mut later, &dir);
     assert_eq!((status.issues.refresh.unwrap().kind, status.issues.issues), (RefreshKind::Incremental, 4));
     // The newest change is where it was: the same request, sent with its ETag, says nothing changed.
@@ -302,7 +299,7 @@ fn a_stale_old_or_corrupt_cache_is_fetched_in_full() {
     let dir = repo(Some("https://github.com/o/n.git"));
     let tools = temp("gh-full");
     let cache = temp("cache-full");
-    let github = Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) };
+    let github = Github { gh: fake_gh(&tools, &dir, None), cache_dir: Some(cache.clone()) };
     let load = |why: &str| {
         let mut session = Session::new();
         session.set_github(github.clone());
@@ -340,12 +337,12 @@ fn a_gh_error_leaves_the_cache_as_it_was() {
     let tools = temp("gh-error");
     let cache = temp("cache-error");
     let mut session = Session::new();
-    session.set_github(Github { gh: fake_gh(&tools, None), cache_dir: Some(cache.clone()) });
+    session.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: Some(cache.clone()) });
     let _ = open(&mut session, &dir);
     let before = std::fs::read(cache.join("issues/o--n.json")).unwrap();
 
     let mut failing = Session::new();
-    failing.set_github(Github { gh: fake_gh(&tools, Some("HTTP 502: Bad Gateway")), cache_dir: Some(cache.clone()) });
+    failing.set_github(Github { gh: fake_gh(&tools, &dir, Some("HTTP 502: Bad Gateway")), cache_dir: Some(cache.clone()) });
     let status = open(&mut failing, &dir);
     assert_eq!((status.issues.source, status.issues.issues, status.issues.refresh.as_ref()), (Some(IssuesSource::Cache), 3, None), "the cache's, as it was");
     assert!(status.issues.error.as_deref().is_some_and(|e| e.contains("Bad Gateway")), "{:?}", status.issues);
