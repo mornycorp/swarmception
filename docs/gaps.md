@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-02 · **Change:** minor (batch 9: the owner's review: colours, gate rows, the Factory follows, folding quiet time) · **Target:** M3
+> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 10: the review's loose ends, the Factory's benches, debug-build markers) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,8 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G24 Loose ends from the owner's review](#g24-loose-ends-from-the-owners-review) | open | | 3–5 h |
+| 1 | [G25 Small ends after batch 10](#g25-small-ends-after-batch-10) | open | | 1–2 h |
+| — | [G24 Loose ends from the owner's review](#g24-loose-ends-from-the-owners-review) | done | #92–#98, swarm-timeline#197, swarm-core#14 | |
 | — | [G20 A ticket keeps its colour across a send-back](#g20-a-ticket-keeps-its-colour-across-a-send-back) | done | #83 | |
 | — | [G21 Gate runs and ready checks on the timeline](#g21-gate-runs-and-ready-checks-on-the-timeline) | done | #84 | |
 | — | [G22 The Factory follows the timeline](#g22-the-factory-follows-the-timeline) | done | #85 | |
@@ -238,12 +239,43 @@ marked **Human:** with what is needed.
 
 ## G24 Loose ends from the owner's review
 
-- **Missing:** a row's lanes sized over the visible window (Ready checks stands four lanes tall:
-  a widget change); ready checks in the Factory's Gate list; swarm-core logging `work` when a
-  worker picks up a send-back, so rework isn't inferred; the minimap marking folds;
-  `issues::in_the_background_the_issues_land_through_poll` runs ~10 s of its 20 s limit under
-  load (failed twice in a worker's `ready`).
-- **Estimate:** 3–5 agent-hours, part in swarm-timeline and swarm-core.
+- **Done:**
+  - **A row's lanes over the visible window** (#97, PR #103; swarm-timeline#197, PR #201): the
+    widget packs a row's items into the lanes the window needs once the view holds still (250 ms,
+    no button held), and the pane turns it on with every load. Ready checks is one lane where
+    one check runs at a time, four only over the overlap. `ui.inspect` 14: `timeline.lanesWindow`.
+  - **The minimap marks folds** (swarm-timeline#198, PR #200, by swarm-timeline's own swarm;
+    pinned by #103).
+  - **Ready checks in the Factory's Gate list** (#95, PR #102): beside the gate's runs in time
+    order (⚗, by worker), selected both ways with the timeline; a check tells its own story in
+    Details (reversing #84, where it told its ticket's); a run selected on the timeline is drawn
+    selected though it ends after *t*, or `not yet run` before it starts.
+  - **A send-back's rework logged** (swarm-core#14, PR #15; #98, PR #104): `prwatch` logs `work
+    --issue <n> --mr <m>` once when the worker's PR is sent back; the domain starts the rework
+    there, the time before it reading as sent back, and #83's inference stays for older runs.
+  - **Tests that wait on the session, not the clock** (#96, PR #100): the engine's background
+    tests wait on the waker, the UI's on a deadline, not a frame count; the issues read now wakes
+    the front end once it ends (a real bug: "fetching…" could linger); a repo opens in 7 git calls,
+    not 13.
+  - **From the owner, the same day:** the Factory's benches with dozens of workers (#94, PR #99:
+    busy first, the rest scroll, those off shift fold to one line; `ui.inspect` 13), and orange
+    "Unaligned" markers over the bars in a debug build (#92, PR #93; swarm-timeline#193, PR #194).
+- **Measured:** mc-engine's Ready checks over 24 equal windows: 4 lanes in 1, 2 in 4, 1 in 19;
+  the issues test under load: median 3.9 s, max 6.7 s (was 4.1 s, 8.5 s), its limit now only
+  reached on failure (2026-11-03).
+- **Left:** [G25](#g25-small-ends-after-batch-10).
+- **Evidence:** `crates/ui/tests/lanes_window.rs`, `factory_gate_list.rs`, `factory_benches.rs`,
+  `aligned.rs`; `crates/domain/src/tickets.rs`; `crates/engine/tests/support`; screenshots checked
+  2026-11-03.
+
+## G25 Small ends after batch 10
+
+- **Missing:** a gate's failure with no `sendback` event doesn't read as sent back until
+  prwatch's `work` arrives; the Factory's benches are in key order (`worker-1`, `worker-10`, …),
+  not natural order, and the folded line of workers off shift doesn't open on a click;
+  `live::every_check_that_brings_events_refreshes_the_issues` takes 4–22 s under load (no limit,
+  so slow but not flaky).
+- **Estimate:** 1–2 agent-hours.
 
 ## G1 The ruler reads clock time
 
@@ -396,6 +428,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-03 | minor | Batch 10: G24 done (#92–#98, swarm-timeline#197, #198, swarm-core#14); G25 new |
 | 2026-11-02 | minor | Batch 9: the owner's review: G20–G23 done (#83–#86, swarm-timeline#191); G24 new |
 | 2026-11-02 | minor | Batch 8: G6, G19 done (#74–#77, swarm-core#12); no gaps open |
 | 2026-11-02 | minor | Batch 7: G8, G9, G17, G18 done (#67–#69); G19 new; M3 built |
