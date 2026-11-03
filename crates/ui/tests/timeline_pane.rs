@@ -315,6 +315,26 @@ fn a_tickets_one_bar_draws_its_stages_as_its_strip() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// As [`opened`] with #7 submitted at 03:30, and `events` logged after.
+fn opened_then(events: &[&str]) -> (PathBuf, Session, TimelinePane) {
+    let dir = repo_with("2026-10-31T03:30:00Z");
+    let log = dir.join("tracking/mini-aa1111/work.jsonl");
+    let lines: String = events.iter().map(|e| format!("{e}\n")).collect();
+    std::fs::write(&log, std::fs::read_to_string(&log).unwrap() + &lines).unwrap();
+    let out = std::process::Command::new("git")
+        .current_dir(&dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-am", "more"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let mut engine = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
+    let mut pane = TimelinePane::default();
+    pane.sync(&mut engine).unwrap();
+    (dir, engine, pane)
+}
+
 /// #119 (swarm-timeline#211): a merge is a marker of no length (#115), and its tooltip, as the
 /// widget answers it, is the merge's own lines, as `rows.list` gives them, with no duration
 /// line: a merge at an instant has none, so no "duration 0 ns".
@@ -325,21 +345,7 @@ fn a_merge_markers_tooltip_has_no_duration_line() {
     use timeline_engine::state_cmds::{Set as SetState, SetParams as SetStateParams};
     use timeline_engine::tracks_cmds::{HitParams, Layout, LayoutParams};
     // #7 claimed at 03:01, submitted at 03:30, merged at 03:45.
-    let dir = repo_with("2026-10-31T03:30:00Z");
-    let log = dir.join("tracking/mini-aa1111/work.jsonl");
-    let events = std::fs::read_to_string(&log).unwrap() + r#"{"event":"merge","issue":7,"mr":8,"t":"2026-10-31T03:45:00Z"}"# + "\n";
-    std::fs::write(&log, events).unwrap();
-    let out = std::process::Command::new("git")
-        .current_dir(&dir)
-        .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-am", "merged"])
-        .output()
-        .unwrap();
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let mut engine = Session::new();
-    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
-    engine.execute("repo.open", &format!("{{\"path\":{path}}}")).unwrap();
-    let mut pane = TimelinePane::default();
-    pane.sync(&mut engine).unwrap();
+    let (dir, mut engine, mut pane) = opened_then(&[r#"{"event":"merge","issue":7,"mr":8,"t":"2026-10-31T03:45:00Z"}"#]);
     // The merge's own lines, as the engine's rows give them.
     let list: swarmception_engine::rows_cmds::ListResult = serde_json::from_str(&engine.execute("rows.list", "").unwrap()).unwrap();
     let merge = list
@@ -365,5 +371,81 @@ fn a_merge_markers_tooltip_has_no_duration_line() {
     let lines: Vec<String> = tip.lines.iter().map(timeline_engine::wire::TooltipLineWire::text).collect();
     assert_eq!(lines, swarmception_domain::tooltip::texts(&merge.tooltip_lines), "the merge's lines alone");
     assert!(!lines.iter().any(|l| l.starts_with("duration")), "no duration line: {lines:?}");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+/// #121 (swarm-timeline#213): a ticket's tooltip over a short timeline pane near the screen's
+/// bottom is drawn whole, inside the screen, past the pane's own rows: the widget no longer
+/// clips it to them.
+#[test]
+fn a_tickets_tooltip_over_a_short_pane_is_whole() {
+    use swarmception_domain::rows::Node;
+    use swarmception_engine::repo_cmds::Status;
+    // #7 claimed at 03:01, working from 03:05, submitted at 03:30, merged at 03:45: a tall tooltip.
+    let (dir, mut engine, mut pane) =
+        opened_then(&[r#"{"event":"work","issue":7,"t":"2026-10-31T03:05:00Z"}"#, r#"{"event":"merge","issue":7,"mr":8,"t":"2026-10-31T03:45:00Z"}"#]);
+    // #7's bar's lines, as the engine's rows give them: each plain line whole, each coloured one
+    // its runs (the widget draws a run at a time).
+    let list: swarmception_engine::rows_cmds::ListResult = serde_json::from_str(&engine.execute("rows.list", "").unwrap()).unwrap();
+    let bar = list
+        .rows
+        .iter()
+        .flat_map(Node::leaves)
+        .find_map(|leaf| match leaf {
+            Node::Ranges { key, bars, .. } if key != "merged" => bars.iter().find(|b| b.ticket == Some(7)).cloned(),
+            _ => None,
+        })
+        .unwrap();
+    let wanted: Vec<String> = bar
+        .tooltip_lines
+        .iter()
+        .flat_map(|line| if line.is_plain() { vec![line.text()] } else { line.spans.iter().map(|s| s.text.clone()).collect() })
+        .filter(|text| !text.trim().is_empty())
+        .collect();
+    assert!(bar.tooltip_lines.len() >= 9, "a tall tooltip: {:?}", bar.tooltip);
+    let status = engine.call::<Status>(swarmception_engine::engine_cmds::NoParams {}).unwrap();
+    // The pane 125 px tall at the bottom of a 1000 × 700 screen, its rows about 100 px: under the
+    // tooltip. Alt held, so the tooltip shows at once.
+    let ctx = egui::Context::default();
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 700.0));
+    let area = egui::Rect::from_min_max(egui::pos2(0.0, 575.0), egui::pos2(1000.0, 700.0));
+    let alt = egui::Modifiers { alt: true, ..Default::default() };
+    let run = |pane: &mut TimelinePane, mut events: Vec<egui::Event>| {
+        events.insert(0, egui::Event::ModifiersChanged(alt));
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        let mut output = ctx.run_ui(input, |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(area), |ui| {
+                ui.set_clip_rect(area);
+                pane.ui(ui, &status);
+            });
+        });
+        output.textures_delta.clear();
+        output.shapes
+    };
+    run(&mut pane, Vec::new());
+    // Left of the bar's middle, so the box (right of the pointer) has the screen's width, and in
+    // the visible top of its row, the last, which the pane's bottom cuts.
+    let middle = pane.bar_point(&mut engine, 7).expect("#7's bar is drawn");
+    let at = egui::pos2(middle.x - 150.0, middle.y.min(area.bottom() - 20.0));
+    assert!(area.contains(at), "{at:?} in the pane");
+    run(&mut pane, vec![egui::Event::PointerMoved(at)]);
+    let shapes = run(&mut pane, vec![egui::Event::PointerMoved(at)]);
+    let drawn: Vec<(String, egui::Rect, egui::Rect)> = shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) => Some((text.galley.text().to_owned(), text.visual_bounding_rect(), clipped.clip_rect)),
+            _ => None,
+        })
+        .collect();
+    // Every line drawn, and every copy of it whole: inside its clip and the screen.
+    for text in &wanted {
+        assert!(drawn.iter().any(|(t, _, _)| t == text), "{text:?} drawn");
+    }
+    for (text, rect, clip) in drawn.iter().filter(|(t, _, _)| wanted.contains(t)) {
+        assert!(clip.contains_rect(*rect) && screen.contains_rect(*rect), "{text:?} whole: {rect:?} in {clip:?}");
+    }
+    // Taller than the pane's rows: it reaches above them, over the toolbar.
+    let top = drawn.iter().filter(|(t, _, _)| wanted.contains(t)).map(|(_, rect, _)| rect.top()).fold(f32::INFINITY, f32::min);
+    assert!(top < area.top() + 40.0, "above the rows: {top}");
     std::fs::remove_dir_all(dir).ok();
 }
