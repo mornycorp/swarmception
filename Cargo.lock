@@ -3143,7 +3143,7 @@ checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 [[package]]
 name = "swarm-core"
 version = "0.1.0"
-source = "git+https://github.com/mornycorp/swarm-core.git?rev=63f0932e0ee1e4549a49532c2a5cc0c184d61374#63f0932e0ee1e4549a49532c2a5cc0c184d61374"
+source = "git+https://github.com/mornycorp/swarm-core.git?rev=b40c7302ab7084d8dbc6cb2bac8a335075d74d4f#b40c7302ab7084d8dbc6cb2bac8a335075d74d4f"
 dependencies = [
  "serde_json",
 ]

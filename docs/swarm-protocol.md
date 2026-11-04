@@ -3,7 +3,7 @@
      `sync-assets --check` fails on a copy that differs. -->
 # The swarm protocol
 
-> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-03 · **Change:** minor (`prwatch` logs the `work` on a send-back) · **Target:** M1
+> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-04 · **Change:** minor (`claim --take-over` takes over a stale claim and keeps its PR; `land` retargets a stacked PR onto `main` before merging its base) · **Target:** M1
 
 How a swarm of agents builds Swarmception: the roles, the claim, the tracking timeline, the
 gates, the coordinator's loop and the periodic full gate. Every swarm that shares Swarm Core
@@ -205,8 +205,25 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
      issue (`gh pr list --repo mornycorp/swarmception --search "<n> in:title,body"`), push a first commit
      on the branch, `gh pr create --repo mornycorp/swarmception --draft --title "<summary> (#<n>)"
      --body "Closes #<n>"`, label, comment, `cargo xtask event claim`.
-3. **Taking over.** `--force` claims an issue someone else holds. Use it only for a claim that
-   step 6's 24-hour rule makes stale, after a comment on the issue.
+3. **Taking over.** A claim is stale, and may be taken over, only when the coordinator says so
+   or it has been idle for 24 hours. The coordinator's say-so is
+   `cargo xtask event release --issue <n> --of <the holder's instance> --reason stale` (or a
+   `released: <name>, …` comment), with a comment naming who takes it over. Idle means no event of
+   its holder on the issue, no claim comment and no commit on its branch for 24 hours (step 6).
+   - `cargo xtask claim <n> --agent <your instance id> --take-over` takes it and keeps its work:
+     it adopts the issue's open PR and its branch, and checks out the branch's head in your
+     worktree with the commits kept. It logs `release --of <the old instance>` (unless that holder
+     is released already), comments `released: <old name>, taken over by …`, and makes the claim:
+     the label, `claimed: <your name>, PR #<m>`, `claim` and `work`. It runs no periodic full gate.
+   - A `status::blocked` label comes off when every issue its hold waits on is closed: those the
+     `Needs` line names, and the newest comment saying `Blocked on …` or `Waiting for …`.
+     Otherwise it stays, and the takeover says why. A held issue is idle by design: an idle
+     claim on one whose cause may remain is taken over only on the coordinator's say-so.
+   - It refuses a claim that isn't stale, naming its holder and when it was last active: ask the
+     coordinator, or wait.
+   - `--force` claims an issue someone else holds on a new branch and PR (a hold lifted by hand,
+     with no work to keep). It never adopts a branch with work on it, and says to use
+     `--take-over`.
 4. **Work in the open.** Push often. Blocked: label `status::blocked` and comment why (a
    `status::blocked` issue is one nobody takes: the claim command refuses it). Needs a
    person: `needs::human`. `cargo xtask ci --changed` warns when another agent holds your
@@ -237,6 +254,11 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
      stops `ready` as before: a build, clippy or fmt failure, a failure at another step, a test
      that fails again alone, and a HEAD whose rerun already ran (one a HEAD). `--no-rerun` stops
      at failed tests too.
+   - **`--no-ci`** skips the gate and the second look at `main` (a docs-only PR whose gate just
+     passed, say), and the `submit` event says so: its note begins `no-ci`. The coordinator's
+     smoke runs no tests, trusting your run, so a stack holding a PR whose latest `submit` says
+     `no-ci` is gated with `ci --changed` instead (the **changed** kind, [The coordinator's
+     loop](#the-coordinators-loop); sc#18). Readied again with its run, the smoke is enough.
    - **The rebased tree's own xtask**: when the commits since this xtask was built touch
      one of the project's `Project::xtask_rules` (xtask's sources, the workspace manifest, the
      lock file, `.cargo/`), it builds the rebased xtask into `<target>/ready-xtask` and gates
@@ -258,7 +280,8 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
    at once: a merged base means rebasing what is stacked on it
    ([Watching your PRs](#watching-your-mrs)).
 6. **Give up cleanly.** Comment what you learned, remove `status::in-progress`, close the draft
-   PR. A draft PR with no new commits for 24 hours may be taken over after a comment on the issue.
+   PR. A claim with no activity for 24 hours (no events on the issue, no claim comment, no new
+   commits) may be taken over (step 3).
 
 ## Tracking
 
@@ -546,13 +569,24 @@ On each finished pull request:
       (<how>): landing`, where `<how>` says whether it was restacked or the worker's own commit
       is that tree already, and the stacked commit is pushed over the worker's. A move onto a newer `main`, or
       to another tree (a new commit, a conflict), stops as before. An older record names
-      no base to restack onto, so a moved branch in it stops;
+      no base to restack onto, so a moved branch in it stops. And the PR must be open: GitHub
+      closes a PR whose base branch is deleted, so one stacked on the PR below it (its base that
+      PR's head branch) was closed when that one merged, before `land` retargeted (on 2026-11-03
+      a swarm's `land 129 130` merged #129, GitHub closed #130, and the way out was by hand).
+      Before pushing anything to it, `land` pushes that base branch back (at what the stack's
+      record put the PR on), reopens the PR, retargets it onto `main` and deletes the branch
+      again; when a step fails it stops with the exact steps left (`git push`, `gh pr reopen`,
+      `gh pr edit --base main`, `git push --delete`, then the `land` to run again). A PR closed
+      any other way stops. Either way `s-<pr>` and the record stay until the PR lands;
    2. it force-pushes `s-<pr>` and checks the remote branch is that commit (on
       2026-10-19 a PR merged without its fix, whose push hadn't landed); a push that didn't
       land is tried again, three times in all;
    3. it notes the gate's `CI summary` on the PR (from that log; `--summary` to pass one),
       and refuses a summary that isn't a pass; then it cancels the workflow runs of the PR's head
-      still queued or running, which the gate replaced;
+      still queued or running, which the gate replaced. Then it retargets onto `main` every open
+      PR whose base is this PR's source branch (`gh pr edit <n> --base main`), the stack's later
+      PRs first, so deleting that branch once it merged closes none of them; a retarget that fails
+      stops it before the merge;
    4. it waits until the PR is mergeable; one `behind` `main` is rebased on the server, and a
       branch the server can't rebase (merge commits), or one `stack` merged its base into, gets
       `main` merged in and pushed instead (semi-linear history needs `main`'s head);
@@ -614,7 +648,8 @@ On each finished pull request:
      `.claude/worktrees/gate` inside it), never in the owner's checkout; after each merge the coordinator fast-forwards the
      owner's checkout when it is on `main` with no tracked changes ([Parallel
      agents](#parallel-agents)).
-   - **Four kinds of gate** (owner 2026-10-21; the smoke): `cargo xtask gate` picks one from
+   - **Four kinds of gate** (owner 2026-10-21; the smoke), and a fifth for a PR readied
+     without its run (changed): `cargo xtask gate` picks one from
      the stack's change against `origin/main` and `ci --changed`'s plan for it:
      The project's planner (`Hooks::gate_kind`; [swarm.md › The gate's kinds
      here](swarm.md#the-gates-kinds-here)) decides docs, tooling or full; the coordinator runs
@@ -647,6 +682,15 @@ On each finished pull request:
        15 minutes, longer with GPU tests) of the shared desktop for what the
        author's run already showed.
 
+     - **changed** (sc#18): the smoke of a stack holding a PR readied without its author's run
+       (`ready --no-ci`: the PR's latest `submit` event's note begins `no-ci`) runs `cargo xtask
+       ci --changed --base origin/main` instead, the run that `ready` skipped, so a test run
+       stands behind every merge. `gate` finds the PRs in the stack record (or the issues of the
+       branches `--merge` names) and reads their submits on the tracking branch; its note names
+       them (`kind=changed (ready --no-ci: #<m>)`). The docs, tooling and full gates run `ci
+       --changed` or more already, and stay. A tracking branch it can't read is a warning, and
+       the smoke stays.
+
      A stack mixing kinds runs the strongest one any of its PRs needs, since the change is the
      whole stack's (a tooling PR stacked with a product one gets the smoke, and its xtask tests
      wait for the full gate). The kind goes in the gate's notes (`capacity=<n> free=<GB>; kind=<kind>
@@ -678,7 +722,11 @@ On each finished pull request:
 5. **Restock, within capacity:** start a worker only while `cargo xtask capacity` shows room for
    another build, counting its own gate, and at most three per swarm on the owner's desktop. Then: split large issues into tasks one worker can finish in a session; open issues for
    newly unblocked work, with capability labels; update **Current focus**.
-6. **Release stale claims:** a draft PR with no new commits for 24 hours.
+6. **Release stale claims:** a draft PR with no new commits for 24 hours, or one you hand to
+   another worker sooner (its holder gone quiet, what it waited on landed):
+   `release --issue <n> --of <its instance> --reason stale` (step 8), and a comment naming who
+   takes it over. That worker's `cargo xtask claim <n> --take-over` keeps the PR and its branch
+   ([Picking work](#picking-work), step 3).
 7. **Claim its own work:** `cargo xtask claim <n> --agent <its instance> --no-pr` (the label, the
    comment `claimed: coordinator` and the claim event, refused when another agent holds it)
    before starting it, however small. **While it merges,** its claims add `--no-fullgate`.
@@ -1032,6 +1080,9 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Picking work › Taking over: a claim is stale on the coordinator's say-so (`release --of`, or a `released:` comment) or after 24 hours with no events, comments or commits; `claim <n> --take-over` adopts its PR and branch with their commits, logs `release --of` the old holder, comments the release and the claim, and takes `status::blocked` off when everything its hold waits on is closed; `--force` names `--take-over` for a branch with work on it; the coordinator's step 6 hands a stale claim over so (mornycorp/swarm-core#16) |
+| 2026-11-04 | minor | The land step: before a PR merges, `land` retargets onto `main` every open PR whose base is its branch, so GitHub deleting that branch closes none; a PR already closed that way gets its base branch pushed back, is reopened, retargeted and the branch deleted again, or `land` stops with the steps; `s-<pr>` stays until the PR lands (mornycorp/swarm-core#19) |
+| 2026-11-04 | minor | Picking work › Finish and The coordinator's loop: `ready --no-ci` notes `no-ci` on its `submit`, and the gate runs a stack holding such a PR as the **changed** kind (`ci --changed --base origin/main`) instead of the smoke, its note naming the PRs (sc#18) |
 | 2026-11-03 | minor | Watching your PRs and Tracking: `prwatch` says when your PR is sent back (a `sendback`, or a gate failing for the change's cause) and logs your `work --issue <n> --mr <m>` once, so the rework's start is on the timeline; log it yourself if no command did; a question logs nothing (mornycorp/swarm-core#14) |
 | 2026-11-02 | minor | A failed `ready` check's `sub.stop` says why, as the gate's does: `rc=<n>; cause=<cause>; step=<the failing ci step>` (was `rc=1`) |
 | 2026-10-31 | minor | GitHub CI runs once a day on `main`, not on pushes or PRs (owner, 2026-10-31): the coordinator checks the latest daily run each batch, and a red one is `main` red |
