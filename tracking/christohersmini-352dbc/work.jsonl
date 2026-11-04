@@ -1,3 +1,4 @@
 {"effort":"high","event":"session.start","format":3,"machine":"christohersmini","model":"claude-opus-5-5","name":"coordinator","role":"coordinator","t":"2026-11-04T06:49:21Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #131 (progress); capacity=3 free=17.0; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-131","t":"2026-11-04T07:14:32Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #131","sub":"gate-131","t":"2026-11-04T07:15:07Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #132 (swarm-core bump); capacity=2 free=13.7; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-132","t":"2026-11-04T07:31:38Z"}
