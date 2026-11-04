@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 13: a sent-back ticket's red corner, merge dots optional, a red dot where given up, no Gates band) · **Target:** M3
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 14: G28 done, the minimap's strips and a silent rerun a rerun; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113, swarm-core#20, swarm-timeline#222 | 1–3 h |
+| — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
 | — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, swarm-timeline#218, #219 | |
 | — | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | done | #115, #117, #119, #121, #124 | |
 | — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
@@ -317,8 +317,13 @@ marked **Human:** with what is needed.
   step of every `ci`, fails on a new one.
 - **Measured:** 12 copies at once: engine `issues` 14.9 → 2.8 s, `details` 14.7 → 2.9 s, the
   source crate 16.6 → 4.0 s (2026-11-03).
-- **Left:** a gate rerun that doesn't say `rerun of <sub>:` leaves its ticket sent back until it
-  merges (swarm-core's rule: swarm-core#20); the minimap draws no strips (swarm-timeline#222).
+- **Done** (batch 14):
+  - **A silent rerun is a rerun** (swarm-core#20, PR #24; pinned by #133): `gate` notes a gate of
+    the same failed, unchanged stack `rerun of <sub>:` itself, so a flake it answers is no
+    send-back.
+  - **The minimap shows the tickets' strips** (#134, PR #135; swarm-timeline#222, PR #225): each
+    ticket's stages in the minimap, the most important winning its column.
+- **Left:** none.
 - **Evidence:** `xtask/src/fakes.rs`, `crates/engine/tests/support`.
 
 ## G29 Merges as markers, and one colour per stage
@@ -517,6 +522,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Batch 14: G28 done (#134, swarm-core#20, swarm-timeline#222); no gaps open |
 | 2026-11-04 | minor | Batch 13: G30 new and done (#127, #128, swarm-timeline#218, #219); G28's leftovers filed (swarm-core#20, swarm-timeline#222) |
 | 2026-11-03 | minor | G29 done (#124, swarm-timeline#215) |
 | 2026-11-03 | minor | Batch 12: G28 partial (#113); G29 new (#115, #117, #119, #121); G21 reversed |

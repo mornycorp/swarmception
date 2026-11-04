@@ -5,7 +5,7 @@
      a generated doc in the `Project`'s `generated`, so `stack` regenerates it on a conflict. -->
 # Scorecard
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 13: a sent-back ticket's red corner, merge dots optional, a red dot where given up, no Gates band) · **Target:** M3
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 14: G28 done, the minimap's strips and a silent rerun a rerun; no gaps open) · **Target:** M3
 
 Per area, what Swarmception does, measured: each row is **done** (a command or code path, tests,
 and for UI a visual check), **partial** or **missing**, with its evidence. The PR that changes a
@@ -68,6 +68,7 @@ row's status updates it ([progress-docs.md](progress-docs.md) rule 6); gaps live
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Batch 14: G28's minimap strips (#134) and swarm-core bumps (#132, #133) move no row |
 | 2026-11-04 | minor | Batch 13: TL-7, UN-3 evidence (#127, #128); tests |
 | 2026-11-03 | minor | Batch 12: UN-3 evidence (#117); measured numbers |
 | 2026-11-03 | minor | Batch 11: TL-7, UN-1 evidence (#106, #108, #110); measured numbers |
