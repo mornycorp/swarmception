@@ -14,3 +14,4 @@
 {"event":"merge","issue":134,"mr":135,"sub":"gate-135","t":"2026-11-04T08:02:53Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #135","sub":"gate-135","t":"2026-11-04T08:02:59Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #136 (progress); capacity=2 free=15.3; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-136","t":"2026-11-04T08:03:37Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #136","sub":"gate-136","t":"2026-11-04T08:03:55Z"}
