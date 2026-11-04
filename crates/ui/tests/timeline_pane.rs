@@ -102,9 +102,10 @@ fn the_toolbar_shows_only_what_swarmception_needs_and_the_rest_is_fixed_by_comma
     pane.sync(&mut engine).unwrap();
     let fixed = |pane: &mut TimelinePane| {
         let state = pane.widget().session().call::<Get>(NoParams {}).unwrap().timeline.unwrap();
-        (state.scale, state.origin, state.minimap, state.click)
+        (state.scale, state.origin, state.minimap, state.minimap_strips, state.click)
     };
-    let expected = ("Time".to_owned(), OriginWire::Absolute, VisibilityWire::Always, ClickModeWire::Nearest);
+    // #134: the minimap draws the tickets' strips (swarm-timeline#222).
+    let expected = ("Time".to_owned(), OriginWire::Absolute, VisibilityWire::Always, true, ClickModeWire::Nearest);
     assert_eq!(fixed(&mut pane), expected, "set by command on load");
     let bar = pane.widget().session().call::<Toolbar>(NoParams {}).unwrap();
     assert_eq!(bar.show, wanted, "the toolbar draws only these");
