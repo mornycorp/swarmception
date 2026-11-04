@@ -10,3 +10,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-61afd58","t":"2026-11-04T08:01:33Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-61afd58","t":"2026-11-04T08:01:53Z"}
 {"event":"submit","issue":134,"mr":135,"t":"2026-11-04T08:01:59Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #135 (#134); capacity=2 free=11.9; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-135","t":"2026-11-04T08:02:11Z"}
