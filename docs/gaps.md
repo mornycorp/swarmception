@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-03 · **Last updated:** 2026-11-03 · **Change:** minor (batch 12: merges as markers, tooltips in the strip's colours, no gate rows) · **Target:** M3
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 13: a sent-back ticket's red corner, merge dots optional, a red dot where given up, no Gates band) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,8 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113 | 1 h |
+| 1 | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | partial | #113, swarm-core#20, swarm-timeline#222 | 1–3 h |
+| — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, swarm-timeline#218, #219 | |
 | — | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | done | #115, #117, #119, #121, #124 | |
 | — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
 | — | [G26 Failures survive packing](#g26-failures-survive-packing) | done | #108 | |
@@ -317,7 +318,7 @@ marked **Human:** with what is needed.
 - **Measured:** 12 copies at once: engine `issues` 14.9 → 2.8 s, `details` 14.7 → 2.9 s, the
   source crate 16.6 → 4.0 s (2026-11-03).
 - **Left:** a gate rerun that doesn't say `rerun of <sub>:` leaves its ticket sent back until it
-  merges (swarm-core's rule); the minimap draws no strips. Small; no issues yet.
+  merges (swarm-core's rule: swarm-core#20); the minimap draws no strips (swarm-timeline#222).
 - **Evidence:** `xtask/src/fakes.rs`, `crates/engine/tests/support`.
 
 ## G29 Merges as markers, and one colour per stage
@@ -340,8 +341,30 @@ marked **Human:** with what is needed.
 - **Left:** labels and readouts still use a fixed width a character (the widget's
   `LABEL_CHAR_WIDTH`).
 - **Evidence:** `rows::tests::a_tooltip_names_each_stage_in_its_strip_segments_colour`,
-  `timeline::tests::a_merge_of_no_length_is_drawn_and_picked`, `crates/ui/tests/timeline_pane.rs`,
-  `crates/ui/tests/gates_pane.rs`; screenshots checked 2026-11-03.
+  `timeline::tests::a_merge_of_no_length_is_drawn_and_picked`, `crates/ui/tests/timeline_pane.rs`
+  (`crates/ui/tests/gates_pane.rs` went with the band, #128); screenshots checked 2026-11-03.
+
+## G30 The owner's ticket bars, and no Gates band
+
+- **Done** (the owner's, 2026-11-03):
+  - **A sent-back ticket's red corner** (#127, PR #130; swarm-timeline#219, PR #221): the
+    factory's brick's corner on its timeline bar, top right, the count inside when more than once
+    (swarm-timeline's range corner, §6.6); the red diamonds along its foot gone.
+  - **Merge dots optional** (#127): off by default, the bar ending at its merge says it;
+    `rows.set {"mergeMarks": true}` and View ▸ Merge Marks bring them back, saved with the rows.
+  - **A red dot where a ticket was given up** (#127): abandoned, or closed on GitHub without a
+    merge (not one stopped `done`, nor one whose pull request GitHub merged).
+  - **No Gates band** (#128, PR #129): the band, View ▸ Gates and `--panes gates` gone;
+    `UiState` 12 drops an older state's `gates`, `ui.inspect` 17; `gates.list`, `stats.get`, the
+    Factory's figures and Gate list stay.
+  - **A selected bar keeps its hatch when hovered** (swarm-timeline#218, PR #220).
+- **Measured:** 388 tests, `cargo nextest run --workspace` (2026-11-03); checked by eye on
+  mc-engine: red corners on the sent-back bars, no green dots, one red dot at an abandoned
+  ticket's end.
+- **Evidence:** `rows::tests::a_corner_counts_send_backs_and_a_red_dot_marks_only_what_was_given_up`,
+  `timeline::tests::a_failure_survives_packing`, engine
+  `merge_marks_are_off_until_rows_set_asks_for_them`, `saved::tests` (version 11's gates dropped),
+  `crates/ui/tests/layout.rs`.
 
 ## G1 The ruler reads clock time
 
@@ -494,6 +517,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Batch 13: G30 new and done (#127, #128, swarm-timeline#218, #219); G28's leftovers filed (swarm-core#20, swarm-timeline#222) |
 | 2026-11-03 | minor | G29 done (#124, swarm-timeline#215) |
 | 2026-11-03 | minor | Batch 12: G28 partial (#113); G29 new (#115, #117, #119, #121); G21 reversed |
 | 2026-11-03 | minor | Batch 11: G25 done (#106); G26, G27 new and done (#108, #110, swarm-timeline#205, #206); G28 new |
