@@ -12,7 +12,7 @@ publish = false
 
 [workspace.dependencies]
 # The swarm tooling (claims, tracking, the gates, stack and land), pinned by revision.
-swarm-core = { git = "https://github.com/mornycorp/swarm-core.git", rev = "b40c7302ab7084d8dbc6cb2bac8a335075d74d4f" }
+swarm-core = { git = "https://github.com/mornycorp/swarm-core.git", rev = "63a43025f7258d773091ab993df154212697965b" }
 # The timeline widget (its model, engine and egui widget), pinned by revision.
 timeline-core = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "19eb5e018ef841795e436fd68a006d3256642d69" }
 timeline-engine = { git = "https://github.com/mornycorp/swarm-timeline.git", rev = "19eb5e018ef841795e436fd68a006d3256642d69" }
