@@ -51,7 +51,7 @@ use swarmception_model::Timestamp;
 use timeline_engine::engine_cmds::NoParams;
 use timeline_engine::input_cmds::{ClickModeParams, ClickModeWire, SetClickMode};
 use timeline_engine::lanes_cmds::{LanesOverWire, LanesParams, SetLanes};
-use timeline_engine::minimap_cmds::{SetVisibility, VisibilityParams, VisibilityWire};
+use timeline_engine::minimap_cmds::{SetStrips, SetVisibility, StripsParams, VisibilityParams, VisibilityWire};
 use timeline_engine::query_cmds::{Bars, BarsParams};
 use timeline_engine::toolbar_cmds::{SetToolbar, ToolbarControl, ToolbarSetParams};
 use timeline_engine::tracks_cmds::{Expand, GroupParams, Layout, LayoutParams, SetTrack, SetTrackParams};
@@ -684,11 +684,13 @@ impl TimelinePane {
     }
 
     /// What the owner fixed (#35), by command: the `Time` scale, the absolute origin, the minimap
-    /// always, a click selecting the nearest bar; and each row's lanes sized over the window
+    /// always, drawing the tickets' strips (#134, swarm-timeline#222: where work waited or was
+    /// sent back), a click selecting the nearest bar; and each row's lanes sized over the window
     /// (#97), so a row is as tall as what the window shows.
     fn fix_view(session: &mut timeline_engine::Session) {
         let _ = session.call::<Set>(SetParams { scale: Some(TIME.to_owned()), origin: Some(OriginWire::Absolute), ..SetParams::default() });
         let _ = session.call::<SetVisibility>(VisibilityParams { visibility: VisibilityWire::Always });
+        let _ = session.call::<SetStrips>(StripsParams { on: true });
         let _ = session.call::<SetClickMode>(ClickModeParams { mode: ClickModeWire::Nearest });
         Self::pack_lanes(session);
     }
