@@ -812,6 +812,37 @@ fn the_factory_follows_the_timelines_playhead_and_holds_when_it_doesnt() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// A click at `at` with `modifiers` held, then frames for what it set going.
+fn click_with(shell: &mut Shell, ctx: &egui::Context, at: egui::Pos2, modifiers: egui::Modifiers) {
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+    let button = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers };
+    let held = egui::Event::ModifiersChanged(modifiers);
+    for events in [vec![held.clone(), egui::Event::PointerMoved(at), button(true)], vec![button(false)], Vec::new()] {
+        let input = egui::RawInput { screen_rect: Some(screen), events, ..Default::default() };
+        ctx.run_ui(input, |ui| shell.ui(ui)).textures_delta.clear();
+    }
+    frame(shell, ctx);
+}
+
+#[test]
+fn a_click_on_a_tickets_bar_shows_its_start_and_alt_click_its_end() {
+    use swarmception_ui::FactorySelected;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    frame(&mut shell, &ctx);
+    let at = shell.bar_point(7).expect("#7's bar is drawn");
+    click_with(&mut shell, &ctx, at, egui::Modifiers::NONE);
+    assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:01:00Z"), "a click: the claim");
+    // Alt (#137): the same ticket, the factory at its merge.
+    click_with(&mut shell, &ctx, at, egui::Modifiers::ALT);
+    assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:45:00Z"), "Alt + click: the merge");
+    click_with(&mut shell, &ctx, at, egui::Modifiers::NONE);
+    assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:01:00Z"), "back to the start");
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A bar selected on the timeline, alone, as a click selects it.
 fn choose_bar(shell: &mut Shell, track: &str, range: usize) {
     use timeline_engine::ranges_cmds::{RangeParams, Toggle};

@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # Owner directions
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (no Gates band, #128; no Gate runs or Ready checks rows, #117, reversing #84) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-04 · **Change:** minor (Alt + click shows a ticket's end, #137; no Gates band, #128; no Gate runs or Ready checks rows, #117, reversing #84) · **Target:** M1
 
 The owner's standing directions and decisions for Swarmception, dated, newest first in each
 section. Every agent reads this with `AGENTS.md`. The owner writes it, or an agent records a
@@ -48,6 +48,7 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 |---|---|---|---|
 | 2026-11-03 | Ticket bars: a sent-back ticket shows the factory's red corner (with the count); merge dots are off by default but can be turned on (the bar ending at its merge says it); a red dot marks a ticket abandoned or cancelled | the owner's | #127 |
 | 2026-11-03 | No Gates band: "We can remove the 'Gate' dock/window; it isn't useful." Kept: `gates.list`, `stats.get`, the Factory's figures and Gate list, the details' gate subjects | the owner's | #128 |
+| 2026-11-04 | A click or drag on a ticket's bar selects it (in the factory too) with the playhead at its start; with Alt, at its end, where it merged or was given up | the owner's | #137 |
 | 2026-11-03 | No Gate runs or Ready checks rows on the timeline (reverses #84's): a gate run that merges sits at the end of its tickets and is already their *in the gate* stretch; a failure is already a send-back on its tickets. Kept: the Gates band's figures, the Factory's Gate list (a click tells a run's story), `gates.list`, the details' gate subjects | the owner's | #117 |
 | 2026-11-03 | A stage is drawn and named in one colour everywhere: its strip's (`Stage::colour`), in the tooltip, the widget's segment line and the details' story | the owner's | #117 |
 | 2026-10-31 | The swarm runs on swarm-core's protocol and commands | one process shared with the other swarms | the first commit |
@@ -62,6 +63,7 @@ None yet.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Alt + click on a ticket's bar shows its end (#137) |
 | 2026-11-03 | minor | No Gates band (#128); no Gate runs or Ready checks rows (#117, reversing #84); a stage in one colour everywhere (#117) |
 | 2026-11-02 | minor | The Collapse decision notes that a window-relative choice now exists (#74); the default stays |
 | 2026-10-31 | minor | CI once a day on `main` (owner) |
