@@ -8,3 +8,4 @@
 {"event":"claim","issue":134,"mr":135,"t":"2026-11-04T07:57:59Z"}
 {"event":"work","issue":134,"t":"2026-11-04T07:58:01Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-61afd58","t":"2026-11-04T08:01:33Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-61afd58","t":"2026-11-04T08:01:53Z"}
