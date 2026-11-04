@@ -5,3 +5,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"ready-acad01a","t":"2026-11-04T15:22:34Z"}
 {"event":"submit","issue":137,"mr":138,"t":"2026-11-04T15:22:41Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #138 (#137); capacity=3 free=13.4; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-138","t":"2026-11-04T15:22:59Z"}
+{"event":"merge","issue":137,"mr":138,"sub":"gate-138","t":"2026-11-04T15:23:35Z"}
