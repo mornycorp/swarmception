@@ -4,3 +4,4 @@
 {"event":"sub.start","name":"gate","note":"local gate: #132 (swarm-core bump); capacity=2 free=13.7; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-132","t":"2026-11-04T07:31:38Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #132","sub":"gate-132","t":"2026-11-04T07:32:37Z"}
 {"event":"sub.start","name":"gate","note":"local gate: #133 (swarm-core bump); capacity=2 free=15.0; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-133","t":"2026-11-04T07:40:46Z"}
+{"event":"sub.stop","note":"rc=0; kind=smoke; merged #133","sub":"gate-133","t":"2026-11-04T07:41:14Z"}
