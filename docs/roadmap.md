@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 13: a sent-back ticket's red corner, merge dots optional, a red dot where given up, no Gates band) · **Target:** M3
+> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 14: G28 done, the minimap's strips and a silent rerun a rerun; no gaps open) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,12 +29,13 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **Small ends after batch 11** ([G28](gaps.md#g28-small-ends-after-batch-11))
+None: every gap is closed. New work comes from the owner (M1–M3 wait on their pass), or from a review.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Batch 14: G28 done; no focus |
 | 2026-11-04 | minor | Batch 13: the owner's ticket bars and no Gates band (G30 done); focus G28 |
 | 2026-11-03 | minor | Batch 12: merges as markers, tooltips in the strip's colours, no gate rows; focus G29, G28 |
 | 2026-11-03 | minor | Batch 11: G25–G27 done (a ticket in its own colour, failures survive packing); focus G28 |
