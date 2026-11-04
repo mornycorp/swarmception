@@ -3,7 +3,7 @@
      `sync-assets --check` fails on a copy that differs. -->
 # The swarm protocol
 
-> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-04 · **Change:** minor (`claim --take-over` takes over a stale claim and keeps its PR; `land` retargets a stacked PR onto `main` before merging its base) · **Target:** M1
+> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-04 · **Change:** minor (gating the same stack again after a failure is its rerun; `claim --take-over` takes over a stale claim and keeps its PR; `land` retargets a stacked PR onto `main` before merging its base) · **Target:** M1
 
 How a swarm of agents builds Swarmception: the roles, the claim, the tracking timeline, the
 gates, the coordinator's loop and the periodic full gate. Every swarm that shares Swarm Core
@@ -246,6 +246,10 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
      `rc=101; cause=build; step=clippy`), apart from the coordinator's `gate-*` gates. Its output goes to the terminal and, with its `.rc` record and
      nextest's junit file, to `<target>/gate-logs/ready-<sha>.log`, `.rc` and `.junit.xml`, as
      the coordinator's gate keeps them (sc#14).
+   - **A test-run slot** (sc#17): each gate, with its rerun, holds one of the machine's test-run
+     slots ([Test runs share the machine](#staying-awake), in Staying awake), waiting for one while
+     every slot is taken, whichever swarm holds them, and saying who does. A docs change (the
+     project's planner says so) takes none.
    - **A test that failed under load** (sc#14): when the only failure is the test step's and it
      can name the failed tests (1 to 12), it reruns them once, as `gate --rerun-failed` does:
      each alone, then the doctests and the steps the failure skipped, on the same HEAD, as the
@@ -468,9 +472,15 @@ worktree of its own, where that speeds it up on its machine (owner, 2026-10-18).
   2026-10-30 a 12-core Mac took one build by the 8, and a gate waited 35 minutes behind a worker
   that was only editing between builds. The 5 GB is measured ([development.md › How many builds at once](development.md#how-many-builds-at-once)): on the
   owner's 32 GB desktop, two gates at once passed and four filled the memory and failed. It
-  limits build helpers only. It reads
+  limits build helpers only. It also suggests none while **every test-run slot is taken** (the
+  test runs going now, the asker's own left out: *Test runs share the machine*, in Staying
+  awake) or while **wired memory is half the total or more** (macOS: `vm_stat`'s
+  "Pages wired down"; on unified memory what the GPU holds is wired), and prints both figures:
+  on 2026-11-03 two test runs at once wired about 20 GB of a 24 GB Mac, pushed 8.6 GB to swap,
+  and it locked up (sc#17). It reads
   the OS's own tools, no new crates: `/proc/meminfo` (`MemAvailable`), `df` and `ps` on Linux;
-  `sysctl`, `vm_stat` (free, inactive, speculative and purgeable pages), `df` and `ps` on macOS; on Windows
+  `sysctl`, `vm_stat` (free, inactive, speculative and purgeable pages; wired pages apart), `df`
+  and `ps` on macOS; on Windows
   one PowerShell (CIM's available memory, standby cache included, `Get-PSDrive` and
   `Get-Process`), about 3 seconds.
 - **Set up:** `cargo xtask capacity --helper <name> --note "<what it does>" [--kind build|read]
@@ -632,6 +642,12 @@ On each finished pull request:
        again then. It costs the failed tests and the skipped steps, not a second gate: on
        2026-10-22 a PR's gate failed only a panic_hunt test, which passed alone.
      - **anything else** (`build`, `other`): send the PR back, or fix forward.
+     - **Gating the same stack again** (sc#20) is its rerun, flag or none: when the last gate in
+       this worktree failed and the next gates the same PRs at the same heads onto the same
+       `main` (restacked or not; or the same `--merge` branches at the same commits), `gate`
+       starts it as `rerun of gate-<n>: …` itself, so a flake it answers sends no PR back. A new
+       push, another PR, a moved `main` or a gate of another stack between makes it a gate of
+       its own; so does reusing gate-<n>'s own `--sub`.
    - **Stop on red**. While `main`'s CI is red, nothing merges and
      no work starts from `main`. GitHub CI runs once a day on `main`, not on pushes or PRs (owner,
      2026-10-31; [swarm.md › What CI runs](swarm.md#what-ci-runs)), so the coordinator checks the
@@ -899,6 +915,34 @@ overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
   - The gate runs `ci` with `CARGO_BUILD_JOBS` set from free memory: one job per 1.5 GB, at
     least 2, at most the cores; half the cores when free memory can't be read. A
     `CARGO_BUILD_JOBS` the environment sets wins. A test binary's link took about 1.4 GB.
+- **Test runs share the machine** (sc#17): the machine lock kept two gates apart, but a worker's
+  `ready` took none, and on 2026-11-03 a `ready` and a `claim`'s periodic full gate of `main`
+  tested at once and locked up a 24 GB unified-memory Mac (about 20 GB wired as GPU memory).
+  - **Who:** every run of `ci` that builds and tests holds one of the machine's **test-run
+    slots** while it runs: a `gate` whose kind builds (`Kind::builds`: not docs; the periodic full
+    gate's runs are the gate's, kind full) and `ready`'s `ci --changed` (not for a docs change).
+    Dropped when the run ends, pass or fail.
+  - **How many:** `SWARM_TEST_RUNS` (a whole number 1 to 8, the machine's own, read by every
+    swarm, as they share it), else one per 16 GB of memory (4 GB added for what the machine keeps
+    for itself), at least one: one on a 24 GB Mac, two on a 32 GB desktop, where two gates at
+    once passed. One figure for the machine, not a project's: the slots are shared.
+  - **Where:** `test-runs/slot-<i>` beside the machine lock, in the same state directory
+    (`SWARM_GATE_LOCK` moves both). The line is `<swarm> <instance> <pid> <time> <what>
+    <worktree>`, the same in every swarm; `what` is the run's sub (`gate-12`, `ready-<sha>`,
+    `gate-full-<sha>`). Taken whole as the machine lock is (written beside, hard-linked to a free
+    slot's name), only while fewer than the limit are held, and only among slots `0` to
+    `limit - 1`.
+  - **Left behind:** a slot whose process no longer runs (`ps`, `/proc`, `tasklist`), or older
+    than 6 hours, is taken over by the next run: a killed run needs no `lock drop`. A line that
+    can't be read is still a slot, aged by its file's time. `lock show` lists the holders.
+  - **Waiting:** `ready` waits for a slot (up to three hours), saying who holds them, again when
+    that changes; `gate` waits with `--wait`, else refuses (keeping the repo's lock).
+  - **The order, so nothing deadlocks:** the repo's gate lock, then the machine lock, then a
+    test-run slot, then capacity (which doesn't count the asker's own slot); never another
+    order. `ready` takes a slot alone, and nothing waits for a lock while it holds a slot.
+  - **The periodic full gate** starts only when `capacity` shows room, so not while every slot
+    is taken, and not for a `main` whose tip already passed a full gate within the drift
+    interval ([The periodic full gate](#the-periodic-full-gate)).
 - **Only `stack`, `gate` and `land` touch the gate's worktree**. A gate may be running there
   at any time: a scheduled run's as well as your own. A `git checkout` there, typed by hand,
   swaps the tree under that gate and voids it. This happened twice on 2026-10-21, once through a
@@ -1080,6 +1124,8 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-04 | minor | Staying awake › Test runs share the machine (new): every `ci` run that builds and tests (a gate that builds, the periodic full gate's, `ready`'s) holds one of the machine's test-run slots, `SWARM_TEST_RUNS` or one per 16 GB; the order repo lock, machine lock, slot, capacity; `capacity` suggests none while every slot is taken or wired memory is half the total (sc#17) |
+| 2026-11-04 | minor | The coordinator's loop › A red gate: gating the same stack again (the same PRs at the same heads onto the same `main`) straight after a failure is its rerun, and `gate` notes it `rerun of <sub>:` itself, so a flake it answers sends nothing back (sc#20) |
 | 2026-11-04 | minor | Picking work › Taking over: a claim is stale on the coordinator's say-so (`release --of`, or a `released:` comment) or after 24 hours with no events, comments or commits; `claim <n> --take-over` adopts its PR and branch with their commits, logs `release --of` the old holder, comments the release and the claim, and takes `status::blocked` off when everything its hold waits on is closed; `--force` names `--take-over` for a branch with work on it; the coordinator's step 6 hands a stale claim over so (mornycorp/swarm-core#16) |
 | 2026-11-04 | minor | The land step: before a PR merges, `land` retargets onto `main` every open PR whose base is its branch, so GitHub deleting that branch closes none; a PR already closed that way gets its base branch pushed back, is reopened, retargeted and the branch deleted again, or `land` stops with the steps; `s-<pr>` stays until the PR lands (mornycorp/swarm-core#19) |
 | 2026-11-04 | minor | Picking work › Finish and The coordinator's loop: `ready --no-ci` notes `no-ci` on its `submit`, and the gate runs a stack holding such a PR as the **changed** kind (`ci --changed --base origin/main`) instead of the smoke, its note naming the PRs (sc#18) |
