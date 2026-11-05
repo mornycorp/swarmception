@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-04 · **Last updated:** 2026-11-04 · **Change:** minor (batch 14: G28 done, the minimap's strips and a silent rerun a rerun; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-05 · **Last updated:** 2026-11-05 · **Change:** minor (batch 15: Alt + click on a ticket's bar shows its end; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -20,7 +20,7 @@ marked **Human:** with what is needed.
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
 | — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
-| — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, swarm-timeline#218, #219 | |
+| — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, #137, swarm-timeline#218, #219, #228, #230 | |
 | — | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | done | #115, #117, #119, #121, #124 | |
 | — | [G27 A ticket in its own colour all along](#g27-a-ticket-in-its-own-colour-all-along) | done | #110, swarm-timeline#205, #206 | |
 | — | [G26 Failures survive packing](#g26-failures-survive-packing) | done | #108 | |
@@ -363,13 +363,17 @@ marked **Human:** with what is needed.
     `UiState` 12 drops an older state's `gates`, `ui.inspect` 17; `gates.list`, `stats.get`, the
     Factory's figures and Gate list stay.
   - **A selected bar keeps its hatch when hovered** (swarm-timeline#218, PR #220).
-- **Measured:** 388 tests, `cargo nextest run --workspace` (2026-11-03); checked by eye on
+  - **Alt + click or drag shows a ticket's end** (#137, PR #138; swarm-timeline#228, PR #229,
+    and #230, PR #231; the owner's, 2026-11-04): a plain click selects the ticket with the
+    playhead, and the Factory, at its claim; with Alt, at the end of its bar, so the Factory shows
+    it merged or given up. Pressing or letting go of Alt mid-drag hops to the other end.
+- **Measured:** 389 tests, `cargo nextest run --workspace` (2026-11-04); checked by eye on
   mc-engine: red corners on the sent-back bars, no green dots, one red dot at an abandoned
-  ticket's end.
+  ticket's end; Alt + click on mc-engine's #309 showed 13:23:43, its brick on main.
 - **Evidence:** `rows::tests::a_corner_counts_send_backs_and_a_red_dot_marks_only_what_was_given_up`,
   `timeline::tests::a_failure_survives_packing`, engine
   `merge_marks_are_off_until_rows_set_asks_for_them`, `saved::tests` (version 11's gates dropped),
-  `crates/ui/tests/layout.rs`.
+  `crates/ui/tests/layout.rs`, `factory_pane::a_click_on_a_tickets_bar_shows_its_start_and_alt_click_its_end`.
 
 ## G1 The ruler reads clock time
 
@@ -522,6 +526,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | Batch 15: G30 gains Alt + click (#137, swarm-timeline#228, #230) |
 | 2026-11-04 | minor | Batch 14: G28 done (#134, swarm-core#20, swarm-timeline#222); no gaps open |
 | 2026-11-04 | minor | Batch 13: G30 new and done (#127, #128, swarm-timeline#218, #219); G28's leftovers filed (swarm-core#20, swarm-timeline#222) |
 | 2026-11-03 | minor | G29 done (#124, swarm-timeline#215) |
