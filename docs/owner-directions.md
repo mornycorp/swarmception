@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # Owner directions
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-04 · **Change:** minor (Alt + click shows a ticket's end, #137; no Gates band, #128; no Gate runs or Ready checks rows, #117, reversing #84) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-05 · **Change:** minor (CI is always local, #140) · **Target:** M1
 
 The owner's standing directions and decisions for Swarmception, dated, newest first in each
 section. Every agent reads this with `AGENTS.md`. The owner writes it, or an agent records a
@@ -38,9 +38,10 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
   `cargo xtask capacity` shows room (the swarm protocol's default; change it here).
 - **Merging:** only the coordinator merges, on the local gate
   ([the swarm protocol](swarm-protocol.md#the-coordinators-loop)).
-- **GitHub CI runs once a day**, on `main`, not on every push or PR, as for the other swarms.
-  Local gates decide merges; a red daily run is `main` red
-  ([swarm.md › What CI runs](swarm.md#what-ci-runs)). (owner, 2026-10-31)
+- **CI is always local** (owner, 2026-11-05, #140): no remote actions on GitHub. GitHub Actions
+  is turned off for the repository; the coordinator and every worker run `cargo xtask ci` on their
+  own machines (workers' `ci --changed`, the coordinator's local gate, the periodic full gate), and
+  those decide merges ([swarm.md › What CI runs](swarm.md#what-ci-runs)).
 
 ## Decisions
 
@@ -57,7 +58,8 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 ## Superseded
 
-None yet.
+- **GitHub CI runs once a day**, on `main`, not on every push or PR (owner, 2026-10-31); ended
+  2026-11-05, replaced by **CI is always local** (#140).
 
 ## Revision history
 

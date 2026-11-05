@@ -3,7 +3,7 @@
      Each batch. -->
 # Running the swarm
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (the smoke runs `fakes`, #113) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-05 · **Change:** minor (CI is always local, #140) · **Target:** M1
 
 Swarmception's part of running many agents. The protocol every swarm shares (the roles, starting a
 worker, picking and claiming work, tracking, watching PRs, helpers, the coordinator's loop,
@@ -16,7 +16,8 @@ Once per machine, before an agent starts there:
 
 1. **Tools:** Rust (the workspace's `rust-version`), [cargo-nextest](https://nexte.st),
    [gh](https://cli.github.com), git; on Windows, Git Bash.
-   On Linux, the libraries eframe's window needs (`.github/workflows/ci.yml` lists them).
+   On Linux, the libraries eframe's window needs: `libxkbcommon-dev libwayland-dev
+   libgl1-mesa-dev libx11-dev libxcursor-dev libxrandr-dev libxi-dev`.
 2. **GitHub:** `gh auth login --hostname github.com`, then `gh auth setup-git`, so git and
    cargo (`.cargo/config.toml` sets `net.git-fetch-with-cli`) fetch with gh's token. The account
    must read this repository and [swarm-core](https://github.com/mornycorp/swarm-core), a private
@@ -63,32 +64,27 @@ step 4), after folding the batch into `docs/gaps.md`:
 
 ## What CI runs
 
-- `ci` (ubuntu-latest): `cargo xtask ci`, about 10 minutes cold.
+**CI is always local** (owner, 2026-11-05, #140): nothing runs on GitHub. GitHub Actions is turned
+off for the repository and there is no workflow; the coordinator and every worker run
+`cargo xtask ci` on their own machines, and those runs are what merges rest on:
 
-`.github/workflows/ci.yml` runs `cargo xtask ci`. The rules it keeps:
-
-- **Once a day, on `main`** (owner, 2026-10-31): a schedule at 03:17 UTC, and by hand with
-  `gh workflow run ci --repo mornycorp/swarmception`. No run on pushes, PRs or `tracking`:
-  workers' `ci --changed` and the coordinator's local gate are what merges rest on. CI is the
-  daily check on Linux. A PR's `prwatch` therefore reports no checks; `land` has none to cancel.
-- **A red daily run** is `main` red: the coordinator files a `main-red` issue (the run, what broke,
-  the merges since the last green run) and nothing merges until it is fixed
-  ([the swarm protocol](swarm-protocol.md#the-coordinators-loop) step 3).
-- **Fetching Swarm Core:** it is a private repository, so the job points its URL at a read-only
-  token before cargo runs: a fine-grained token with **Contents: read** on
-  `mornycorp/swarm-core` **and `mornycorp/swarm-timeline`** (the timeline widget is a private
-  git dependency too), the organisation's `SWARM_CORE_TOKEN` secret (visible to its private
-  repositories; its owner keeps it).
-- **Branch protection on `main`:** no required status checks, since the coordinator's local gate
-  is the check before a merge. Require PRs, and allow merge commits.
-- Nothing merges while `main`'s CI is red.
-- **The coordinator** checks the latest daily run each batch (`gh run list --repo
-  mornycorp/swarmception --workflow ci --limit 1`).
+- **A worker:** `cargo xtask ci --changed` before `ready` (and `ready` runs it again on the rebased
+  tree).
+- **The coordinator:** the local gate on the stacked tree before `land`
+  ([the swarm protocol](swarm-protocol.md#the-coordinators-loop) step 3), and the periodic full gate
+  of `main` ([The periodic full gate](swarm-protocol.md#the-periodic-full-gate)); a full gate that
+  fails on `main` files the `main-red` issue, and nothing merges until it is fixed.
+- **No remote checks:** a PR has none, so `prwatch` reports none, `land` has none to cancel and
+  nothing waits on one; nobody runs `gh workflow run`, `gh run list` or `gh pr checks`. Where the
+  shared protocol speaks of `main`'s workflows or a PR's checks, here there are none.
+- **Branch protection on `main`:** no required status checks. Require PRs, and allow merge
+  commits.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | CI is always local (owner, #140): no workflow, no daily GitHub run, no remote checks |
 | 2026-11-03 | minor | The smoke runs `fakes` too (#113) |
 | 2026-10-31 | minor | CI runs once a day on `main` (owner), not on pushes or PRs |
 | 2026-10-31 | major | First version, from swarm-core's template |
