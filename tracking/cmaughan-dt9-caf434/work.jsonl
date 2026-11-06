@@ -8,3 +8,4 @@
 {"event":"release","issue":142,"note":"the full gate of main failed: filed main-red #144 and claimed it; work on it instead of #142","reason":"main-red","t":"2026-11-06T13:38:49Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-78de44b","t":"2026-11-06T14:27:53Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-78de44b","t":"2026-11-06T14:30:40Z"}
+{"event":"submit","issue":144,"mr":145,"t":"2026-11-06T14:30:52Z"}
