@@ -140,7 +140,20 @@ fn forty_benches_never_overlap_and_those_off_shift_fold_away() {
     assert_apart(&shell);
     let drawn = shell.factory().drawn();
     assert_eq!(drawn.benches_folded, off, "the 30 off shift fold into one line");
-    assert_eq!(drawn.benches.len() + drawn.benches_hidden + drawn.benches_folded.len(), 40, "every bench drawn, scrolled away or folded");
+    assert_eq!(
+        drawn.benches.len() + drawn.benches_hidden + drawn.benches_folded.len() + drawn.idle_benches.len(),
+        40,
+        "every bench drawn, scrolled away, folded or grouped"
+    );
+    assert_eq!(drawn.idle_benches, scene.idle.as_ref().unwrap().keys);
+    assert_eq!(drawn.idle_benches.len(), 7);
+    let idle_cell = drawn.idle_cell.unwrap();
+    assert!(shell.factory().floor().unwrap().contains_rect(idle_cell));
+    assert!(drawn.bench_cells.iter().all(|c| !c.intersects(idle_cell)));
+    let idle = scene.idle.unwrap();
+    assert!(idle.label.starts_with("7 idle"));
+    assert!(idle.tooltip.iter().any(|line| line.contains("Availability is unconfirmed")));
+    assert!(idle.keys.iter().all(|key| idle.tooltip.contains(key)), "all names available on hover");
     // The busy first: the three working are in view whatever else scrolls.
     let working: Vec<&str> = drawn.benches.iter().take(3).map(|(key, _)| key.as_str()).collect();
     assert_eq!(working, ["mini/worker-1", "mini/worker-2", "mini/worker-3"]);
@@ -186,7 +199,8 @@ fn each_group_of_benches_is_in_natural_order() {
     let order: Vec<&str> = scene.benches.iter().take(12).map(|b| b.key.as_str()).collect();
     assert_eq!(order, workers(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]), "factory.at's benches: worker-2 before worker-10");
     let drawn = shell.factory().drawn();
-    assert_eq!(keys(&drawn.benches)[..6], workers(&[2, 3, 10, 21, 4, 12]), "the busy, then the idle, each in natural order");
+    assert_eq!(keys(&drawn.benches)[..4], workers(&[2, 3, 10, 21]), "the busy in natural order");
+    assert_eq!(drawn.idle_benches, workers(&[4, 12]), "the idle group in natural order");
     let off: Vec<usize> = (1..=40).filter(|n| ![21, 10, 2, 3, 12, 4].contains(n)).collect();
     assert_eq!(drawn.benches_folded, workers(&off), "those off shift too");
     std::fs::remove_dir_all(dir).ok();
@@ -208,7 +222,7 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
     let open = shell.factory().drawn().clone();
     assert!(open.benches_folded.is_empty());
     assert_eq!(open.benches_unfolded, before.benches_folded, "every one of them, in order");
-    assert_eq!(open.benches.len() + open.benches_hidden, 40, "all forty benches, in view or scrolled");
+    assert_eq!(open.benches.len() + open.benches_hidden + open.idle_benches.len(), 40, "all forty benches, in view, scrolled or grouped");
     assert!(keys(&open.benches).contains(&"mini/worker-11"), "the first off shift in view: {:?}", keys(&open.benches));
     assert!(open.fold_line.is_some(), "its line stays, to close it");
     let inspect = shell.inspect();
@@ -249,5 +263,36 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
         frame(&mut shell, &ctx);
         assert_eq!((shell.ui_state().factory.off_shift, shell.factory().drawn().benches_unfolded.len()), (open, unfolded));
     }
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn the_idle_tiles_tooltip_contains_all_names_and_the_availability_explanation() {
+    let dir = repo(1, 10);
+    let (ctx, mut shell) = loaded(&dir);
+    ctx.all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
+    let at = shell.factory().drawn().idle_cell.unwrap().center();
+    let expected = shell.factory().scene().unwrap().idle.as_ref().unwrap().clone();
+    let mut texts = Vec::new();
+    for n in 0..4 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+            time: Some(100.0 + f64::from(n)),
+            events: vec![egui::Event::PointerMoved(at)],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| shell.ui(ui));
+        output.textures_delta.clear();
+        texts.extend(output.shapes.iter().filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        }));
+    }
+    let rendered = texts.join("\n");
+    for key in expected.keys {
+        assert!(rendered.contains(&key), "tooltip omits {key}: {rendered}");
+    }
+    assert!(rendered.contains("Availability is unconfirmed"));
+    assert_eq!(shell.inspect().factory.drawn.idle_benches.len(), 10);
     std::fs::remove_dir_all(dir).ok();
 }

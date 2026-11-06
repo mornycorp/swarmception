@@ -443,6 +443,9 @@ pub struct FactoryScene {
     pub upcoming: Vec<Crate>,
     pub shelf: Vec<Crate>,
     pub benches: Vec<Bench>,
+    /// Quiet on-shift workers represented together; individual benches remain available to tools.
+    #[serde(default)]
+    pub idle: Option<IdleBenches>,
     /// Waiting for the merge, longest first.
     pub dock: Vec<Crate>,
     pub gate: Gate,
@@ -452,6 +455,40 @@ pub struct FactoryScene {
     pub counts: Counts,
     /// The journey of the ticket asked for ([`journey`]), when one was.
     pub journey: Option<Journey>,
+}
+
+/// A compact group of idle benches, including their tracking-based meaning.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct IdleBenches {
+    pub keys: Vec<String>,
+    pub label: String,
+    pub tooltip: Vec<String>,
+}
+
+impl Bench {
+    /// Keep checks visible on their own bench, even when no ticket is held.
+    #[must_use]
+    pub fn grouped_idle(&self) -> bool {
+        self.status == BenchStatus::Idle && self.crates.is_empty() && self.helper.is_none()
+    }
+}
+
+fn idle_benches(benches: &[Bench]) -> Option<IdleBenches> {
+    let idle: Vec<&Bench> = benches.iter().filter(|b| b.grouped_idle()).collect();
+    if idle.is_empty() {
+        return None;
+    }
+    let keys: Vec<String> = idle.iter().map(|b| b.key.clone()).collect();
+    let names: Vec<&str> = idle.iter().map(|b| b.actor.name.as_str()).collect();
+    let label = format!("{} idle · {}", idle.len(), names.join(", "));
+    let mut tooltip = vec![
+        format!("{} idle in the tracking log", idle.len()),
+        "Unpaused session, no ticket at the bench and no current check.".to_owned(),
+        "Availability is unconfirmed: a missing session stop can leave a worker idle here.".to_owned(),
+    ];
+    tooltip.extend(keys.iter().cloned());
+    Some(IdleBenches { keys, label, tooltip })
 }
 
 /// A station a ticket passes through.
@@ -582,6 +619,7 @@ pub fn scene(activity: &Activity, merges: &[MainMerge], t: Timestamp, recent: i6
     let done_count = done.len();
     done.truncate(MAX_LISTED);
     let (first, last) = activity.extent.unzip();
+    let benches = benches(activity, t, recent, at_bench);
     FactoryScene {
         t,
         text: t.to_string(),
@@ -590,7 +628,8 @@ pub fn scene(activity: &Activity, merges: &[MainMerge], t: Timestamp, recent: i6
         last,
         upcoming,
         shelf,
-        benches: benches(activity, t, recent, at_bench),
+        idle: idle_benches(&benches),
+        benches,
         dock,
         gate: gate(activity, t, &runs, gating),
         shipping: shipping(merges, &tickets, &runs, t, (done, done_count)),
@@ -1356,6 +1395,26 @@ pub(crate) mod tests {
         let scene = scene(&Activity::of(&files), &[], at("2026-10-31T01:05:00Z"), DEFAULT_RECENT);
         let keys: Vec<&str> = scene.benches.iter().map(|b| b.key.as_str()).collect();
         assert_eq!(keys, ["mini/worker-1", "mini/worker-2", "mini/worker-3", "mini/worker-10", "mini/worker-12"]);
+    }
+
+    #[test]
+    fn idle_group_follows_the_playhead_and_does_not_claim_availability() {
+        let log = r#"{"event":"session.start","name":"worker-1","machine":"mini","role":"worker","t":"2026-10-31T01:00:00Z"}
+{"event":"session.pause","t":"2026-10-31T01:10:00Z"}
+{"event":"session.resume","t":"2026-10-31T01:20:00Z"}
+{"event":"sub.start","sub":"ready-1","name":"ready","t":"2026-10-31T01:25:00Z"}
+{"event":"sub.stop","sub":"ready-1","t":"2026-10-31T01:30:00Z"}
+{"event":"session.stop","t":"2026-10-31T02:00:00Z"}"#;
+        let activity = Activity::of(&[parse_file("mini-1", log)]);
+        let at_time = |t| scene(&activity, &[], at(t), DEFAULT_RECENT);
+        assert!(at_time("2026-10-31T00:59:00Z").idle.is_none());
+        let idle = at_time("2026-10-31T01:05:00Z").idle.unwrap();
+        assert_eq!(idle.keys, ["mini/worker-1"]);
+        assert!(idle.tooltip.iter().any(|l| l.contains("Availability is unconfirmed")));
+        assert!(at_time("2026-10-31T01:15:00Z").idle.is_none(), "paused is not idle");
+        assert!(at_time("2026-10-31T01:22:00Z").idle.is_some());
+        assert!(at_time("2026-10-31T01:26:00Z").idle.is_none(), "keep a running check visible");
+        assert!(at_time("2026-10-31T02:01:00Z").idle.is_none());
     }
 
     #[test]

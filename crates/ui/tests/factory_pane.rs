@@ -156,8 +156,9 @@ fn the_pane_draws_what_factory_at_returns() {
     assert_eq!(drawn.upcoming, issues(&asked.upcoming));
     assert_eq!(drawn.dock, issues(&asked.dock));
     assert_eq!(drawn.gate, issues(&asked.gate.crates));
-    let benches: Vec<(String, Vec<u64>)> = asked.benches.iter().map(|b| (b.key.clone(), issues(&b.crates))).collect();
+    let benches: Vec<(String, Vec<u64>)> = asked.benches.iter().filter(|b| !b.grouped_idle()).map(|b| (b.key.clone(), issues(&b.crates))).collect();
     assert_eq!(drawn.benches, benches);
+    assert_eq!(drawn.idle_benches, asked.idle.as_ref().map(|g| g.keys.clone()).unwrap_or_default());
     let runs: Vec<String> = asked.gate.running.iter().chain(&asked.gate.recent).map(|r| r.sub.clone()).collect();
     assert_eq!(drawn.runs, runs);
     assert_eq!(drawn.blocks, asked.shipping.blocks.len());
@@ -840,6 +841,38 @@ fn a_click_on_a_tickets_bar_shows_its_start_and_alt_click_its_end() {
     assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:45:00Z"), "Alt + click: the merge");
     click_with(&mut shell, &ctx, at, egui::Modifiers::NONE);
     assert_eq!(shell.factory().t(), Timestamp::parse("2026-10-31T03:01:00Z"), "back to the start");
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn dragging_crosses_ticket_rows_and_x_constrains_with_or_without_alt() {
+    use swarmception_ui::FactorySelected;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    frame(&mut shell, &ctx);
+    for modifiers in [egui::Modifiers::NONE, egui::Modifiers::ALT] {
+        let start = shell.bar_point(7).unwrap();
+        let other = egui::pos2(start.x, shell.bar_point(11).unwrap().y);
+        assert_ne!(start.y, other.y);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers };
+        let key = |pressed| egui::Event::Key { key: egui::Key::X, physical_key: None, pressed, repeat: false, modifiers };
+        frame_with(&mut shell, &ctx, vec![egui::Event::ModifiersChanged(modifiers), egui::Event::PointerMoved(start), button(start, true)]);
+        frame(&mut shell, &ctx);
+        let initial = shell.factory().t();
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+        frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(other)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 11 }), "vertical motion crosses rows");
+        frame_with(&mut shell, &ctx, vec![key(true)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }), "X selects in the starting row");
+        assert_eq!(shell.factory().t(), initial, "Alt still determines the endpoint");
+        frame_with(&mut shell, &ctx, vec![key(false)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 11 }));
+        frame_with(&mut shell, &ctx, vec![button(other, false), egui::Event::PointerGone]);
+        frame(&mut shell, &ctx);
+    }
     std::fs::remove_dir_all(dir).ok();
 }
 
