@@ -270,7 +270,7 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
 fn the_idle_tiles_tooltip_contains_all_names_and_the_availability_explanation() {
     let dir = repo(0, 10);
     let (ctx, mut shell) = loaded(&dir);
-    ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
+    ctx.all_styles_mut(|style| style.interaction.tooltip_delay = 0.0);
     let at = shell.factory().drawn().idle_cell.unwrap().center();
     let expected = shell.factory().scene().unwrap().idle.as_ref().unwrap().clone();
     let mut texts = Vec::new();
