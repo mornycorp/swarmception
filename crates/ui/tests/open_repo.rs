@@ -120,13 +120,13 @@ fn open_switches_repositories_each_with_its_own_state() {
     settle(&mut shell, &ctx);
     let now = inspect(&mut shell);
     assert_eq!(now.repo.as_deref(), Some(b.display().to_string().as_str()));
-    assert_eq!(now.saved.file, Some(store.file(&b).display().to_string()), "b's state is kept in b's own file");
+    assert_eq!(now.saved.file, Some(store.file(&saved::repo_key(&b)).display().to_string()), "b's state is kept in b's own file");
     assert_eq!(now.state.details.subject, None, "a's details aren't b's");
     // The old watch stopped; b's is its default (an old swarm: off).
     let live = shell.engine().call::<GetLive>(NoParams {}).unwrap();
     assert!(!live.on && live.default, "{live:?}");
     // a's state was written as it was left.
-    let kept_a = store.load(&a).state.unwrap();
+    let kept_a = store.load(&saved::repo_key(&a)).state.unwrap();
     assert_eq!((kept_a.rows.grouping, kept_a.live.on), (Grouping::Workers, Some(true)));
     // The recent list, newest first, kept app-wide.
     assert_eq!(shell.recent().iter().map(|r| PathBuf::from(&r.path)).collect::<Vec<_>>(), [b.clone(), a.clone()]);
