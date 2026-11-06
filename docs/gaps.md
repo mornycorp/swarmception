@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (batch 16: G31 done, no ghost ticket bars and a green Windows gate; CI always local; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (batch 17: G32 done, idle benches grouped and dragging across rows, X to hold the row; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
 | — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
 | — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
 | — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, #137, swarm-timeline#218, #219, #228, #230 | |
@@ -399,6 +400,23 @@ marked **Human:** with what is needed.
   `source` `reads_multiline_gitlab_merges_without_losing_adjacent_records`, `Ticket::complete_from_main`,
   `Ticket::bound_unresolved`, `tickets::STALE_SECONDS`; screenshots in `docs/screenshots/`.
 
+## G32 Idle benches together, and dragging across rows
+
+- **Done** (batch 17; the owner's, 2026-11-06):
+  - **One tile for the idle** (#147, PR #148): the Factory's on-shift workers with no ticket and
+    no check share one tile, `N idle · names`, its tooltip every name and what idle means: an
+    unpaused session with nothing at the bench, read from the tracking log, so a missing session
+    stop can leave a worker idle there. `FactoryScene::idle`; `ui.inspect` 18
+    (`factory.drawn.idleBenches`).
+  - **Dragging crosses rows; X holds the row** (swarm-timeline#233, PR #234; pinned by #148): a
+    drag on the timeline selects the ticket under the pointer on any row, a move straight up or
+    down included; X held keeps it to the row where the drag began, with or without Alt.
+- **Measured:** 404 tests, `cargo nextest run --workspace` (2026-11-06); swarm-timeline 698.
+- **Evidence:** `factory::tests::idle_group_follows_the_playhead_and_does_not_claim_availability`,
+  `factory_benches::the_idle_tiles_tooltip_contains_all_names_and_the_availability_explanation`,
+  `factory_pane::dragging_crosses_ticket_rows_and_x_constrains_with_or_without_alt`; screenshots
+  in `docs/screenshots/idle-benches-*.png`.
+
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
@@ -550,6 +568,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Batch 17: G32 done (#147, swarm-timeline#233); no gaps open |
 | 2026-11-06 | minor | Batch 16: G31 done (#140, #142, #144); no gaps open |
 | 2026-11-05 | minor | Batch 15: G30 gains Alt + click (#137, swarm-timeline#228, #230) |
 | 2026-11-04 | minor | Batch 14: G28 done (#134, swarm-core#20, swarm-timeline#222); no gaps open |
