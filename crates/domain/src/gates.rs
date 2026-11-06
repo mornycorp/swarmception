@@ -761,7 +761,7 @@ mod tests {
     fn list(files: &[AgentFile], window: Window) -> GatesList {
         let activity = Activity::of(files);
         let tickets = tickets(&activity);
-        let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into() }];
+        let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into(), closes: Vec::new() }];
         gates(&activity, &tickets, &merges, window)
     }
 
@@ -925,7 +925,7 @@ mod tests {
     fn a_gate_run_is_its_tickets_time_in_the_gate_not_a_row() {
         use crate::rows::{Bar, RowsSpec, Stage, TOP_KEYS, bars_where, rows};
         let activity = Activity::of(&swarm());
-        let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into() }];
+        let merges = [MainMerge { t: at(1, 9), commit: "1234567890abcdef".into(), pr: Some(11), subject: "Merge pull request #11".into(), closes: Vec::new() }];
         let rows = rows(&activity, &merges, RowsSpec::default());
         let names: Vec<&str> = rows.iter().map(crate::Node::name).collect();
         assert_eq!(names.get(..3), Some(&["Merges to main", "Tickets merged", "Tickets 1"][..]), "{names:?}");

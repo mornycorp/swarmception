@@ -32,6 +32,9 @@ pub mod titles;
 pub mod tooltip;
 pub mod workers;
 
+#[cfg(test)]
+mod lifecycle_tests;
+
 pub use activity::Activity;
 pub use rows::{Collapse, Grouping, Node, RowsSpec};
 pub use stats::{Stats, Window, stats};

@@ -221,8 +221,8 @@ fn first_refs<const N: usize>(git: &Git, lists: [&[&str]; N]) -> [Option<(String
 /// The first-parent merge commits of `head`, oldest first.
 fn merges(git: &Git, head: &str) -> Result<Vec<MainMerge>, SourceError> {
     let count = format!("--max-count={MAX_MERGES}");
-    let log = git.run(&["log", "--first-parent", "--merges", &count, "--format=%H%x1f%ct%x1f%s", head, "--"], None)?;
-    let mut merges: Vec<MainMerge> = String::from_utf8_lossy(&log).lines().filter_map(parse_merge).collect();
+    let log = git.run(&["log", "--first-parent", "--merges", &count, "--format=%H%x1f%ct%x1f%B%x00", head, "--"], None)?;
+    let mut merges: Vec<MainMerge> = String::from_utf8_lossy(&log).split('\0').filter_map(parse_merge).collect();
     merges.reverse();
     Ok(merges)
 }
@@ -321,6 +321,22 @@ mod tests {
     }
 
     #[test]
+    fn reads_multiline_gitlab_merges_without_losing_adjacent_records() {
+        let dir = repo();
+        git(&dir, &["switch", "-q", "main"]);
+        git(&dir, &["switch", "-q", "-c", "batch"]);
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "batch work"]);
+        git(&dir, &["switch", "-q", "main"]);
+        git(&dir, &["merge", "-q", "--no-ff", "-m", "Merge branch 'batch' into 'main'\n\nCloses #12, #3, and #9\n\nSee merge request o/n!8", "batch"]);
+        let tracking = read(&dir).unwrap();
+        assert_eq!(tracking.merges.iter().map(|m| m.pr).collect::<Vec<_>>(), [Some(7), Some(8)]);
+        assert!(tracking.merges[0].closes.is_empty());
+        assert_eq!(tracking.merges[1].closes, [12, 3, 9]);
+        assert_eq!(tracking.merges[1].subject, "Merge branch 'batch' into 'main'");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
     fn a_directory_that_isnt_a_repo() {
         let dir = std::env::temp_dir().join(format!("swarmception-not-a-repo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -335,7 +351,7 @@ mod tests {
     fn a_probe_finds_the_top_level_and_the_tracking_branch() {
         let dir = repo();
         let found = probe(&dir.join("tracking/mini-1")).unwrap();
-        assert_eq!((found.top, found.reference.as_str()), (std::fs::canonicalize(&dir).unwrap(), "refs/heads/tracking"));
+        assert_eq!((std::fs::canonicalize(found.top).unwrap(), found.reference.as_str()), (std::fs::canonicalize(&dir).unwrap(), "refs/heads/tracking"));
         git(&dir, &["switch", "-q", "main"]);
         git(&dir, &["branch", "-q", "-D", "tracking"]);
         assert!(matches!(probe(&dir), Err(SourceError::NoTrackingBranch { .. })));

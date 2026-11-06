@@ -365,24 +365,32 @@ pub fn parse_pulls(text: &str) -> Result<BTreeMap<u64, String>, IssuesError> {
 
 /// The issues `body` closes, as GitHub reads its keywords: `close`, `closes`, `closed`, `fix`,
 /// `fixes`, `fixed`, `resolve`, `resolves`, `resolved`, then `#<n>` (a colon after the keyword
-/// allowed), in order, each once.
+/// allowed), including comma/and-separated local references on the same line, in order, each once.
 #[must_use]
 pub fn closing_refs(body: &str) -> Vec<u64> {
     const KEYWORDS: [&str; 9] = ["close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved"];
     let mut out = Vec::new();
+    let mut previous = None;
     for (at, _) in body.match_indices('#') {
+        let continuation = previous
+            .take()
+            .and_then(|end| body.get(end..at))
+            .is_some_and(|between| !between.contains(['\n', '\r']) && matches!(between.trim(), "," | "and" | ", and"));
         let digits: String = body.get(at + 1..).unwrap_or_default().chars().take_while(char::is_ascii_digit).take(21).collect();
         let Ok(number) = digits.parse::<u64>() else { continue };
         let raw = body.get(..at).unwrap_or_default();
-        if !raw.ends_with(|c: char| c.is_whitespace() || c == ':') {
+        if !continuation && !raw.ends_with(|c: char| c.is_whitespace() || c == ':') {
             continue;
         }
         let before = raw.trim_end();
         let before = before.strip_suffix(':').unwrap_or(before).trim_end();
         let word: String = before.chars().rev().take_while(char::is_ascii_alphabetic).collect::<Vec<_>>().into_iter().rev().collect();
         let preceded = before.len() == word.len() || before.get(..before.len() - word.len()).is_some_and(|b| !b.ends_with(|c: char| c.is_alphanumeric()));
-        if preceded && KEYWORDS.contains(&word.to_ascii_lowercase().as_str()) && number > 0 && !out.contains(&number) && out.len() < MAX_CLOSES {
-            out.push(number);
+        if (continuation || (preceded && KEYWORDS.contains(&word.to_ascii_lowercase().as_str()))) && number > 0 {
+            previous = Some(at + 1 + digits.len());
+            if !out.contains(&number) && out.len() < MAX_CLOSES {
+                out.push(number);
+            }
         }
     }
     out

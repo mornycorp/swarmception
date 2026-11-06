@@ -294,7 +294,8 @@ fn a_session_with_a_waker_checks_on_the_interval_in_the_background() {
     assert_eq!(session.live_wait(Instant::now()), None, "off by default: an old swarm");
 
     swarm.log(600, r#""event":"submit","issue":7,"mr":8"#);
-    let _: LiveStatus = call(&mut session, "live.set", r#"{"on": true, "intervalSeconds": 5}"#);
+    // Advance the injected clock below; a slow git read must not trigger a second real-time check.
+    let _: LiveStatus = call(&mut session, "live.set", r#"{"on": true, "intervalSeconds": 3600}"#);
     assert_eq!(session.live_wait(Instant::now()), Some(Duration::ZERO));
     assert!(session.poll(), "due at once: a check starts");
     let checking: LiveStatus = call(&mut session, "live.get", "");
@@ -309,7 +310,7 @@ fn a_session_with_a_waker_checks_on_the_interval_in_the_background() {
     assert_eq!(status.events, 4, "the fetch brought the new event");
 
     // The next check, one interval on.
-    let later = Instant::now() + Duration::from_secs(6);
+    let later = Instant::now() + Duration::from_secs(3601);
     assert!(!session.tick(Instant::now()), "not due yet");
     swarm.log(700, r#""event":"stop","issue":7,"reason":"done""#);
     assert!(session.tick(later));

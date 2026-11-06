@@ -18,7 +18,11 @@ fn temp(what: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("worker29-open-{what}-{}-{nanos}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     // The top level as git says it (on macOS the temporary directory is behind a symlink).
-    std::fs::canonicalize(&dir).unwrap()
+    let dir = std::fs::canonicalize(&dir).unwrap();
+    // Git for Windows prints DOS paths with forward slashes, not Rust's verbatim prefix.
+    #[cfg(windows)]
+    let dir = PathBuf::from(dir.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "/"));
+    dir
 }
 
 fn git(dir: &Path, args: &[&str]) {

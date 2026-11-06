@@ -735,6 +735,10 @@ fn ticket_bar(ticket: &Ticket, text: Text<'_>) -> Option<Bar> {
     }
     tooltip.push(TipLine::default());
     tooltip.extend(milestones(ticket));
+    tooltip.extend(ticket.unresolved_note().map(TipLine::plain));
+    if let Some(commit) = ticket.merged.as_ref().and_then(|m| m.commit.as_ref()) {
+        tooltip.push(TipLine::plain(format!("merge recovered from main commit {commit}")));
+    }
     let label = titles::label(text.issues, ticket.issue).unwrap_or_else(|| format!("#{}", ticket.issue));
     let pr = ticket_pr(ticket, text.issues);
     let segments = stages(ticket, text.runs);
@@ -1288,8 +1292,13 @@ mod tests {
         use crate::tickets::tests::{SENT_BACK_169, abandoned, files};
         let fixtures = [Activity::of(&sample()), Activity::of(&abandoned()), Activity::of(&files(&SENT_BACK_169))];
         let mut seen = std::collections::BTreeSet::new();
+        let mut saw_stop = false;
         for activity in fixtures {
             for bar in every_bar(&rows(&activity, &merges(), RowsSpec::default())).into_iter().filter(|b| b.style == Style::Ticket) {
+                for colour in bar.tooltip_lines.iter().filter_map(|line| line.colour_of(Stage::Stopped.name())) {
+                    assert_eq!(colour, Stage::Stopped.colour());
+                    saw_stop = true;
+                }
                 for segment in &bar.segments {
                     let named: Vec<Rgb> = bar.tooltip_lines.iter().filter_map(|l| l.colour_of(segment.stage.name())).collect();
                     assert!(!named.is_empty(), "{}: {:?} named in its tooltip: {:?}", bar.label, segment.stage, bar.tooltip);
@@ -1303,7 +1312,8 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen.len(), 6, "every stage met: {seen:?}");
+        assert_eq!(seen.len(), 5, "every duration stage met: {seen:?}; a stop is an instant, not a strip of elapsed time");
+        assert!(saw_stop, "the stopped instant is still named in its stage colour");
     }
 
     #[test]

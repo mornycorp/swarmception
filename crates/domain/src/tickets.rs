@@ -15,7 +15,7 @@
 //!   and the time from there to the submit is *working* again, by the submitter, a
 //!   [`Stretch::rework`]. The ticket's second run is drawn as its first, in its own colour; a
 //!   send-back nothing has answered yet stays *sent back*;
-//! - `stop` but `done` starts *stopped* (a handoff, a block, a pause);
+//! - `stop` but `done` ends work with a *stopped* instant (a handoff, a block, a pause);
 //! - `stop done` while claimed or worked on ends the stretch and marks the ticket done without a
 //!   merge (its output was something else, such as new issues); after a `submit` it changes
 //!   nothing, as the ticket waits for its merge;
@@ -31,7 +31,9 @@
 //!   *waiting* stretch waits for the coordinator, and a *stopped* one was set down on purpose,
 //!   so neither is abandoned. A later claim or work, by anyone, begins a new stretch as usual.
 //!
-//! What nothing ended runs to the last event of all, open.
+//! Explicit main merge evidence fills missing tracking merges. Otherwise an unfinished ticket
+//! runs to the last recorded swarm event while fresh. After a day without ticket activity and
+//! a holder who has left or gone silent, its bar ends at its last observation, outcome unknown.
 
 use std::collections::BTreeMap;
 
@@ -95,6 +97,11 @@ pub const SENT_BACK_MARK: i64 = 60;
 /// The note a rework stretch carries, for its tooltip and the details.
 pub const REWORK_NOTE: &str = "working again after the send-back (no work logged: from the send-back to the submit)";
 
+/// A day without ticket activity after its holder left or went silent makes the outcome
+/// unknown, not an indefinitely running bar. Measured against recorded swarm activity, not
+/// the viewer's wall clock, so reopening an archived swarm cannot change its history.
+pub const STALE_SECONDS: i64 = 24 * 60 * 60;
+
 /// A ticket left by its holder: the session of the instance that held it ended with a claimed,
 /// working or sent back stretch going on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,6 +139,8 @@ pub struct Merged {
     /// The instance that merged it, and the gate it merged in.
     pub by: String,
     pub sub: Option<String>,
+    /// A missing tracking merge recovered from explicit evidence in this main commit.
+    pub commit: Option<String>,
 }
 
 /// A ticket's `stop done` while it was claimed or worked on: it finished without a merge.
@@ -159,6 +168,9 @@ pub struct Ticket {
     /// Its holder's session ended with it claimed, worked on or sent back, and nothing took it
     /// up after: neither open nor done.
     pub abandoned: Option<Abandoned>,
+    /// Last observed ticket activity when its stale history has no recorded outcome.
+    /// This is neither a merge nor an abandonment/death claim.
+    pub unresolved: Option<Timestamp>,
     /// Who holds it, whose session ending abandons it.
     pub holder: Option<Hold>,
     pub stretches: Vec<Stretch>,
@@ -166,6 +178,7 @@ pub struct Ticket {
     pub worker: Option<String>,
     /// Its first event's time: tickets are listed by it.
     pub first: Timestamp,
+    last_event: Timestamp,
 }
 
 impl Ticket {
@@ -179,10 +192,12 @@ impl Ticket {
             merged: None,
             done: None,
             abandoned: None,
+            unresolved: None,
             holder: None,
             stretches: Vec::new(),
             worker: None,
             first,
+            last_event: first,
         }
     }
 
@@ -207,6 +222,9 @@ impl Ticket {
     fn begin(&mut self, phase: Phase, event: &IssueEvent, note: Option<String>) {
         self.end(event.t);
         self.abandoned = None;
+        self.merged = None;
+        self.done = None;
+        self.unresolved = None;
         self.stretches.push(Stretch { phase, start: event.t, end: event.t, open: true, by: event.instance.clone(), note, abandoned: None, rework: false });
     }
 
@@ -273,6 +291,7 @@ impl Ticket {
     }
 
     fn read(&mut self, event: &IssueEvent) {
+        self.last_event = event.t;
         self.pr = event.kind.mr().or(self.pr);
         self.hold(event);
         match &event.kind {
@@ -295,16 +314,17 @@ impl Ticket {
             Kind::Merge { mr, .. } => {
                 self.end(event.t);
                 self.abandoned = None;
-                self.merged = Some(Merged { t: event.t, pr: mr.or(self.pr), by: event.instance.clone(), sub: event.sub.clone() });
+                self.merged = Some(Merged { t: event.t, pr: mr.or(self.pr), by: event.instance.clone(), sub: event.sub.clone(), commit: None });
             }
             _ => {}
         }
     }
 
-    /// A stop, when the ticket was claimed or worked on: `done` ends the stretch and marks it done
-    /// without a merge; any other reason starts *stopped*. Otherwise (waiting, say) nothing.
+    /// A stop ends its stretch. `done` after submitting leaves the coordinator's wait alone;
+    /// other stops are finite instants, including a block while waiting or sent back.
     fn stop(&mut self, event: &IssueEvent, reason: Option<&StopReason>) {
-        if !matches!(self.current(), Some(Phase::Claimed | Phase::Working)) {
+        let phase = self.current().or_else(|| self.stretches.last().filter(|s| s.phase == Phase::Stopped).map(|s| s.phase));
+        if phase.is_none() || (phase == Some(Phase::Waiting) && matches!(reason, Some(StopReason::Done))) {
             return;
         }
         if matches!(reason, Some(StopReason::Done)) {
@@ -313,7 +333,45 @@ impl Ticket {
         } else {
             let why = reason.map(stop_reason).or_else(|| event.note.clone());
             self.begin(Phase::Stopped, event, why);
+            self.end(event.t);
         }
+    }
+
+    /// Reconcile only unfinished work, after its latest stretch began. An old merge must not
+    /// close a later resumption, and an explicit tracking merge keeps its recorded provenance.
+    fn complete_from_main(&mut self, activity: &Activity) {
+        let Some(open) = self.stretches.last().filter(|s| s.open) else { return };
+        let Some(merge) = activity
+            .main_merges
+            .iter()
+            .filter(|m| m.t >= open.start && (m.closes.contains(&self.issue) || (m.pr.is_some() && m.pr == self.pr)))
+            .min_by_key(|m| m.t)
+        else {
+            return;
+        };
+        self.end(merge.t);
+        self.abandoned = None;
+        self.done = None;
+        self.merged = Some(Merged { t: merge.t, pr: merge.pr.or(self.pr), by: "main".to_owned(), sub: None, commit: Some(merge.commit.clone()) });
+    }
+
+    fn bound_unresolved(&mut self, activity: &Activity, last: Timestamp) {
+        let Some(hold) = &self.holder else { return };
+        let Some(agent) = activity.agent(&hold.instance) else { return };
+        if last.0.saturating_sub(self.last_event.0) < STALE_SECONDS
+            || (agent.session_ended_after(hold.since).is_none() && last.0.saturating_sub(agent.last_seen.0) < STALE_SECONDS)
+            || !self.stretches.last().is_some_and(|s| s.open)
+        {
+            return;
+        }
+        self.end(self.last_event);
+        self.unresolved = Some(self.last_event);
+    }
+
+    /// Explain a bounded, unresolved history without presenting it as completed work.
+    #[must_use]
+    pub fn unresolved_note(&self) -> Option<String> {
+        self.unresolved.map(|t| format!("outcome unknown: last ticket activity {t}; ticket silent for at least 24 h, holder's session ended or also silent"))
     }
 }
 
@@ -329,7 +387,9 @@ pub fn tickets(activity: &Activity) -> Vec<Ticket> {
     }
     let mut tickets: Vec<Ticket> = tickets.into_values().collect();
     for ticket in &mut tickets {
+        ticket.complete_from_main(activity);
         ticket.lapse(None, activity);
+        ticket.bound_unresolved(activity, last);
         if let Some(open) = ticket.stretches.last_mut().filter(|s| s.open) {
             open.end = last.max(open.start);
         }
@@ -489,7 +549,7 @@ pub(crate) mod tests {
         assert_eq!(spans(working)[1], (Phase::Working, at("01:20:20"), at("04:00:00"), false, Some("m-4".to_owned())));
         assert_eq!(working.abandoned.as_ref().and_then(|a| a.ended_by.as_deref()), Some("m-c"));
         let stopped = ticket(&tickets, 43);
-        assert_eq!(spans(stopped)[1], (Phase::Stopped, at("01:26:00"), at("04:00:00"), true, None), "set down on purpose: stays stopped");
+        assert_eq!(spans(stopped)[1], (Phase::Stopped, at("01:26:00"), at("01:26:00"), false, None), "set down on purpose: a stop, not more elapsed work");
         assert_eq!(stopped.abandoned, None);
     }
 

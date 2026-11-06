@@ -10,6 +10,7 @@ use swarmception_domain::Node;
 use swarmception_engine::EngineError;
 use swarmception_engine::Session;
 use swarmception_engine::error::Unavailable;
+#[cfg(unix)]
 use swarmception_engine::issues::{IssuesSource, RefreshKind};
 use swarmception_engine::issues_cmds::TicketUrlsResult;
 use swarmception_engine::repo_cmds::StatusResult;
@@ -17,6 +18,7 @@ use swarmception_engine::rows_cmds::ListResult;
 use swarmception_source::Github;
 
 mod support;
+#[cfg(unix)]
 use support::Wakes;
 
 fn temp(what: &str) -> PathBuf {
@@ -60,6 +62,7 @@ fn repo(remote: Option<&str>) -> PathBuf {
 }
 
 /// `gh api`'s pages for `o/n`: #7, the PR #8 that closes it, and an issue the swarm never held.
+#[cfg(unix)]
 const PAGES: &str = r#"[
   {"number":7,"title":"Seven: the ticket's own title","state":"closed","labels":[{"name":"type::task"}],"user":{"login":"owner"},
    "created_at":"2026-10-31T02:00:00Z","closed_at":"2026-10-31T03:45:00Z","updated_at":"2026-10-31T03:45:00Z","html_url":"https://github.com/o/n/issues/7"},
@@ -71,10 +74,12 @@ const PAGES: &str = r#"[
 ]"#;
 
 /// The pulls' pages: each one's head branch.
+#[cfg(unix)]
 const PULLS: &str = r#"[{"number":8,"head":{"ref":"7-seven"}},{"number":13,"head":{"ref":"12-never-held"}}]"#;
 
 /// What changed since, as `gh api --include` prints it: #12 renamed, and a new PR #13 on #12's
 /// branch, its body closing nothing.
+#[cfg(unix)]
 const SINCE: &str = "HTTP/2.0 200 OK\nEtag: W/\"e1\"\r\n\r\n[\
   {\"number\":12,\"title\":\"Held at last\",\"state\":\"open\",\"updated_at\":\"2026-11-01T09:00:00Z\",\"html_url\":\"https://github.com/o/n/issues/12\"},\
   {\"number\":13,\"title\":\"Twelve's fix\",\"state\":\"open\",\"body\":\"\",\"updated_at\":\"2026-11-01T10:00:00Z\",\
@@ -243,10 +248,12 @@ fn in_the_background_the_issues_land_through_poll() {
 }
 
 /// The cache's file, as JSON to change.
+#[cfg(unix)]
 fn cache_json(cache: &Path) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(cache.join("issues/o--n.json")).unwrap()).unwrap()
 }
 
+#[cfg(unix)]
 fn write_cache_json(cache: &Path, json: &serde_json::Value) {
     std::fs::write(cache.join("issues/o--n.json"), json.to_string()).unwrap();
 }

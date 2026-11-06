@@ -355,8 +355,10 @@ impl Session {
 
     /// The branch read: the activity, the rows; the live watch's default at the first read.
     fn take(&mut self, tracking: Tracking) {
-        let activity = Activity::of(&tracking.files);
-        let last = activity.extent.map(|(_, last)| last);
+        let activity = Activity::with_merges(&tracking.files, &tracking.merges);
+        // Main can finish an old ticket after tracking ended, but live mode's default is
+        // still based on the swarm's own recent activity, not an unrelated new main commit.
+        let last = activity.times.last().copied();
         self.loaded = Some(Loaded { tracking, activity });
         self.error = None;
         self.rebuild();

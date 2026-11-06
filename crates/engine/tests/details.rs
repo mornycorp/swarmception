@@ -6,10 +6,14 @@
 use std::path::{Path, PathBuf};
 
 use swarmception_domain::Node;
-use swarmception_domain::details::{Details, PageKind, Subject};
+use swarmception_domain::details::Details;
+#[cfg(unix)]
+use swarmception_domain::details::{PageKind, Subject};
 use swarmception_domain::factory::FactoryScene;
+#[cfg(unix)]
 use swarmception_domain::tooltip::{FAILED, PASSED};
 use swarmception_engine::Session;
+#[cfg(unix)]
 use swarmception_engine::factory_cmds::TicketBarsResult;
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_engine::rows_cmds::ListResult;
@@ -17,6 +21,7 @@ use swarmception_source::Github;
 
 mod support;
 
+#[cfg(unix)]
 fn temp(what: &str) -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -26,6 +31,7 @@ fn temp(what: &str) -> PathBuf {
     dir
 }
 
+#[cfg(unix)]
 fn git_at(dir: &Path, at: &str, args: &[&str]) {
     let out = std::process::Command::new("git")
         .current_dir(dir)
@@ -40,6 +46,7 @@ fn git_at(dir: &Path, at: &str, args: &[&str]) {
 
 /// #7 (its PR #8): claimed, worked on with a `ready` check, submitted, sent back by gate-pr8's
 /// first run, worked on again, submitted, and merged by its second run; main merges PR #8.
+#[cfg(unix)]
 fn repo() -> PathBuf {
     let dir = temp("repo");
     let files = [
@@ -114,6 +121,7 @@ fn open(session: &mut Session, dir: &Path) -> StatusResult {
     call(session, "repo.open", &format!("{{\"path\":{path}}}"))
 }
 
+#[cfg(unix)]
 fn whats(details: &Details) -> Vec<&str> {
     details.entries.iter().map(|e| e.what.as_str()).collect()
 }

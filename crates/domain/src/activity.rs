@@ -5,7 +5,7 @@
 
 use std::collections::BTreeMap;
 
-use swarmception_model::{AgentFile, Event, Kind, Role, Timestamp};
+use swarmception_model::{AgentFile, Event, Kind, MainMerge, Role, Timestamp};
 
 /// A span of time, `[start, end)`; `open` when nothing ended it, so it runs to the last event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +98,8 @@ pub struct Agent {
     pub marks: Vec<Mark>,
     /// Its events, all of them.
     pub events: usize,
+    /// Last recorded activity, independent of an unclosed session's display extent.
+    pub last_seen: Timestamp,
 }
 
 impl Agent {
@@ -145,11 +147,13 @@ pub struct Activity {
     /// `sendback` for each send-back a gate's failure makes, logged or not (#106: the tracking
     /// format's rule, [`crate::sendbacks`]).
     pub issue_events: Vec<IssueEvent>,
-    /// The first and last event's times; none with no events.
+    /// First tracking event through the last tracking/main evidence; none with no tracking events.
     pub extent: Option<(Timestamp, Timestamp)>,
     /// Every event's time, of every file, oldest first: where the quiet gaps are.
     pub times: Vec<Timestamp>,
     pub errors: Vec<FileError>,
+    /// Main's merge evidence, shared by every consumer of ticket lifecycles.
+    pub main_merges: Vec<MainMerge>,
 }
 
 impl Activity {
@@ -178,7 +182,21 @@ impl Activity {
         let issue_events = crate::sendbacks::told(&agents, issue_events);
         let mut times: Vec<Timestamp> = files.iter().flat_map(|f| f.events.iter().map(|e| e.t)).collect();
         times.sort_unstable();
-        Self { agents, issue_events, extent, times, errors }
+        Self { agents, issue_events, extent, times, errors, main_merges: Vec::new() }
+    }
+
+    /// Read tracking together with main's explicit completion evidence. Raw event counts and
+    /// agent sessions remain tracking's; recovered merges do not invent agents or events.
+    #[must_use]
+    pub fn with_merges(files: &[AgentFile], merges: &[MainMerge]) -> Self {
+        let mut activity = Self::of(files);
+        activity.main_merges = merges.to_vec();
+        if let Some((_, end)) = activity.extent.as_mut()
+            && let Some(merged) = merges.iter().map(|m| m.t).max()
+        {
+            *end = (*end).max(merged);
+        }
+        activity
     }
 
     /// The agent instance `instance`.
@@ -238,6 +256,7 @@ fn agent(file: &AgentFile, last: Timestamp) -> Agent {
         subs: Vec::new(),
         marks: Vec::new(),
         events: file.events.len(),
+        last_seen: file.events.iter().map(|e| e.t).max().unwrap_or_default(),
     };
     let mut reading = Reading::default();
     for event in &file.events {

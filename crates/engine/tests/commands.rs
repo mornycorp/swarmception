@@ -351,3 +351,60 @@ fn rows_window_leaves_out_the_rows_with_nothing_in_a_window_collapsed_to_it() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// Read actual GitLab commit bodies through git, then compare typed engine replies.
+#[test]
+fn a_gitlab_batch_ends_missing_tracking_merges_in_rows_factory_and_stats() {
+    let dir = repo();
+    let git = |at: &str, args: &[&str]| {
+        let out = std::process::Command::new("git")
+            .current_dir(&dir)
+            .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_AUTHOR_DATE", at)
+            .env("GIT_COMMITTER_DATE", at)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    let early = "2026-10-31T03:00:00Z";
+    // The worker submitted and left; the coordinator never logged its merge.
+    std::fs::write(dir.join("tracking/mini-bb2222/work.jsonl"), "{\"event\":\"heartbeat\",\"t\":\"2026-11-06T13:00:00Z\"}\n").unwrap();
+    git(early, &["add", "."]);
+    git(early, &["commit", "-q", "-m", "incomplete tracking"]);
+    git(early, &["switch", "-q", "--orphan", "main"]);
+    git(early, &["commit", "-q", "--allow-empty", "-m", "start"]);
+    git(early, &["switch", "-q", "-c", "batch"]);
+    git(early, &["commit", "-q", "--allow-empty", "-m", "work"]);
+    git(early, &["switch", "-q", "main"]);
+    let merged = "2026-10-31T03:45:00Z";
+    git(merged, &["merge", "-q", "--no-ff", "-m", "Merge branch 'batch' into 'main'\n\nCloses #7, #99, and #100\n\nSee merge request o/n!20", "batch"]);
+    let mut session = Session::new();
+    let path = serde_json::to_string(&dir).unwrap();
+    let status: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    assert_eq!(status.merged, 1);
+    assert_eq!(status.events, 6, "no artificial tracking merge");
+    let list: ListResult = call(&mut session, "rows.list", "");
+    let bar = list
+        .rows
+        .iter()
+        .flat_map(swarmception_domain::Node::leaves)
+        .filter_map(|n| match n {
+            swarmception_domain::Node::Ranges { bars, .. } => Some(bars),
+            _ => None,
+        })
+        .flatten()
+        .find(|b| b.ticket == Some(7) && b.style == swarmception_domain::rows::Style::Ticket)
+        .unwrap();
+    assert!(!bar.open);
+    assert_eq!(bar.end.to_string(), merged);
+    assert_eq!(bar.end.0 - bar.start.0, 44 * 60);
+    let factory: swarmception_domain::factory::FactoryScene = call(&mut session, "factory.at", "");
+    assert_eq!(factory.counts.merged, 1);
+    assert_eq!(factory.counts.waiting, 0);
+    let stats: Stats = call(&mut session, "stats.get", "");
+    assert_eq!(stats.landed, 1);
+    let details: swarmception_domain::details::Details = call(&mut session, "details.get", r#"{"ticket":7}"#);
+    assert!(details.entries.iter().any(|e| e.what == "merged" && e.t.to_string() == merged));
+    std::fs::remove_dir_all(dir).ok();
+}
