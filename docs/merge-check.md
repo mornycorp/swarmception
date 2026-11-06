@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # The scheduled merge check
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** major (first version, from swarm-core's template) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-05 · **Change:** minor (no GitHub checks or runs: CI is always local, #140) · **Target:** M1
 
 A scheduled task (the agent app's scheduled tasks, every 30 minutes) starts a fresh, merge-only
 coordinator session, so ready PRs merge even when no coordinator is awake
@@ -53,22 +53,18 @@ agent's. If only tests failed and they may be load flakes, `cargo xtask gate --r
 gate-mr<ids> --wait`, then land as usual. On a real failure: note the cause on the PRs,
 `cargo xtask lock drop`, log `session.stop`, and stop.
 
-Before landing, check each PR's own checks (`gh pr checks <m> --repo mornycorp/swarmception`, for the
-PR's head): a failed check is a stop; note it on the PR and don't land it. A Swarm Core pin bump
-lands only when every check of its head passed.
-
 Step 6: land. `cargo xtask land <m>… --sub gate-mr<ids>`. If it stops on a PR, it names the PR
 and why: say so, and leave that PR.
 
-Step 7: end. `cargo xtask event session.stop --note "merged #<m> …"`. Check main's CI
-(`gh run list --repo mornycorp/swarmception --branch main --limit 3`): if the newest run that wasn't
-skipped failed, comment on the PR that caused it and say so.
+Step 7: end. `cargo xtask event session.stop --note "merged #<m> …"`.
 
-Report in three lines or fewer: what you merged, what you left and why, and main's CI.
+Report in three lines or fewer: what you merged, what you left and why, and how the
+local gate went. CI is always local (owner, 2026-11-05): there are no GitHub checks or runs to read.
 ```
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-05 | minor | No GitHub checks or runs to read: CI is always local (owner, #140) |
 | 2026-10-31 | major | First version, from swarm-core's template |
