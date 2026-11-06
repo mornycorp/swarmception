@@ -1,1 +1,2 @@
 {"effort":"medium","event":"session.start","format":3,"machine":"christohersmini","model":"claude-opus-5-5","name":"christohersmini","role":"coordinator","t":"2026-11-06T15:04:06Z"}
+{"event":"sub.start","name":"gate","note":"local gate: #145 #141 (#144 #142 #140); capacity=3 free=10.3; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-145","t":"2026-11-06T15:04:29Z"}
