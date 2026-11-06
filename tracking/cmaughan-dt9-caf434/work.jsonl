@@ -19,3 +19,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-9392ad2","t":"2026-11-06T15:38:15Z"}
 {"event":"sub.stop","note":"rc=1; cause=build; step=clippy","sub":"ready-9392ad2","t":"2026-11-06T15:38:45Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-bf3ffc3","t":"2026-11-06T15:54:08Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-bf3ffc3","t":"2026-11-06T16:01:15Z"}
