@@ -620,7 +620,6 @@ pub fn scene(activity: &Activity, merges: &[MainMerge], t: Timestamp, recent: i6
     done.truncate(MAX_LISTED);
     let (first, last) = activity.extent.unzip();
     let benches = benches(activity, t, recent, at_bench);
-    let idle = idle_benches(&benches);
     FactoryScene {
         t,
         text: t.to_string(),
@@ -629,8 +628,8 @@ pub fn scene(activity: &Activity, merges: &[MainMerge], t: Timestamp, recent: i6
         last,
         upcoming,
         shelf,
+        idle: idle_benches(&benches),
         benches,
-        idle,
         dock,
         gate: gate(activity, t, &runs, gating),
         shipping: shipping(merges, &tickets, &runs, t, (done, done_count)),
