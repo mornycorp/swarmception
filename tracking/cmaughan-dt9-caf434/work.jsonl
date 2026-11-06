@@ -22,3 +22,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"ready-bf3ffc3","t":"2026-11-06T16:01:15Z"}
 {"event":"submit","issue":147,"mr":148,"t":"2026-11-06T16:01:30Z"}
 {"event":"stop","issue":147,"mr":148,"note":"Full gate green; native preview open; waiting for coordinator after timeline PR 234.","reason":"done","t":"2026-11-06T16:02:01Z"}
+{"event":"session.pause","note":"Awaiting coordinator review and merge of PR 148 after timeline PR 234.","t":"2026-11-06T16:02:07Z"}
