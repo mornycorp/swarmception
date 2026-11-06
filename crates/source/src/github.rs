@@ -598,16 +598,20 @@ mod tests {
         )
     }
 
+    #[cfg(unix)]
     fn calls(dir: &Path) -> Vec<String> {
         let calls = std::fs::read_to_string(dir.join("args")).unwrap_or_default().lines().map(str::to_owned).collect();
         let _ = std::fs::remove_file(dir.join("args"));
         calls
     }
 
+    #[cfg(unix)]
     const ISSUES: &str = r#"[{"number":3,"title":"An issue","state":"open","updated_at":"2026-11-01T10:00:00Z"},
         {"number":4,"title":"Its fix","state":"open","body":"no keywords","updated_at":"2026-11-01T11:00:00Z","pull_request":{"merged_at":null}}]"#;
+    #[cfg(unix)]
     const PULLS: &str = r#"[{"number":4,"head":{"ref":"3-an-issue"}},{"number":6,"head":{"ref":"5-new"}}]"#;
     /// What changed since: #3 renamed, a new issue #5 and its PR #6.
+    #[cfg(unix)]
     const SINCE: &str = "HTTP/2.0 200 OK\nCache-Control: private\r\nEtag: W/\"abc\"\r\nLink: <x?page=1>; rel=\"prev\"\r\n\r\n[\
         {\"number\":3,\"title\":\"An issue, renamed\",\"state\":\"open\",\"updated_at\":\"2026-11-02T09:00:00Z\"},\
         {\"number\":5,\"title\":\"New\",\"state\":\"open\",\"updated_at\":\"2026-11-02T09:30:00Z\"},\

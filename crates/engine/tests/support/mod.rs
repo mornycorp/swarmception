@@ -76,7 +76,7 @@ impl Wakes {
 /// fake for `repo` replaces the first.
 pub fn fake_gh(repo: &Path, script: &str) -> PathBuf {
     std::fs::write(repo.join("api"), format!("set -- api \"$@\"\n{script}")).unwrap();
-    PathBuf::from("/bin/sh")
+    PathBuf::from("sh")
 }
 
 /// Points `clone`'s fetches over ssh at the local bare repository `remote`, through an `ssh`

@@ -446,6 +446,9 @@ fn ticket_details(ctx: &Ctx<'_>, issue: u64) -> Option<Details> {
         let note = done.note.clone().map(TipLine::plain);
         entries.push(Entry::at(done.t, Stage::Stopped.colour(), "done without a merge").by(Some(ctx.who(&done.by))).note(note));
     }
+    if let Some(t) = ticket.unresolved {
+        entries.push(Entry::at(t, Stage::Stopped.colour(), "outcome unknown").note(ticket.unresolved_note().map(TipLine::plain)));
+    }
     let (lines, labels) = ticket_header(ctx, ticket);
     let pr = ticket.pr.or_else(|| ctx.issues.pr_of(issue, None).map(|p| p.number)).filter(|pr| *pr != issue);
     let pages = std::iter::once(Page::issue(issue)).chain(pr.map(Page::pull)).collect();
@@ -564,10 +567,15 @@ fn ticket_merge_entry(ctx: &Ctx<'_>, merged: &Merged) -> Entry {
     if let Some(sub) = &merged.sub {
         detail = detail.then(format!(" in {sub}"));
     }
-    let commit = main_commit(ctx, merged.pr, merged.t);
+    let commit = merged.commit.as_ref().and_then(|id| ctx.merges.iter().find(|m| &m.commit == id)).or_else(|| main_commit(ctx, merged.pr, merged.t));
     let note = commit.map(|m| TipLine::coloured("onto main ", PASSED).then(format!("{} {}", short_commit(&m.commit), m.subject)));
-    let goes_to = merged.sub.as_ref().map(|sub| Subject::Gate { sub: sub.clone(), at: Some(merged.t) });
-    Entry::at(merged.t, PASSED, "merged").detail(detail).by(Some(ctx.who(&merged.by))).note(note).goes_to(goes_to)
+    let goes_to = merged
+        .sub
+        .as_ref()
+        .map(|sub| Subject::Gate { sub: sub.clone(), at: Some(merged.t) })
+        .or_else(|| merged.commit.as_ref().map(|commit| Subject::Merge { commit: commit.clone() }));
+    let who = merged.commit.is_none().then(|| ctx.who(&merged.by));
+    Entry::at(merged.t, PASSED, "merged").detail(detail).by(who).note(note).goes_to(goes_to)
 }
 
 fn short_commit(commit: &str) -> &str {
@@ -607,19 +615,29 @@ fn seconds_in(ticket: &Ticket, phase: Phase) -> i64 {
     ticket.stretches.iter().filter(|s| s.phase == phase).map(|s| s.end.0.saturating_sub(s.start.0).max(0)).sum()
 }
 
-fn ticket_facts(ctx: &Ctx<'_>, ticket: &Ticket, runs: &[&GateRun]) -> Vec<Fact> {
-    let mut facts = Vec::new();
-    let from = ticket.claimed.or(ticket.began).or_else(|| ticket.stretches.first().map(|s| s.start));
-    match (from, &ticket.merged, &ticket.done) {
-        (Some(from), Some(merged), _) => facts.push(Fact::coloured("claim → merge", duration(merged.t.0.saturating_sub(from.0)), PASSED)),
-        (Some(from), None, Some(done)) => facts.push(Fact::new("claim → done", duration(done.t.0.saturating_sub(from.0)))),
-        (Some(from), None, None) => {
+fn ticket_duration_fact(ticket: &Ticket) -> Option<Fact> {
+    let from = ticket.claimed.or(ticket.began).or_else(|| ticket.stretches.first().map(|s| s.start))?;
+    Some(match (&ticket.merged, &ticket.done) {
+        (Some(merged), _) => Fact::coloured("claim → merge", duration(merged.t.0.saturating_sub(from.0)), PASSED),
+        (None, Some(done)) => Fact::new("claim → done", duration(done.t.0.saturating_sub(from.0))),
+        (None, None) => {
             let last = ticket.stretches.last().map_or(from, |s| s.end);
-            let what = if ticket.abandoned.is_some() { "abandoned after" } else { "so far" };
-            facts.push(Fact::new(what, duration(last.0.saturating_sub(from.0))));
+            let what = if ticket.abandoned.is_some() {
+                "abandoned after"
+            } else if ticket.unresolved.is_some() {
+                "observed span (outcome unknown)"
+            } else if ticket.stretches.last().is_some_and(|s| s.phase == Phase::Stopped) {
+                "stopped after"
+            } else {
+                "so far"
+            };
+            Fact::new(what, duration(last.0.saturating_sub(from.0)))
         }
-        (None, ..) => {}
-    }
+    })
+}
+
+fn ticket_facts(ctx: &Ctx<'_>, ticket: &Ticket, runs: &[&GateRun]) -> Vec<Fact> {
+    let mut facts: Vec<Fact> = ticket_duration_fact(ticket).into_iter().collect();
     let working = seconds_in(ticket, Phase::Working);
     if working > 0 {
         facts.push(Fact::coloured("working", duration(working), Stage::Working.colour()));

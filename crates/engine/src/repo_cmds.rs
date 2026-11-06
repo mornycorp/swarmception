@@ -87,7 +87,7 @@ fn status(session: &Session) -> StatusResult {
     status.instances = activity.agents.len();
     let issues = activity.agents.iter().flat_map(|a| a.work.iter().map(|w| w.issue).chain(a.marks.iter().filter_map(|m| m.issue)));
     status.tickets = issues.collect::<BTreeSet<_>>().len();
-    status.merged = activity.issue_events.iter().filter(|e| e.kind.name() == "merge").map(|e| e.issue).collect::<BTreeSet<_>>().len();
+    status.merged = swarmception_domain::tickets(activity).iter().filter(|t| t.merged.is_some()).count();
     status.main_merges = loaded.tracking.merges.len();
     status.main.clone_from(&loaded.tracking.main);
     status.events = activity.events();

@@ -715,7 +715,10 @@ fn place(ticket: &Ticket, t: Timestamp) -> (CrateState, Timestamp, Option<String
     }
     // Off the bench: released, or abandoned when its holder's session ended (#28).
     let last = ticket.stretches.iter().filter(|s| s.end <= t).max_by_key(|s| s.end);
-    let note = last.and_then(|s| s.abandoned.as_ref()).map(Abandoned::text);
+    let note =
+        last.and_then(|s| s.abandoned.as_ref()).map(Abandoned::text).or_else(|| ticket.unresolved_note()).or_else(|| {
+            last.filter(|s| s.phase == Phase::Stopped).map(|s| s.note.as_ref().map_or_else(|| "stopped".to_owned(), |why| format!("stopped: {why}")))
+        });
     (CrateState::Shelved, last.map_or(ticket.first, |s| s.end), note)
 }
 
