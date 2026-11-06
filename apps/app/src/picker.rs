@@ -323,6 +323,7 @@ mod tests {
         assert!(matches!(windows(Some(0), b"C:swarm"), Outcome::Failed(_)));
     }
 
+    #[cfg(unix)]
     fn sh(script: &str, cancelled: i32) -> Invocation {
         Invocation { program: "sh".into(), args: vec!["-c".into(), script.into()], env: vec![("PICKED".into(), "/tmp/picked".into())], cancelled }
     }
