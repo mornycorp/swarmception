@@ -4,3 +4,4 @@
 {"event":"sub.start","name":"gate","note":"full gate of main; capacity=1 free=5.0; kind=full; commit=823b7d1193d0220e4187d1a6753c37fd7b18d130","sub":"gate-full-823b7d1","t":"2026-11-06T13:32:57Z"}
 {"event":"sub.stop","note":"rc=1; cause=build; kind=full; commit=823b7d1193d0220e4187d1a6753c37fd7b18d130","sub":"gate-full-823b7d1","t":"2026-11-06T13:37:31Z"}
 {"event":"claim","issue":144,"mr":145,"t":"2026-11-06T13:38:26Z"}
+{"event":"work","issue":144,"t":"2026-11-06T13:38:32Z"}
