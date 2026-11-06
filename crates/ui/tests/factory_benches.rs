@@ -265,3 +265,34 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
     }
     std::fs::remove_dir_all(dir).ok();
 }
+
+#[test]
+fn the_idle_tiles_tooltip_contains_all_names_and_the_availability_explanation() {
+    let dir = repo(0, 10);
+    let (ctx, mut shell) = loaded(&dir);
+    ctx.style_mut(|style| style.interaction.tooltip_delay = 0.0);
+    let at = shell.factory().drawn().idle_cell.unwrap().center();
+    let expected = shell.factory().scene().unwrap().idle.as_ref().unwrap().clone();
+    let mut texts = Vec::new();
+    for n in 0..4 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))),
+            time: Some(100.0 + f64::from(n)),
+            events: vec![egui::Event::PointerMoved(at)],
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| shell.ui(ui));
+        output.textures_delta.clear();
+        texts.extend(output.shapes.iter().filter_map(|shape| match &shape.shape {
+            egui::Shape::Text(text) => Some(text.galley.text().to_owned()),
+            _ => None,
+        }));
+    }
+    let rendered = texts.join("\n");
+    for key in expected.keys {
+        assert!(rendered.contains(&key), "tooltip omits {key}: {rendered}");
+    }
+    assert!(rendered.contains("Availability is unconfirmed"));
+    assert_eq!(shell.inspect().factory.drawn.idle_benches.len(), 10);
+    std::fs::remove_dir_all(dir).ok();
+}

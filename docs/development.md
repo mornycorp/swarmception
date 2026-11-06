@@ -2,7 +2,7 @@
      own now. Keep the heading the shared protocol links to: How many builds at once. -->
 # Development
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-03 · **Change:** minor (tests' fakes run by `sh`, the `fakes` step, #113) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-06 · **Change:** minor (idle tile and X row constraint, #147; tests' fakes run by `sh`, the `fakes` step, #113) · **Target:** M1
 
 How to build, test and run Swarmception, and how many builds a machine takes.
 
@@ -39,6 +39,11 @@ The CLI runs the engine headless, one session, one JSON result a line:
 cargo run -p swarmception-cli -- commands
 cargo run -p swarmception-cli -- --repo ../swarm-timeline run repo.status rows.set '{"grouping":"workers"}' rows.list
 ```
+
+On ticket rows, drag to select the nearest ticket as you move between rows. Alt-drag selects
+ticket ends. Hold X during either drag to constrain it to the starting row; releasing X restores
+movement across rows. Idle benches share one tile; hover it for the full worker list and the
+tracking-based availability explanation.
 
 ## `cargo xtask ci`
 

@@ -844,6 +844,38 @@ fn a_click_on_a_tickets_bar_shows_its_start_and_alt_click_its_end() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+#[test]
+fn dragging_crosses_ticket_rows_and_x_constrains_with_or_without_alt() {
+    use swarmception_ui::FactorySelected;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    frame(&mut shell, &ctx);
+    for modifiers in [egui::Modifiers::NONE, egui::Modifiers::ALT] {
+        let start = shell.bar_point(7).unwrap();
+        let other = egui::pos2(start.x, shell.bar_point(11).unwrap().y);
+        assert_ne!(start.y, other.y);
+        let button = |pos, pressed| egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed, modifiers };
+        let key = |pressed| egui::Event::Key { key: egui::Key::X, physical_key: None, pressed, repeat: false, modifiers };
+        frame_with(&mut shell, &ctx, vec![egui::Event::ModifiersChanged(modifiers), egui::Event::PointerMoved(start), button(start, true)]);
+        frame(&mut shell, &ctx);
+        let initial = shell.factory().t();
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }));
+        frame_with(&mut shell, &ctx, vec![egui::Event::PointerMoved(other)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 11 }), "vertical motion crosses rows");
+        frame_with(&mut shell, &ctx, vec![key(true)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 7 }), "X selects in the starting row");
+        assert_eq!(shell.factory().t(), initial, "Alt still determines the endpoint");
+        frame_with(&mut shell, &ctx, vec![key(false)]);
+        frame(&mut shell, &ctx);
+        assert_eq!(shell.factory().selected(), Some(&FactorySelected::Ticket { issue: 11 }));
+        frame_with(&mut shell, &ctx, vec![button(other, false), egui::Event::PointerGone]);
+        frame(&mut shell, &ctx);
+    }
+    std::fs::remove_dir_all(dir).ok();
+}
+
 /// A bar selected on the timeline, alone, as a click selects it.
 fn choose_bar(shell: &mut Shell, track: &str, range: usize) {
     use timeline_engine::ranges_cmds::{RangeParams, Toggle};
