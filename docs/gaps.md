@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-05 · **Last updated:** 2026-11-05 · **Change:** minor (batch 15: Alt + click on a ticket's bar shows its end; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (batch 16: G31 done, no ghost ticket bars and a green Windows gate; CI always local; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
 | — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
 | — | [G30 The owner's ticket bars, and no Gates band](#g30-the-owners-ticket-bars-and-no-gates-band) | done | #127, #128, #137, swarm-timeline#218, #219, #228, #230 | |
 | — | [G29 Merges as markers, and one colour per stage](#g29-merges-as-markers-and-one-colour-per-stage) | done | #115, #117, #119, #121, #124 | |
@@ -375,6 +376,29 @@ marked **Human:** with what is needed.
   `merge_marks_are_off_until_rows_set_asks_for_them`, `saved::tests` (version 11's gates dropped),
   `crates/ui/tests/layout.rs`, `factory_pane::a_click_on_a_tickets_bar_shows_its_start_and_alt_click_its_end`.
 
+## G31 No ghost ticket bars
+
+- **Done** (batch 16; the owner's, 2026-11-06, on Nsight):
+  - **Main's merges end tickets** (#142, PR #145): main's full merge messages are read, so a
+    GitHub merge's PR, a GitLab batch's `Closes #12, #3, and #9` and its `See merge request`
+    trailer end an unfinished ticket that tracking never logged merged; the recovered merge
+    links to its main commit. A mention that isn't a closing keyword closes nothing.
+  - **A pause is an instant** (#145): a paused, blocked or handed-off stop no longer runs on as a
+    stretch; the Factory shelves the ticket with its reason.
+  - **Silence ends a bar** (#145): a ticket with no update for a day, whose holder ended its
+    session or also fell silent, ends at its last event, *outcome unknown*, neither merged nor
+    abandoned; counted from the swarm's last event, never the viewer's clock.
+  - **The Windows full gate is green** (#144, PR #145): Unix-only test helpers gated, Windows
+    paths read for the platform asked, a live test that could poll twice on a slow machine.
+  - **CI is always local** (#140, PR #141; the owner's, 2026-11-05): no GitHub workflow or daily
+    run; `ci --changed`, the coordinator's gate and the periodic full gate run on our machines.
+- **Measured:** on frozen Nsight refs, 672 ticket bars kept, bars over 500 h from 65 to 0, 43
+  merges recovered from main, 29 outcomes unknown; #12 is 1 h 19 m (was 570 h) (the worker's,
+  Windows, 2026-11-06). 401 tests, `cargo nextest run --workspace` (2026-11-06, macOS).
+- **Evidence:** `crates/domain/src/lifecycle_tests.rs`, `merges::tests::gitlab_batch_reads_closures_from_the_body_not_incidental_mentions`,
+  `source` `reads_multiline_gitlab_merges_without_losing_adjacent_records`, `Ticket::complete_from_main`,
+  `Ticket::bound_unresolved`, `tickets::STALE_SECONDS`; screenshots in `docs/screenshots/`.
+
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
@@ -526,6 +550,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-06 | minor | Batch 16: G31 done (#140, #142, #144); no gaps open |
 | 2026-11-05 | minor | Batch 15: G30 gains Alt + click (#137, swarm-timeline#228, #230) |
 | 2026-11-04 | minor | Batch 14: G28 done (#134, swarm-core#20, swarm-timeline#222); no gaps open |
 | 2026-11-04 | minor | Batch 13: G30 new and done (#127, #128, swarm-timeline#218, #219); G28's leftovers filed (swarm-core#20, swarm-timeline#222) |
