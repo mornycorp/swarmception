@@ -37,6 +37,9 @@ pub struct Drawn {
     pub benches: Vec<(String, Vec<u64>)>,
     /// Where each bench in view was drawn, as [`Drawn::benches`] orders them (#94).
     pub bench_cells: Vec<Rect>,
+    /// Workers represented by the single idle tile, and its position.
+    pub idle_benches: Vec<String>,
+    pub idle_cell: Option<Rect>,
     /// The benches folded away into one line for want of room (#94): off shift, holding nothing.
     pub benches_folded: Vec<String>,
     /// Those benches with their fold opened (#106): after the rest, in view or scrolled away.
@@ -694,9 +697,12 @@ impl<'a> Floor<'a> {
             self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
             return;
         }
+        let room = self.idle_benches(room);
         let (room, open, unfolded) = self.bench_lists(room);
         if open.is_empty() {
-            self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
+            if scene.idle.is_none() {
+                self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
+            }
             return;
         }
         let mut grid = bench_grid(open.len(), room.size());
@@ -719,6 +725,33 @@ impl<'a> Floor<'a> {
         }
     }
 
+    fn idle_benches(&mut self, room: Rect) -> Rect {
+        let Some(idle) = &self.scene.idle else { return room };
+        let height = BENCH_SHORTEST.min(room.height().max(0.0));
+        let cell = room.with_max_y(room.top() + height).shrink2(vec2(2.5, 2.0));
+        self.painter.rect(cell, 5.0, self.pal.cell, Stroke::new(1.0, self.pal.edge), StrokeKind::Inside);
+        fit(
+            &self.painter,
+            cell.left_center() + vec2(6.0, 0.0),
+            Align2::LEFT_CENTER,
+            &idle.label,
+            (Self::font(11.5), bench_colour(BenchStatus::Idle)),
+            (cell.width() - 12.0).max(0.0),
+        );
+        let response = self.ui.interact(cell, self.ui.scope_id().with("idle-benches"), egui::Sense::hover());
+        response.on_hover_ui(|ui| {
+            egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let mut job = factory_tip::job(&idle.tooltip, ui.visuals(), &font);
+                job.wrap.max_width = ui.spacing().tooltip_width;
+                ui.label(job);
+            });
+        });
+        self.drawn.idle_benches.clone_from(&idle.keys);
+        self.drawn.idle_cell = Some(cell);
+        room.with_min_y(room.top() + height)
+    }
+
     /// The benches to lay out in `room`, the room left for them and how many of them, at the end,
     /// are those off shift opened out of their fold. Every bench while each gets room for two
     /// lines; else those off shift holding nothing fold into a line under the others (#94), drawn
@@ -727,7 +760,7 @@ impl<'a> Floor<'a> {
     /// with them, its line under them to close it.
     fn bench_lists(&mut self, room: Rect) -> (Rect, Vec<&'a Bench>, usize) {
         let scene = self.scene;
-        let all: Vec<&Bench> = scene.benches.iter().collect();
+        let all: Vec<&Bench> = scene.benches.iter().filter(|b| !b.grouped_idle()).collect();
         let (mut open, folded): (Vec<&Bench>, Vec<&Bench>) = if bench_grid(all.len(), room.size()).roomy() {
             (all, Vec::new())
         } else {

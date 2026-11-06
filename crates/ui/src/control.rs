@@ -46,8 +46,8 @@ use crate::{Panes, Shell, UiState};
 /// out of their fold (#106, `factory.drawn.benchesUnfolded`; the state's `factory.off_shift`); 16:
 /// the gate's runs no rows of the timeline (#117: `timeline.hoveredRun` and `lit`'s `hoveredRun`
 /// gone); 17: the gates pane gone (#128: `gates` gone, and `gates` from the state's panes, sizes
-/// and folds).
-pub const INSPECT_VERSION: u32 = 17;
+/// and folds); 18: grouped idle benches (`factory.drawn.idleBenches`).
+pub const INSPECT_VERSION: u32 = 18;
 
 /// The prefix that forwards a command to the timeline widget: `timeline.<its id>`.
 const WIDGET_PREFIX: &str = "timeline.";
@@ -79,6 +79,9 @@ pub struct FactoryDrawn {
     /// The benches folded into one line for want of room (#94): off shift, holding nothing.
     #[serde(default)]
     pub benches_folded: Vec<String>,
+    /// Workers grouped into the idle tile.
+    #[serde(default)]
+    pub idle_benches: Vec<String>,
     /// The benches scrolled out of view (#94).
     #[serde(default)]
     pub benches_hidden: usize,
@@ -591,6 +594,7 @@ impl Shell {
                 shelf: drawn.shelf.clone(),
                 benches: drawn.benches.iter().map(|(key, tickets)| BenchDrawn { key: key.clone(), tickets: tickets.clone() }).collect(),
                 benches_folded: drawn.benches_folded.clone(),
+                idle_benches: drawn.idle_benches.clone(),
                 benches_hidden: drawn.benches_hidden,
                 benches_unfolded: drawn.benches_unfolded.clone(),
                 dock: drawn.dock.clone(),

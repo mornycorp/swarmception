@@ -156,8 +156,9 @@ fn the_pane_draws_what_factory_at_returns() {
     assert_eq!(drawn.upcoming, issues(&asked.upcoming));
     assert_eq!(drawn.dock, issues(&asked.dock));
     assert_eq!(drawn.gate, issues(&asked.gate.crates));
-    let benches: Vec<(String, Vec<u64>)> = asked.benches.iter().map(|b| (b.key.clone(), issues(&b.crates))).collect();
+    let benches: Vec<(String, Vec<u64>)> = asked.benches.iter().filter(|b| !b.grouped_idle()).map(|b| (b.key.clone(), issues(&b.crates))).collect();
     assert_eq!(drawn.benches, benches);
+    assert_eq!(drawn.idle_benches, asked.idle.as_ref().map(|g| g.keys.clone()).unwrap_or_default());
     let runs: Vec<String> = asked.gate.running.iter().chain(&asked.gate.recent).map(|r| r.sub.clone()).collect();
     assert_eq!(drawn.runs, runs);
     assert_eq!(drawn.blocks, asked.shipping.blocks.len());
