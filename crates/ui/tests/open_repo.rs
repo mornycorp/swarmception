@@ -22,7 +22,11 @@ fn scratch(what: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("worker29-open-{what}-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::canonicalize(&dir).unwrap()
+    let canonical = std::fs::canonicalize(&dir).unwrap();
+    // Match Git's spelling, which is what the opened repository reports.
+    #[cfg(windows)]
+    let canonical = PathBuf::from(canonical.to_string_lossy().trim_start_matches(r"\\?\").replace('\\', "/"));
+    canonical
 }
 
 fn git(dir: &Path, args: &[&str]) {

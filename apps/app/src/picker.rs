@@ -102,9 +102,9 @@ pub enum RunError {
 
 /// `start` as a picker may be handed it: an absolute folder whose path is text with no control
 /// characters; else none, and the picker starts where it likes.
-fn start_text(start: Option<&Path>) -> Option<String> {
+fn start_text(platform: Platform, start: Option<&Path>) -> Option<String> {
     let text = start?.to_str()?;
-    (Path::new(text).is_absolute() && !text.chars().any(char::is_control)).then(|| text.to_owned())
+    (absolute(platform, text) && !text.chars().any(char::is_control)).then(|| text.to_owned())
 }
 
 /// The pickers to try on `platform`, in order, starting in `start` (the open repository's
@@ -113,7 +113,7 @@ fn start_text(start: Option<&Path>) -> Option<String> {
 /// PowerShell 7's; none on macOS, whose open panel is AppKit's.
 #[must_use]
 pub fn candidates(platform: Platform, desktop: Option<&str>, start: Option<&Path>) -> Vec<Invocation> {
-    let start = start_text(start);
+    let start = start_text(platform, start);
     let owned = |args: &[&str]| args.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
     match platform {
         Platform::MacOs => Vec::new(),
@@ -148,7 +148,9 @@ fn absolute(platform: Platform, text: &str) -> bool {
     match platform {
         Platform::Windows => {
             let bytes = text.as_bytes();
-            text.starts_with(r"\\") || (bytes.len() >= 3 && bytes.first().is_some_and(u8::is_ascii_alphabetic) && bytes.get(1..3) == Some(b":\\"))
+            text.starts_with(r"\\")
+                || text.starts_with("//")
+                || (bytes.len() >= 3 && bytes.first().is_some_and(u8::is_ascii_alphabetic) && matches!(bytes.get(1..3), Some(b":\\" | b":/")))
         }
         Platform::MacOs | Platform::Unix => text.starts_with('/'),
     }
@@ -275,10 +277,10 @@ mod tests {
         assert!(candidates(Platform::MacOs, None, Some(start)).is_empty(), "AppKit's panel, not a child");
 
         // Windows: PowerShell, the start folder handed over in the environment, never the script.
-        let windows = candidates(Platform::Windows, None, Some(Path::new("/c/swarms")));
+        let windows = candidates(Platform::Windows, None, Some(Path::new("C:/swarms")));
         assert_eq!(programs(&windows), ["powershell", "pwsh"]);
         assert!(windows.iter().all(|p| p.cancelled == 3 && p.args.last().map(String::as_str) == Some(POWERSHELL)));
-        assert!(windows[0].env.contains(&(START_VAR.to_owned(), "/c/swarms".to_owned())));
+        assert!(windows[0].env.contains(&(START_VAR.to_owned(), "C:/swarms".to_owned())));
     }
 
     #[test]
