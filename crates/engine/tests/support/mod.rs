@@ -60,9 +60,10 @@ impl Wakes {
         }
     }
 
-    /// Polls `session` until its reads (the branch's and the issues') have all landed.
+    /// Polls `session` until its reads (`repo.open`'s check of the folder, the branch's and the
+    /// issues') have all landed.
     pub fn settle(&self, session: &mut Session) {
-        self.poll_until(session, "the reads landed", |s| s.job().is_none() && !s.reading_issues());
+        self.poll_until(session, "the reads landed", |s| s.opening().is_none() && s.job().is_none() && !s.reading_issues());
     }
 }
 

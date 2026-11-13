@@ -37,6 +37,8 @@ enum Wait {
     Shot { frames: u32, path: PathBuf },
     /// `ui.loaded`: the window loaded, or this time passed.
     Loaded { until: Instant },
+    /// `repo.open` (#161): its folder's check landed, or this time passed.
+    Opening { until: Instant },
 }
 
 /// Listens on loopback at `port` (0 for any free one) and serves the channel on a thread of its
@@ -82,6 +84,7 @@ impl Control {
                 }
                 Answer::Screenshot(Screenshot { path }) => Wait::Shot { frames: SCREENSHOT_SETTLE, path: path.into() },
                 Answer::Loaded(loaded) => Wait::Loaded { until: Instant::now() + loaded.wait() },
+                Answer::Opening => Wait::Opening { until: Instant::now() + swarmception_ui::control::Loaded::default().wait() },
             };
             self.pending.push(Pending { wait, reply });
         }
@@ -91,28 +94,49 @@ impl Control {
         let settled = self.pending.iter().any(|p| matches!(p.wait, Wait::Loaded { .. })) && shell.settled();
         let now = Instant::now();
         let mut waiting = Vec::new();
-        for mut pending in std::mem::take(&mut self.pending) {
-            match &mut pending.wait {
-                Wait::Shot { frames, .. } if *frames > 1 => *frames -= 1,
-                Wait::Shot { path, .. } => {
-                    take_screenshot(ctx, std::mem::take(path), pending.reply);
-                    continue;
-                }
-                Wait::Loaded { .. } if settled => {
-                    pending.reply.send(inspect(shell));
-                    continue;
-                }
-                Wait::Loaded { until } if now >= *until => {
-                    pending.reply.send(Err(ProtocolError::Ui { message: "the window is still loading".into() }));
-                    continue;
-                }
-                Wait::Loaded { .. } => {}
+        for pending in std::mem::take(&mut self.pending) {
+            if let Some(still) = step(pending, shell, ctx, settled, now) {
+                waiting.push(still);
             }
-            waiting.push(pending);
         }
         self.pending = waiting;
         ctx.request_repaint();
     }
+}
+
+/// A waiting request this frame: answered (none back), or still waiting.
+fn step(mut pending: Pending, shell: &mut Shell, ctx: &egui::Context, settled: bool, now: Instant) -> Option<Pending> {
+    match &mut pending.wait {
+        Wait::Shot { frames, .. } if *frames > 1 => *frames -= 1,
+        Wait::Shot { path, .. } => {
+            take_screenshot(ctx, std::mem::take(path), pending.reply);
+            return None;
+        }
+        Wait::Loaded { .. } if settled => {
+            pending.reply.send(inspect(shell));
+            return None;
+        }
+        Wait::Loaded { until } if now >= *until => {
+            pending.reply.send(Err(ProtocolError::Ui { message: "the window is still loading".into() }));
+            return None;
+        }
+        Wait::Loaded { .. } => {}
+        Wait::Opening { until } => match shell.open_answer() {
+            Some(answer) => {
+                pending.reply.send(match answer {
+                    Ok(status) => serde_json::to_string(&status).map_err(|e| ProtocolError::Ui { message: e.to_string() }),
+                    Err(error) => Err(protocol_error(ShellError::Engine(error))),
+                });
+                return None;
+            }
+            None if now >= *until => {
+                pending.reply.send(Err(ProtocolError::Ui { message: "the folder is still being checked".into() }));
+                return None;
+            }
+            None => {}
+        },
+    }
+    Some(pending)
 }
 
 /// Asks egui for the window's image, saved to `path` once it comes and answered with its size.
@@ -131,7 +155,7 @@ fn take_screenshot(ctx: &egui::Context, path: PathBuf, reply: Responder) {
 fn inspect(shell: &mut Shell) -> Result<String, ProtocolError> {
     match shell.answer("ui.inspect", "") {
         Answer::Now(result) => result.map_err(protocol_error),
-        Answer::Screenshot(_) | Answer::Loaded(_) => Err(ProtocolError::Ui { message: "ui.inspect waited".into() }),
+        Answer::Screenshot(_) | Answer::Loaded(_) | Answer::Opening => Err(ProtocolError::Ui { message: "ui.inspect waited".into() }),
     }
 }
 
@@ -248,6 +272,33 @@ mod tests {
             std::thread::sleep(Duration::from_millis(5));
         }
         client.join().unwrap()
+    }
+
+    /// #161: `repo.open` over the socket is answered once the folder's check lands in the
+    /// background (the UI's thread drawing meanwhile): a refusal as the error it always was, an
+    /// opened repository as its status.
+    #[test]
+    fn repo_open_over_the_socket_answers_once_the_folder_is_checked() {
+        let dir = repo();
+        let plain = std::env::temp_dir().join(format!("swarmception-control-plain-{}", std::process::id()));
+        std::fs::create_dir_all(&plain).unwrap();
+        let ctx = egui::Context::default();
+        let mut shell = Shell::new(&ctx, None);
+        let (asked_plain, asked_repo) = (plain.display().to_string(), dir.display().to_string());
+        let (refused, opened) = drive(&mut shell, &ctx, move |client| {
+            let refused: Result<swarmception_engine::repo_cmds::StatusResult, ClientError> =
+                client.call("repo.open", &serde_json::json!({ "path": asked_plain }));
+            let opened: swarmception_engine::repo_cmds::StatusResult = client.call("repo.open", &serde_json::json!({ "path": asked_repo })).unwrap();
+            (refused, opened)
+        });
+        match refused {
+            Err(ClientError::Protocol(ProtocolError::Engine { error })) => assert!(error.to_string().contains("is not in a git repository"), "{error}"),
+            other => panic!("{other:?}"),
+        }
+        let top = std::fs::canonicalize(&dir).unwrap().display().to_string();
+        assert_eq!((opened.repo.as_deref(), opened.opening, opened.refused), (Some(top.as_str()), None, None));
+        std::fs::remove_dir_all(plain).ok();
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]

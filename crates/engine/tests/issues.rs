@@ -232,7 +232,10 @@ fn in_the_background_the_issues_land_through_poll() {
     let (mut session, wakes) = Wakes::session();
     session.set_github(Github { gh: fake_gh(&tools, &dir, None), cache_dir: None });
     let opened = open(&mut session, &dir);
-    assert!(opened.issues.fetching, "the issues are read in the background");
+    assert_eq!(opened.opening.as_deref(), Some(dir.display().to_string().as_str()), "the folder is checked in the background (#161)");
+    wakes.poll_until(&mut session, "the folder checked", |s| s.opening().is_none());
+    let status: StatusResult = call(&mut session, "repo.status", "");
+    assert!(status.issues.fetching, "the issues are read in the background");
     // Polled only when woken, as the app draws: the last wake comes once the reads are over, so
     // a front end sees the issues stop fetching with no input of its own (#96).
     wakes.settle(&mut session);
@@ -241,7 +244,7 @@ fn in_the_background_the_issues_land_through_poll() {
     assert_eq!(status.error, None);
     assert!(session.has_data().is_ok(), "the branch read");
     assert_eq!((status.issues.source, status.issues.issues), (Some(IssuesSource::Github), 3));
-    assert!(wakes.count() >= 3, "woken for the branch, the issues and the end of their read");
+    assert!(wakes.count() >= 4, "woken for the folder's check, the branch, the issues and the end of their read");
     assert_eq!(bars_of(&mut session, 7)[0].label, "#7 Seven: the ticket's own title");
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(tools).ok();

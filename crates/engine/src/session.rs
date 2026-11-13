@@ -2,7 +2,9 @@
 //! asked for and the timeline built from them. Reads run in the background when the session has
 //! a waker (the UI) and land through [`Session::poll`]; the CLI and tests read in the foreground.
 //! A live watch (#54, [`crate::live`]) fetches on an interval from [`Session::poll`], in the
-//! background, and reads the branch again only when `tracking` or `main` moved.
+//! background, and reads the branch again only when `tracking` or `main` moved. `repo.open`'s
+//! check of the folder (git, with a deadline) runs in the background too with a waker (#161): the
+//! UI's thread never starts a program, and the open lands through [`Session::poll`].
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -92,6 +94,10 @@ pub struct Session {
     recent: Vec<PathBuf>,
     /// Moved on by every repository opened (#69): a front end switches its state to the new one.
     opens: u64,
+    /// `repo.open`'s check going on in the background (#161): the path asked for, and its answer.
+    pub(crate) probing: Option<(String, Receiver<Result<PathBuf, Refusal>>)>,
+    /// The last `repo.open` refused in the background, until the next is asked for (#161).
+    pub(crate) refused: Option<crate::repo_cmds::OpenRefused>,
 }
 
 impl Session {
@@ -199,9 +205,51 @@ impl Session {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// The waker a background job calls when it lands; none for a session that works in the
+    /// foreground.
+    pub(crate) fn waker(&self) -> Option<Waker> {
+        self.waker.clone()
+    }
+
+    /// The folder `repo.open` is checking in the background, if any (#161).
+    #[must_use]
+    pub fn opening(&self) -> Option<&str> {
+        self.probing.as_ref().map(|(path, _)| path.as_str())
+    }
+
+    /// The last `repo.open` refused in the background, until the next is asked for (#161).
+    #[must_use]
+    pub const fn refused(&self) -> Option<&crate::repo_cmds::OpenRefused> {
+        self.refused.as_ref()
+    }
+
+    /// Takes in `repo.open`'s check when it landed: the repository opened, or the refusal kept.
+    fn poll_probe(&mut self) -> bool {
+        let Some((path, receiver)) = &self.probing else { return false };
+        let answer = match receiver.try_recv() {
+            Ok(answer) => answer,
+            Err(TryRecvError::Empty) => return false,
+            Err(TryRecvError::Disconnected) => Err(Refusal::Source { message: "the folder's check stopped without an answer".into() }),
+        };
+        let path = path.clone();
+        self.probing = None;
+        match answer {
+            Ok(top) => {
+                // With a waker the read starts in the background, so this fails only without one.
+                if let Err(error) = crate::repo_cmds::open_checked(self, top) {
+                    self.error = Some(error.to_string());
+                }
+            }
+            Err(refusal) => self.refused = Some(crate::repo_cmds::OpenRefused { path, refusal }),
+        }
+        self.touch();
+        true
+    }
+
     /// Takes in a background read that finished, and the issues that came, then starts a live
     /// check when one is due (#54): whether anything changed.
     pub fn poll(&mut self) -> bool {
+        let probed = self.poll_probe();
         let (moved, changed) = self.issues.poll();
         if changed {
             self.rebuild();
@@ -210,7 +258,7 @@ impl Session {
             self.touch();
         }
         let landed = self.poll_tracking();
-        self.tick(Instant::now()) || landed || moved
+        self.tick(Instant::now()) || landed || moved || probed
     }
 
     /// Starts a live check when one is due at `now` and nothing else is being read: only for a

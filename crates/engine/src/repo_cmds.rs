@@ -67,6 +67,19 @@ pub struct StatusResult {
     pub errors: Vec<LineErrorWire>,
     /// The repository's GitHub issues: where from, how many, the fetch going on, why it failed.
     pub issues: IssuesStatus,
+    /// The folder `repo.open` is checking in the background (#161: a front end's session); the
+    /// repository open stays open meanwhile.
+    pub opening: Option<String>,
+    /// The last `repo.open` refused in the background, until the next is asked for (#161).
+    pub refused: Option<OpenRefused>,
+}
+
+/// A `repo.open` refused once its check landed in the background (#161): the path asked for and
+/// why. The repository open stays open.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct OpenRefused {
+    pub path: String,
+    pub refusal: Refusal,
 }
 
 fn status(session: &Session) -> StatusResult {
@@ -75,6 +88,8 @@ fn status(session: &Session) -> StatusResult {
         job: session.job.as_ref().map(|(job, _)| *job),
         error: session.error.clone(),
         issues: session.issues.status(),
+        opening: session.opening().map(str::to_owned),
+        refused: session.refused.clone(),
         ..StatusResult::default()
     };
     let Some(loaded) = &session.loaded else { return status };
@@ -130,6 +145,10 @@ pub fn check(path: &str) -> Result<PathBuf, Refusal> {
 /// clone ([`check`]) is refused before anything changes: the repository open stays open, its
 /// watch going on (#69). Opened, the live watch starts afresh at the new repository's default
 /// (#69: the old one's stops), and the repository goes first in `repo.recent`.
+///
+/// A session with a waker (a front end's) checks the folder in the background (#161): the answer
+/// comes at once with `opening` set, and the repository opens, or `refused` says why not, when
+/// the check lands ([`Session::poll`]). Another `repo.open` meanwhile takes its place.
 pub struct Open;
 
 impl Command for Open {
@@ -139,21 +158,38 @@ impl Command for Open {
     type Result = StatusResult;
 
     fn run(session: &mut Session, params: OpenParams) -> Result<StatusResult, EngineError> {
-        let top = check(&params.path)?;
-        session.remember(&top);
-        session.repo = Some(top);
-        session.loaded = None;
-        session.error = None;
-        // The old repository's read and watch stop: what they bring is dropped.
-        session.job = None;
-        session.live = LiveState::default();
-        session.opened();
-        session.rebuild();
-        let read = session.start(Job::Read);
-        session.start_issues(true);
-        read?;
+        session.refused = None;
+        let Some(waker) = session.waker() else {
+            session.probing = None;
+            let top = check(&params.path)?;
+            return open_checked(session, top);
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let path = params.path.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(check(&path));
+            waker();
+        });
+        session.probing = Some((params.path, receiver));
         Ok(status(session))
     }
+}
+
+/// Opens `top`, a folder [`check`] passed: what `repo.open` does once the check is in.
+pub(crate) fn open_checked(session: &mut Session, top: PathBuf) -> Result<StatusResult, EngineError> {
+    session.remember(&top);
+    session.repo = Some(top);
+    session.loaded = None;
+    session.error = None;
+    // The old repository's read and watch stop: what they bring is dropped.
+    session.job = None;
+    session.live = LiveState::default();
+    session.opened();
+    session.rebuild();
+    let read = session.start(Job::Read);
+    session.start_issues(true);
+    read?;
+    Ok(status(session))
 }
 
 /// The most repositories `repo.recent` lists.
