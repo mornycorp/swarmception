@@ -44,6 +44,7 @@ use crate::factory_paint::{Drawn, Marks, Selected, WallView, paint};
 use crate::factory_stats::StatsStrip;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
+use crate::part::Part;
 use crate::timeline::Looking;
 
 /// How fast play runs: seconds of the swarm a second.
@@ -467,7 +468,7 @@ impl FactoryPane {
     /// ← / → (a step back or on) and Home / End (the first or last event) while the factory has
     /// the keyboard, which a press anywhere in it takes, as a press on the timeline takes it there.
     fn keys(&mut self, ui: &egui::Ui, pane: egui::Rect) {
-        let id = ui.scope_id().with("factory-keys");
+        let id = ui.scope_id().with(Part::FactoryKeys);
         ui.interact(pane, id, egui::Sense::focusable_noninteractive());
         let pressed_here = ui.input(|i| (i.pointer.any_pressed() || i.pointer.any_click()) && i.pointer.interact_pos().is_some_and(|p| pane.contains(p)));
         if pressed_here {
@@ -599,7 +600,7 @@ impl FactoryPane {
         }
         buttons.push(("play", response.rect));
         let speed = fixed(ui, 96.0, |ui| {
-            egui::ComboBox::from_id_salt("factory-speed").selected_text(view.speed.label()).width(96.0).truncate().show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(Part::FactorySpeed).selected_text(view.speed.label()).width(96.0).truncate().show_ui(ui, |ui| {
                 for speed in Speed::ALL {
                     ui.selectable_value(&mut view.speed, speed, speed.label());
                 }
@@ -623,7 +624,7 @@ impl FactoryPane {
         }
         buttons.push(("on", on.rect));
         let by = fixed(ui, 176.0, |ui| {
-            egui::ComboBox::from_id_salt("factory-steps").selected_text(format!("by {steps}")).width(176.0).truncate().show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(Part::FactorySteps).selected_text(format!("by {steps}")).width(176.0).truncate().show_ui(ui, |ui| {
                 for kind in Steps::ALL {
                     ui.selectable_value(&mut view.steps, kind, kind.label());
                 }

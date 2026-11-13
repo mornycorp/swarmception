@@ -23,6 +23,7 @@ pub mod icons;
 pub mod layout;
 pub mod menu;
 mod open;
+mod part;
 pub mod saved;
 pub mod shot;
 pub mod theme;
@@ -37,6 +38,7 @@ use swarmception_domain::timeline::Link;
 use swarmception_domain::{Collapse, Grouping, RowsSpec};
 use swarmception_engine::{Github, Session};
 
+use crate::part::Part;
 use swarmception_domain::details::Subject;
 use swarmception_engine::details_cmds::{DetailsParams, Get as GetDetails};
 use swarmception_engine::engine_cmds::NoParams;
@@ -619,12 +621,12 @@ impl Shell {
             ui.ctx().request_repaint_after(wait);
         }
         if !self.native_menu {
-            egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+            egui::Panel::top(Part::MenuBar.id()).show(ui, |ui| self.menu_bar(ui));
             self.command_shortcuts(ui.ctx());
         }
         self.opening_ui(ui.ctx());
-        egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| self.status_bar(ui));
+        egui::Panel::top(Part::Toolbar.id()).show(ui, |ui| self.toolbar(ui));
+        egui::Panel::bottom(Part::StatusBar.id()).show(ui, |ui| self.status_bar(ui));
         if self.ui.panes.factory {
             self.step_factory(ui.ctx());
         }
@@ -778,7 +780,7 @@ impl Shell {
         let folded = self.ui.folded.details.or(defaults.folded.details).unwrap_or(false);
         let wanted = self.ui.sizes.details.map_or(defaults.details, points_f32);
         let shown = if folded {
-            let shown = egui::Panel::right("details-strip").resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
+            let shown = egui::Panel::right(Part::DetailsStrip.id()).resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
                 ui.vertical_centered(|ui| {
                     let chevron = ui.add(egui::Button::new(icons::CHEVRON_LEFT).frame(false)).on_hover_text("Open the Details");
                     let icon =
@@ -793,7 +795,7 @@ impl Shell {
             shown.response.rect.width()
         } else {
             let width = ui.available_width();
-            let shown = egui::Panel::right("details")
+            let shown = egui::Panel::right(Part::Details.id())
                 .resizable(true)
                 .default_size(wanted)
                 .size_range(220.0..=(width - layout::CENTRAL_LEAST_WIDTH).max(220.0))
@@ -891,7 +893,7 @@ impl Shell {
     /// Band `kind` as a panel `height` high at the bottom of what is left: its contents, or its
     /// header alone when folded; open, its top edge drags its height. Its height drawn.
     fn band(&mut self, ui: &mut egui::Ui, kind: BandKind, height: f32, spec: &layout::Band) -> f32 {
-        let shown = egui::Panel::bottom(kind.name()).resizable(false).exact_size(height).show(ui, |ui| {
+        let shown = egui::Panel::bottom(Part::Band(kind).id()).resizable(false).exact_size(height).show(ui, |ui| {
             if spec.folded {
                 ui.horizontal_centered(|ui| {
                     if layout::fold_title(ui, kind.icon(), kind.title(), layout::Chevron::Folded).clicked() {
@@ -905,7 +907,7 @@ impl Shell {
         let rect = shown.response.rect;
         if !spec.folded {
             let edge = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() - 3.0), egui::pos2(rect.right(), rect.top() + 3.0));
-            let response = ui.interact(edge, ui.scope_id().with(("band-edge", kind.name())), egui::Sense::drag());
+            let response = ui.interact(edge, ui.scope_id().with((Part::BandEdge(kind),)), egui::Sense::drag());
             if response.hovered() || response.dragged() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
                 ui.painter().hline(rect.x_range(), rect.top(), ui.visuals().widgets.hovered.fg_stroke);
@@ -1164,7 +1166,7 @@ impl Shell {
             return;
         }
         let mut interval = self.live.interval_seconds;
-        egui::ComboBox::from_id_salt("live-interval").width(56.0).selected_text(interval_text(interval)).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt(Part::LiveInterval).width(56.0).selected_text(interval_text(interval)).show_ui(ui, |ui| {
             for seconds in LIVE_INTERVALS {
                 ui.selectable_value(&mut interval, seconds, interval_text(seconds));
             }
@@ -1262,8 +1264,8 @@ impl Shell {
 /// A band under the timeline (#68), top to bottom in [`BandKind::ALL`]: a pane that slots in
 /// under the timeline adds itself here, with its least height, default, fold and size, and
 /// [`layout::share`] gives it its room.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BandKind {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum BandKind {
     Factory,
 }
 

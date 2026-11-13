@@ -25,6 +25,7 @@ use swarmception_engine::workers_cmds::Compare;
 use swarmception_model::Timestamp;
 
 use crate::icons;
+use crate::part::Part;
 use crate::timeline::Hover;
 
 /// A column of the table, which it can be sorted by.
@@ -416,7 +417,7 @@ impl WorkersPane {
         // Up from the bottom, over the bands under the timeline: the timeline's rows stay in
         // sight, where a hovered worker's tickets light up.
         let default = pos2(screen.left() + ((screen.width() - width).max(32.0) / 2.0), screen.bottom() - 36.0);
-        let id = egui::Id::unique("workers-pane");
+        let id = Part::WorkersWindow.id();
         let window = egui::Window::new(format!("{}  Workers: model × effort", icons::WORKERS))
             .id(id)
             .open(open)
@@ -575,7 +576,7 @@ impl WorkersPane {
         let mut x = rect.left();
         for (column, title, w, tip) in COLUMNS {
             let cell = Rect::from_min_size(pos2(x, rect.top()), vec2(w, HEADER));
-            let response = ui.interact(cell, ui.scope_id().with(("workers-header", title)), Sense::click());
+            let response = ui.interact(cell, ui.scope_id().with((Part::WorkersHeader, column)), Sense::click());
             let mark = match (view.sort, view.ascending) {
                 (Some(c), true) if c == column => " ▲",
                 (Some(c), false) if c == column => " ▼",
