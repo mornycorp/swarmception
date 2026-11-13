@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 20: G33 takes swarm-core's shared palette (#158); G34 opened, swarm-core's UI contract, six issues) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 21: G34 done, the UI as swarm-core's contract has it, six issues; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G34 The UI as swarm-core's contract has it](#g34-the-ui-as-swarm-cores-contract-has-it) | open | #165, #161, #160, #164, #162, #163 | 14–28 h |
+| — | [G34 The UI as swarm-core's contract has it](#g34-the-ui-as-swarm-cores-contract-has-it) | done | #160–#165 | |
 | — | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | done | #152, #154 | |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
 | — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
@@ -454,23 +454,24 @@ marked **Human:** with what is needed.
 - **Why:** a review against swarm-core's docs/app-architecture.md › The UI is a client and State on
   disk (the owner's ask, 2026-11-13): the window's size and layout are the app's choice and differ
   freely, but six of the contract's rules aren't met.
-- **Left**, in rank order:
-  1. **#165** A saved state from a newer version is refused, never read and written over
-     (`ui/src/saved.rs` reads it and skips what it doesn't know); a migration per earlier
-     version. 2–4 h.
-  2. **#161** The UI calls commands on workers: the Factory, Details and stats call the engine on
-     the UI thread and wait (`factory.rs`, `details.rs`, `factory_stats.rs`). 4–8 h.
-  3. **#160** Menus and shortcuts from the registry, greyed with the `enabled` check's reason: the
-     File and View menus (egui and macOS) are hand-coded `MenuAction`s. 3–6 h.
-  4. **#164** One atomic writer and the process module in the lowest layer that touches the
-     outside; the UI crate writes no file (`saved.rs`), and a check holds the rest to it. 2–4 h.
-  5. **#162** Words from a catalog, and no colour made in drawing code (the legend's `#5C5F70`,
-     black, white), with a check whose allow-lists only shrink. 3–5 h.
-  6. **#163** egui ids are typed salts (an enum's variant), not strings. 1 h.
+- **Done** (batch 21, all six):
+  - **#165** (PR #167): a state file this build can't wholly read (a newer build's, corrupt,
+    another repository's, a section that doesn't read) is left alone, never written over
+    (`Keeping::LeftAlone`); older ones migrate; `recent.json` likewise.
+  - **#161** (PR #168): `repo.open`'s check of the folder runs in the background with a waker
+    (`opening`, `refused`); the window's `repo.open` over the socket answers when it lands. The
+    panes' per-frame calls only touch memory, measured at 0.3–2.6 ms on mc-engine, and stay.
+  - **#160** (PR #169): File's commands from the registry (`Command::MENU`, `engine.states` with
+    the reason), in the window and on macOS, their shortcuts too; View's state toggles stay
+    hand-placed, each said why.
+  - **#164** (PR #170): `source` is the layer that touches the outside: `files` (the one atomic
+    writer) and `process` (the one runner); `cargo xtask writes` in `ci`.
+  - **#163** (PR #171): egui's state keyed by `part::Part`, never a string; a test holds it.
+  - **#162** (PR #172): words from `catalog` (236 entries), the literals left counted per file
+    with a reason, only going down; no colour made in drawing code.
+- **Measured:** 437 tests, `cargo nextest run --workspace` (2026-11-13); `ci` is 7 steps.
 - **Evidence:** swarm-core d4df5a2's skeleton (`apps/{{app}}/src/window.rs`, `ui_state.rs`,
   `crates/ui/src/draw.rs`, `shell.rs`, `jobs.rs`) beside Swarmception's `crates/ui` and `apps/app`.
-- **Estimate:** 14–28 agent-hours, in the six issues.
-
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
@@ -622,6 +623,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Batch 21: G34 done (#160–#165); no gaps open |
 | 2026-11-13 | minor | Batch 20: G33 gains the shared palette (#158); G34 opened (#160–#165) |
 | 2026-11-13 | minor | Batch 19: G33 done (#154); no gaps open |
 | 2026-11-13 | minor | Batch 18: G33 partial (#152; #154 open); swarm-core at 57fb6a2 (#150) |
