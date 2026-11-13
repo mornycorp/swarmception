@@ -16,3 +16,4 @@
 {"event":"merge","issue":152,"mr":153,"sub":"gate-153","t":"2026-11-13T14:49:12Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #153","sub":"gate-153","t":"2026-11-13T14:49:18Z"}
 {"event":"claim","issue":154,"mr":156,"t":"2026-11-13T14:53:36Z"}
+{"event":"work","issue":154,"t":"2026-11-13T14:53:38Z"}
