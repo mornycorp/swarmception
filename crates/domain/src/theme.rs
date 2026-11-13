@@ -78,9 +78,12 @@ impl Rgb {
     }
 }
 
-/// The two looks a theme has: egui's dark and light.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The two looks a theme has: egui's dark and light. Dark until the window says otherwise
+/// (#154: `theme.set`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
 pub enum Look {
+    #[default]
     Dark,
     Light,
 }

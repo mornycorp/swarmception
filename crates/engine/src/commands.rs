@@ -35,6 +35,7 @@ static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
         Entry::of::<live_cmds::Check>(),
         Entry::of::<live_cmds::CarryBars>(),
         Entry::of::<theme_cmds::Get>(),
+        Entry::of::<theme_cmds::Set>(),
     ]
 });
 

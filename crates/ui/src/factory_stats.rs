@@ -19,7 +19,7 @@ use swarmception_engine::Session;
 use swarmception_engine::stats_cmds::{At as StatsAt, Get as GetStats, GetParams as StatsParams};
 use swarmception_model::Timestamp;
 
-use crate::factory_chip::{PASSED, WORKING};
+use crate::factory_chip::{PASSED, WORKING, drawn};
 
 /// What the strip drew, for a test to check against `stats.get`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -202,7 +202,7 @@ impl StatsStrip {
             hours(stats.on_shift_seconds),
             stats.quiet_gaps
         );
-        ui.label(egui::RichText::new(&headline).size(22.0).strong().color(PASSED)).on_hover_text(&how);
+        ui.label(egui::RichText::new(&headline).size(22.0).strong().color(drawn(PASSED, ui.visuals()))).on_hover_text(&how);
         let landed = format!("{} landed · {} active h", stats.landed, hours(stats.active_seconds));
         ui.vertical(|ui| {
             ui.add_space(2.0);
@@ -221,6 +221,7 @@ impl StatsStrip {
         let painter = ui.painter_at(rect);
         let weak = ui.visuals().weak_text_color();
         let chosen = ui.visuals().selection.stroke.color;
+        let (working, passed) = (drawn(WORKING, ui.visuals()), drawn(PASSED, ui.visuals()));
         painter.rect_stroke(rect, 2.0, Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color), StrokeKind::Inside);
         let max = stats.hours.iter().filter_map(|h| h.landed_per_active_hour).fold(0.0_f64, f64::max);
         let step = rect.width() / n.max(1) as f32;
@@ -230,7 +231,7 @@ impl StatsStrip {
             let bar = Rect::from_min_max(pos2(x + 0.5, rect.top() + 2.0), pos2(x + step - 0.5, rect.bottom() - 2.0));
             let value = hour.landed_per_active_hour.unwrap_or(0.0);
             let fill = if max > 0.0 { (value / max) as f32 } else { 0.0 };
-            let colour = if Some(i) == marked { WORKING } else { PASSED.gamma_multiply(0.75) };
+            let colour = if Some(i) == marked { working } else { passed.gamma_multiply(0.75) };
             if hour.active_seconds > 0 || hour.landed > 0 {
                 let top = bar.bottom() - (bar.height() * fill).max(1.5);
                 painter.rect_filled(bar.with_min_y(top), 1.0, colour);
@@ -238,7 +239,7 @@ impl StatsStrip {
                 painter.hline(bar.x_range(), bar.bottom(), Stroke::new(1.0, weak.gamma_multiply(0.5)));
             }
             if Some(i) == marked {
-                painter.rect_stroke(bar.expand2(vec2(0.5, 1.5)), 1.0, Stroke::new(1.0, WORKING), StrokeKind::Outside);
+                painter.rect_stroke(bar.expand2(vec2(0.5, 1.5)), 1.0, Stroke::new(1.0, working), StrokeKind::Outside);
             }
             self.mark_clicked(&painter, (i, hour.start), bar, (rect.bottom(), chosen));
             self.drawn.hours.push((hour.start, bar));

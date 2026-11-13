@@ -303,7 +303,7 @@ fn a_tickets_one_bar_draws_its_stages_as_its_strip() {
     let track = &bars.tracks[0];
     let at = track.ranges.iter().position(|r| r.range == place).unwrap();
     let strip = track.strips.iter().find(|s| s.bar == at).expect("its strip");
-    let [r, g, b] = bar.segments[0].colour;
+    let [r, g, b] = bar.segments[0].colour.dark;
     let colours: Vec<[u8; 4]> = strip.segments.iter().map(|s| s.colour).collect();
     assert_eq!(colours, [[r, g, b, 255]], "claimed, all along");
     // The tooltip over the claimed stretch names it.

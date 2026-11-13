@@ -11,6 +11,7 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::{Duration, Instant};
 
 use swarmception_domain::rows::{Style, rows_with};
+use swarmception_domain::theme::Look;
 use swarmception_domain::timeline::{Built, build};
 use swarmception_domain::{Activity, Node, RowsSpec};
 use swarmception_model::Timestamp;
@@ -68,6 +69,8 @@ pub struct Session {
     pub(crate) repo: Option<PathBuf>,
     pub(crate) loaded: Option<Loaded>,
     pub(crate) spec: RowsSpec,
+    /// The look the timeline's colours are built in (#154): the window's, by `theme.set`.
+    pub(crate) look: Look,
     pub(crate) rows: Vec<Node>,
     pub(crate) built: Option<Built>,
     pub(crate) error: Option<String>,
@@ -177,6 +180,12 @@ impl Session {
     /// The command's errors.
     pub fn call<C: Command>(&mut self, params: C::Params) -> Result<C::Result, EngineError> {
         crate::command::call::<C>(self, params)
+    }
+
+    /// The look the timeline's colours are built in (#154).
+    #[must_use]
+    pub const fn look(&self) -> Look {
+        self.look
     }
 
     /// The rows' generation and the state's revision: when the first moves, build the timeline
@@ -378,7 +387,7 @@ impl Session {
         }
         self.rows = self.loaded.as_ref().map(|l| rows_with(&l.activity, &l.tracking.merges, self.spec, &self.issues.issues)).unwrap_or_default();
 
-        self.built = match build(&self.rows, !self.spec.collapse.is_on()) {
+        self.built = match build(&self.rows, !self.spec.collapse.is_on(), self.look) {
             Ok(built) => Some(built),
             Err(error) => {
                 self.error = Some(format!("the timeline refused the rows: {error}"));

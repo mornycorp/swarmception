@@ -1,7 +1,7 @@
 //! The one source of the swarm's colours (#15, the owner's): the timeline and the factory both
 //! take them from here, so a ticket and a phase look the same in both. Every one is the
-//! [`theme`]'s (#152, the owner's: swarm-core's recommendations, in place of scheme B, #40), in
-//! its dark look; `theme.get` gives each one's light.
+//! [`theme`]'s (#152, the owner's: swarm-core's recommendations, in place of scheme B, #40), a
+//! [`Paint`]: its colour in each look, dark and light (#154), drawn in the look the window is in.
 //!
 //! - **A ticket's own colour** ([`ticket_colour`]): its issue number's pick of the theme's
 //!   [`theme::RANGE_32`], the range for identifiers side by side (Glasbey et al.'s set, via
@@ -24,61 +24,99 @@
 //!   merges the widget's default, 0, as before.
 
 use crate::rows::Style;
-use crate::theme::{self, Look, Token};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::theme::{self, Look, Range, Token};
 
 /// A colour as red, green and blue bytes (sRGB).
-pub type Rgb = [u8; 3];
+pub type Bytes = [u8; 3];
 
 /// A theme colour as bytes.
 #[must_use]
-pub const fn bytes(colour: theme::Rgb) -> Rgb {
+pub const fn bytes(colour: theme::Rgb) -> Bytes {
     [colour.r, colour.g, colour.b]
 }
 
-/// A token's colour in the dark look, as bytes.
-const fn dark(token: Token) -> Rgb {
-    bytes(token.of(Look::Dark))
+/// One of the swarm's colours in each look (#154): a theme token's dark and light, or a range
+/// entry's, so the window draws the one its look takes ([`Paint::of`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, JsonSchema)]
+pub struct Paint {
+    /// Its colour in the dark look.
+    pub dark: Bytes,
+    /// Its colour in the light look.
+    pub light: Bytes,
+}
+
+impl Paint {
+    /// A token's colour in each look.
+    #[must_use]
+    pub const fn token(token: Token) -> Self {
+        Self { dark: bytes(token.dark), light: bytes(token.light) }
+    }
+
+    /// `range`'s pick of `id` in each look: the same index in both, so an identifier keeps its
+    /// colour family when the look changes.
+    #[must_use]
+    pub fn pick(range: &Range, id: impl std::fmt::Display + Copy) -> Self {
+        Self { dark: bytes(range.dark.pick(id)), light: bytes(range.light.pick(id)) }
+    }
+
+    /// `range`'s `n`th entry in each look.
+    #[must_use]
+    pub fn at(range: &Range, n: u64) -> Self {
+        Self { dark: bytes(range.dark.at(n)), light: bytes(range.light.at(n)) }
+    }
+
+    /// Its colour in `look`.
+    #[must_use]
+    pub const fn of(self, look: Look) -> Bytes {
+        match look {
+            Look::Dark => self.dark,
+            Look::Light => self.light,
+        }
+    }
 }
 
 /// Claimed: `warning`, something to look at that hasn't failed.
-pub const CLAIMED: Rgb = dark(theme::WARNING);
+pub const CLAIMED: Paint = Paint::token(theme::WARNING);
 /// Waiting for merge: `accent`.
-pub const WAITING: Rgb = dark(theme::ACCENT);
+pub const WAITING: Paint = Paint::token(theme::ACCENT);
 /// Sent back: `error`.
-pub const SENT_BACK: Rgb = dark(theme::ERROR);
+pub const SENT_BACK: Paint = Paint::token(theme::ERROR);
 /// Stopped: `muted`.
-pub const STOPPED: Rgb = dark(theme::MUTED);
+pub const STOPPED: Paint = Paint::token(theme::MUTED);
 /// A merge onto main: `success`, one colour for all of them.
-pub const MAIN_MERGE: Rgb = dark(theme::SUCCESS);
+pub const MAIN_MERGE: Paint = Paint::token(theme::SUCCESS);
 /// What is no ticket's (a merge onto main that no ticket names): `muted`.
-pub const NO_TICKET: Rgb = dark(theme::MUTED);
+pub const NO_TICKET: Paint = Paint::token(theme::MUTED);
 /// Working, on a phase's border and strip (#42, the factory's own, and the timeline's strip since
 /// #110): `strong`, so it shows on a bar in its ticket's colour.
-pub const WORKING: Rgb = dark(theme::STRONG);
+pub const WORKING: Paint = Paint::token(theme::STRONG);
 /// In a gate run (#42, the factory's own; the timeline's strip since #110): Swarmception's
 /// `gate`, a magenta.
-pub const GATING: Rgb = dark(theme::GATE);
+pub const GATING: Paint = Paint::token(theme::GATE);
 /// An idle bench: Swarmception's `idle`, a quiet sea green.
-pub const IDLE: Rgb = dark(theme::IDLE);
+pub const IDLE: Paint = Paint::token(theme::IDLE);
 
-/// A ticket's own colour: [`theme::RANGE_32`]'s pick of its issue number in the dark look, so the
-/// same issue is the same colour everywhere.
+/// A ticket's own colour: [`theme::RANGE_32`]'s pick of its issue number, so the same issue is
+/// the same colour everywhere.
 #[must_use]
-pub fn ticket_colour(issue: u64) -> Rgb {
-    bytes(theme::RANGE_32.of(Look::Dark).pick(issue))
+pub fn ticket_colour(issue: u64) -> Paint {
+    Paint::pick(&theme::RANGE_32, issue)
 }
 
 /// The `n`th colour of a series in order (the Workers pane's model × effort groups): the theme's
 /// [`theme::RANGE_8`] by number.
 #[must_use]
-pub fn series_colour(n: u64) -> Rgb {
-    bytes(theme::RANGE_8.of(Look::Dark).at(n))
+pub fn series_colour(n: u64) -> Paint {
+    Paint::at(&theme::RANGE_8, n)
 }
 
 /// The colour a bar of `style` is drawn in, `ticket` the ticket it is (none for a merge onto
 /// main): a ticket's working and its merge in its own colour, the rest fixed.
 #[must_use]
-pub fn style_colour(style: Style, ticket: Option<u64>) -> Rgb {
+pub fn style_colour(style: Style, ticket: Option<u64>) -> Paint {
     let own = || ticket.map_or(NO_TICKET, ticket_colour);
     match style {
         Style::MainMerge => MAIN_MERGE,
@@ -115,16 +153,16 @@ pub const fn importance(style: Style) -> u8 {
 
 /// Black or white, whichever contrasts more with `fill`: text on it.
 #[must_use]
-pub fn ink(fill: Rgb) -> Rgb {
+pub fn ink(fill: Bytes) -> Bytes {
     if contrast(fill, BLACK) >= contrast(fill, WHITE) { BLACK } else { WHITE }
 }
 
-const BLACK: Rgb = [0x1a, 0x1a, 0x1a];
-const WHITE: Rgb = [0xff, 0xff, 0xff];
+const BLACK: Bytes = [0x1a, 0x1a, 0x1a];
+const WHITE: Bytes = [0xff, 0xff, 0xff];
 
 /// The contrast ratio of two colours, 1 to 21 (WCAG 2's, as the theme measures it).
 #[must_use]
-pub fn contrast([r1, g1, b1]: Rgb, [r2, g2, b2]: Rgb) -> f64 {
+pub fn contrast([r1, g1, b1]: Bytes, [r2, g2, b2]: Bytes) -> f64 {
     theme::Rgb::new(r1, g1, b1).contrast(theme::Rgb::new(r2, g2, b2))
 }
 
@@ -132,24 +170,26 @@ pub fn contrast([r1, g1, b1]: Rgb, [r2, g2, b2]: Rgb) -> f64 {
 mod tests {
     use super::*;
 
-    const DARK: Rgb = [0x1b, 0x1b, 0x1b];
+    const LOOKS: [Look; 2] = [Look::Dark, Look::Light];
 
-    /// #152: a ticket's colour is range32's pick of its number, the same on every call, and the
-    /// pick swarm-core pins (FNV-1a over its decimal digits).
+    /// #152, #154: a ticket's colour is range32's pick of its number in each look, the same index
+    /// in both, and the pick swarm-core pins (FNV-1a over its decimal digits).
     #[test]
-    fn a_tickets_colour_is_range32s_pick_of_its_number() {
-        let range = theme::RANGE_32.of(Look::Dark);
+    fn a_tickets_colour_is_range32s_pick_of_its_number_in_each_look() {
         assert_eq!(ticket_colour(170), ticket_colour(170), "the same issue, the same colour");
         for issue in [0, 7, 169, 170, 4_000, u64::MAX] {
-            assert_eq!(ticket_colour(issue), bytes(range.pick(issue)));
-            assert_eq!(ticket_colour(issue), bytes(range.entries()[range.index_of(issue)]));
+            for look in LOOKS {
+                let range = theme::RANGE_32.of(look);
+                assert_eq!(ticket_colour(issue).of(look), bytes(range.pick(issue)), "#{issue} {look:?}");
+                assert_eq!(ticket_colour(issue).of(look), bytes(range.entries()[range.index_of(issue)]));
+            }
         }
-        let used: std::collections::BTreeSet<Rgb> = (1..=200).map(ticket_colour).collect();
+        let used: std::collections::BTreeSet<Paint> = (1..=200).map(ticket_colour).collect();
         assert!(used.len() >= 28, "200 tickets spread over the range: {}", used.len());
     }
 
-    /// #152: every stage's colour is a theme token's, the one named for what it means; a series is
-    /// range8's in order.
+    /// #152, #154: every stage's colour is a theme token's in each look, the one named for what it
+    /// means, and reads on that look's background; a series is range8's in order.
     #[test]
     fn the_stages_are_the_tokens_named_for_what_they_mean() {
         let named = [
@@ -164,18 +204,23 @@ mod tests {
             (IDLE, theme::IDLE),
         ];
         for (colour, token) in named {
-            assert_eq!(colour, bytes(token.dark), "{}", token.name);
-            assert!(contrast(colour, DARK) >= theme::TEXT_CONTRAST, "{} reads on the dark background", token.name);
+            for look in LOOKS {
+                assert_eq!(colour.of(look), bytes(token.of(look)), "{} {look:?}", token.name);
+                let background = bytes(theme::BACKGROUND.of(look));
+                assert!(contrast(colour.of(look), background) >= theme::TEXT_CONTRAST, "{} reads on the {look:?} background", token.name);
+            }
         }
-        assert_eq!(series_colour(0), bytes(theme::RANGE_8.dark.at(0)));
+        assert_eq!(series_colour(0), Paint { dark: bytes(theme::RANGE_8.dark.at(0)), light: bytes(theme::RANGE_8.light.at(0)) });
         assert_eq!(series_colour(9), series_colour(1), "a series wraps round range8");
     }
 
     #[test]
     fn a_label_reads_on_every_tickets_colour() {
-        for &entry in theme::RANGE_32.dark.entries() {
-            let colour = bytes(entry);
-            assert!(contrast(colour, ink(colour)) >= theme::FILL_CONTRAST, "the label on {colour:02x?}: {:.1}", contrast(colour, ink(colour)));
+        for look in LOOKS {
+            for &entry in theme::RANGE_32.of(look).entries() {
+                let colour = bytes(entry);
+                assert!(contrast(colour, ink(colour)) >= theme::FILL_CONTRAST, "the label on {colour:02x?}: {:.1}", contrast(colour, ink(colour)));
+            }
         }
     }
 

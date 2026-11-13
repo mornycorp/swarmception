@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Issues, Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Span, Sub, stop_reason};
-use crate::colours::{NO_TICKET, Rgb, ticket_colour};
+use crate::colours::{NO_TICKET, Paint, ticket_colour};
 use crate::gates::Lane;
 use crate::rows::duration;
 use crate::stats::{cause_of, failure_label, is_ready, step_of};
@@ -111,7 +111,7 @@ pub struct Crate {
     /// Its title on GitHub, when the issues fetched have it ([`titled`]).
     pub title: Option<String>,
     /// Its own colour, the same in every scene and on the timeline: [`ticket_colour`].
-    pub colour: Rgb,
+    pub colour: Paint,
     pub state: CrateState,
     /// When it came into this state; up next, when its first event comes.
     pub since: Timestamp,
@@ -289,7 +289,7 @@ pub struct Block {
     /// ticket names (setup, docs); else the commit's start.
     pub mark: String,
     /// Its ticket's colour; [`NO_TICKET`] without one, so it reads as not a ticket.
-    pub colour: Rgb,
+    pub colour: Paint,
     pub age: i64,
     /// Its ticket's time from its first claim (else its first stretch) to this merge, in
     /// seconds: what its brick's size says (#32). None for a merge no ticket names, or a ticket
@@ -410,7 +410,7 @@ pub struct Happening {
     pub kind: HappeningKind,
     pub issue: Option<u64>,
     /// The ticket's colour, for one.
-    pub colour: Option<Rgb>,
+    pub colour: Option<Paint>,
     pub text: String,
 }
 
@@ -1772,7 +1772,7 @@ pub(crate) mod tests {
         .filter_map(parse_merge)
         .collect();
         let scene = scene(&Activity::of(&sample()), &merges, at("2026-10-31T05:00:00Z"), DEFAULT_RECENT);
-        let marks: Vec<(&str, Rgb)> = scene.shipping.blocks.iter().map(|b| (b.mark.as_str(), b.colour)).collect();
+        let marks: Vec<(&str, Paint)> = scene.shipping.blocks.iter().map(|b| (b.mark.as_str(), b.colour)).collect();
         assert_eq!(marks, [("#170", ticket_colour(170)), ("!174", NO_TICKET), ("a1b2c3d", NO_TICKET)]);
         let setup = &scene.shipping.blocks[1];
         assert_eq!(setup.issue, None);
@@ -1783,7 +1783,7 @@ pub(crate) mod tests {
     fn colours_short_times_and_note_fields() {
         assert_eq!(ticket_colour(170), ticket_colour(170));
         assert_ne!(ticket_colour(170), ticket_colour(171));
-        assert_ne!(ticket_colour(u64::MAX), [0, 0, 0]);
+        assert_ne!(ticket_colour(u64::MAX).dark, [0, 0, 0]);
         assert_eq!([short(45), short(720), short(3_900), short(90_000), short(-1)], ["45s", "12m", "1h05", "1d01h", "0s"]);
         assert_eq!(note_field("rc=1; cause=build; kind=smoke (unsure)", "cause").as_deref(), Some("build"));
         assert_eq!(note_field("rc=1; kind=smoke (unsure)", "kind").as_deref(), Some("smoke (unsure)"));

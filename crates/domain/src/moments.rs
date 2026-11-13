@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{MainMerge, Timestamp};
 
 use crate::activity::Activity;
-use crate::colours::{NO_TICKET, Rgb, ticket_colour};
+use crate::colours::{NO_TICKET, Paint, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
 use crate::tickets::{Phase, Ticket, tickets};
 
@@ -76,7 +76,7 @@ pub struct Moment {
     /// The note its event carried: a send back's or a gate run's cause, a merge's subject.
     pub note: Option<String>,
     /// Its ticket's colour; [`NO_TICKET`] without one.
-    pub colour: Rgb,
+    pub colour: Paint,
 }
 
 /// Which way to step.
@@ -320,7 +320,8 @@ mod tests {
         .filter_map(parse_merge)
         .collect();
         let list = moments(&Activity::of(&sample()), &merges);
-        let merged: Vec<(&str, Option<u64>, Rgb)> = list.iter().filter(|m| m.kind == MomentKind::Merge).map(|m| (m.text.as_str(), m.issue, m.colour)).collect();
+        let merged: Vec<(&str, Option<u64>, Paint)> =
+            list.iter().filter(|m| m.kind == MomentKind::Merge).map(|m| (m.text.as_str(), m.issue, m.colour)).collect();
         assert_eq!(merged, [("#170 merged onto main (PR #173) · worker-2", Some(170), ticket_colour(170)), ("PR #174 merged onto main", None, NO_TICKET)]);
         // #168 was only worked on (no claim), its worker's session ended by the coordinator.
         let first: Vec<&str> = list.iter().take(2).map(|m| m.text.as_str()).collect();

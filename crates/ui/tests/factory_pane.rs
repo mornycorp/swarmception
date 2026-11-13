@@ -973,3 +973,21 @@ fn a_ticket_selected_in_the_factory_is_lit_on_the_timeline_and_back() {
     assert_eq!(shell.timeline().highlighted(), ticket_bars(&mut shell, 7));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// #154: the shell builds the timeline in the look egui draws in, light and back to dark, so its
+/// colours are the theme's light ones on a light look.
+#[test]
+fn the_timeline_follows_the_windows_look() {
+    use swarmception_domain::theme::Look;
+    let dir = repo();
+    let (ctx, mut shell) = loaded(&dir);
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.engine().look(), Look::Dark);
+    ctx.set_visuals(egui::Visuals::light());
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.engine().look(), Look::Light, "a light look builds the timeline light");
+    ctx.set_visuals(egui::Visuals::dark());
+    frame(&mut shell, &ctx);
+    assert_eq!(shell.engine().look(), Look::Dark);
+    std::fs::remove_dir_all(dir).ok();
+}

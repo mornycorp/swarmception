@@ -593,6 +593,7 @@ impl Shell {
     /// Draws the window's frame.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         self.sync();
+        self.follow_look(ui.visuals());
         self.collapse_to_window(ui.ctx());
         // Woken for the live watch's next check (#54), which the next frame's poll starts.
         if let Some(wait) = self.engine.live_wait(std::time::Instant::now()) {
@@ -633,6 +634,15 @@ impl Shell {
         self.reveal_details(ui.ctx());
         self.light_timeline(ui.ctx());
         self.keep(ui.ctx());
+    }
+
+    /// The timeline built in the look egui draws in (#154): `theme.set` when it changes, so its
+    /// bars, strips and tooltips take the theme's light colours on a light look.
+    fn follow_look(&mut self, visuals: &egui::Visuals) {
+        let look = factory_chip::shade(visuals);
+        if self.engine.look() != look {
+            let _ = self.engine.call::<swarmception_engine::theme_cmds::Set>(swarmception_engine::theme_cmds::LookParams { look });
+        }
     }
 
     /// Collapsed to the window (#74): the timeline's rows follow it once it settles, before the

@@ -8,12 +8,12 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::colours::{self, Rgb};
+use crate::colours::{self, Paint};
 
 /// What passed or merged is drawn in: green, the merges onto main's colour.
-pub const PASSED: Rgb = colours::MAIN_MERGE;
+pub const PASSED: Paint = colours::MAIN_MERGE;
 /// What failed or was sent back is drawn in: red, the sent back colour.
-pub const FAILED: Rgb = colours::SENT_BACK;
+pub const FAILED: Paint = colours::SENT_BACK;
 
 /// A run of a tooltip line's text: in `colour`, or the theme's text colour with none, and strong
 /// (bold) or not.
@@ -22,7 +22,7 @@ pub const FAILED: Rgb = colours::SENT_BACK;
 pub struct TipSpan {
     pub text: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub colour: Option<Rgb>,
+    pub colour: Option<Paint>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub strong: bool,
 }
@@ -49,7 +49,7 @@ impl TipLine {
 
     /// `text` in `colour`.
     #[must_use]
-    pub fn coloured(text: impl Into<String>, colour: Rgb) -> Self {
+    pub fn coloured(text: impl Into<String>, colour: Paint) -> Self {
         Self::default().then_coloured(text, colour)
     }
 
@@ -67,12 +67,12 @@ impl TipLine {
 
     /// The line with `text` added at its end, in `colour`.
     #[must_use]
-    pub fn then_coloured(self, text: impl Into<String>, colour: Rgb) -> Self {
+    pub fn then_coloured(self, text: impl Into<String>, colour: Paint) -> Self {
         self.with(text.into(), Some(colour), false)
     }
 
     /// An empty `text` adds no run.
-    fn with(mut self, text: String, colour: Option<Rgb>, strong: bool) -> Self {
+    fn with(mut self, text: String, colour: Option<Paint>, strong: bool) -> Self {
         if !text.is_empty() {
             self.spans.push(TipSpan { text, colour, strong });
         }
@@ -93,7 +93,7 @@ impl TipLine {
 
     /// The colour of the run whose text is `text`, if one is and has one: for tests and checks.
     #[must_use]
-    pub fn colour_of(&self, text: &str) -> Option<Rgb> {
+    pub fn colour_of(&self, text: &str) -> Option<Paint> {
         self.spans.iter().find(|span| span.text == text).and_then(|span| span.colour)
     }
 
@@ -142,8 +142,9 @@ mod tests {
     fn a_plain_run_serializes_as_its_text_alone() {
         let line = TipLine::plain("by m-1").then_coloured("merged", PASSED).then_strong("5 s");
         let json = serde_json::to_string(&line).unwrap();
-        let [r, g, b] = PASSED;
-        assert_eq!(json, format!(r#"{{"spans":[{{"text":"by m-1"}},{{"text":"merged","colour":[{r},{g},{b}]}},{{"text":"5 s","strong":true}}]}}"#));
+        let ([r, g, b], [lr, lg, lb]) = (PASSED.dark, PASSED.light);
+        let colour = format!(r#"{{"dark":[{r},{g},{b}],"light":[{lr},{lg},{lb}]}}"#);
+        assert_eq!(json, format!(r#"{{"spans":[{{"text":"by m-1"}},{{"text":"merged","colour":{colour}}},{{"text":"5 s","strong":true}}]}}"#));
         assert_eq!(serde_json::from_str::<TipLine>(&json).unwrap(), line);
     }
 }

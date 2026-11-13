@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{IssueKind, IssueState, Issues, Kind, MainMerge, Role, Timestamp};
 
 use crate::activity::{Activity, Agent, IssueEvent, Mark, Session, Sub};
-use crate::colours::{self, Rgb, ticket_colour};
+use crate::colours::{self, Paint, ticket_colour};
 use crate::factory::{GateRun, Outcome, gate_runs};
 use crate::gates::Lane;
 use crate::rows::{Bar, BarRef, MAIN_KEY, Node, Stage, Style, bars_where, duration, groups_holding};
@@ -36,9 +36,9 @@ use crate::titles;
 use crate::tooltip::{FAILED, PASSED, TipLine};
 
 /// What a gate run going on is drawn in: waiting's blue, as the tickets it holds wait.
-pub const RUNNING: Rgb = colours::WAITING;
+pub const RUNNING: Paint = colours::WAITING;
 /// What a session's own start and end are drawn in: the slate of what is no ticket's.
-pub const SESSION: Rgb = colours::NO_TICKET;
+pub const SESSION: Paint = colours::NO_TICKET;
 
 /// What the details are of.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
@@ -106,7 +106,7 @@ pub struct Fact {
     pub label: String,
     pub value: String,
     /// Its value's colour; the theme's text colour with none.
-    pub colour: Option<Rgb>,
+    pub colour: Option<Paint>,
 }
 
 impl Fact {
@@ -114,7 +114,7 @@ impl Fact {
         Self { label: label.to_owned(), value: value.into(), colour: None }
     }
 
-    fn coloured(label: &str, value: impl Into<String>, colour: Rgb) -> Self {
+    fn coloured(label: &str, value: impl Into<String>, colour: Paint) -> Self {
         Self { colour: Some(colour), ..Self::new(label, value) }
     }
 }
@@ -127,7 +127,7 @@ pub struct Related {
     /// Its chip's mark (`#7`), and what it says beside it (its title).
     pub mark: String,
     pub label: String,
-    pub colour: Rgb,
+    pub colour: Paint,
 }
 
 /// One line of the story.
@@ -142,7 +142,7 @@ pub struct Entry {
     pub duration: Option<String>,
     /// Nothing ended it yet: it runs on to the last event.
     pub open: bool,
-    pub colour: Rgb,
+    pub colour: Paint,
     /// What happened: `working`, `sent back`, `gate run passed`.
     pub what: String,
     /// The rest of its line, styled: `PR #8 · in gate-pr8`.
@@ -155,7 +155,7 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn at(t: Timestamp, colour: Rgb, what: impl Into<String>) -> Self {
+    fn at(t: Timestamp, colour: Paint, what: impl Into<String>) -> Self {
         Self {
             t,
             end: None,
@@ -172,7 +172,7 @@ impl Entry {
     }
 
     /// From `t` to `end`, open or not: its duration set.
-    fn span(t: Timestamp, end: Timestamp, open: bool, colour: Rgb, what: impl Into<String>) -> Self {
+    fn span(t: Timestamp, end: Timestamp, open: bool, colour: Paint, what: impl Into<String>) -> Self {
         let seconds = end.0.saturating_sub(t.0).max(0);
         Self { end: Some(end), seconds: Some(seconds), duration: Some(duration(seconds)), open, ..Self::at(t, colour, what) }
     }
@@ -221,7 +221,7 @@ impl Entry {
 pub struct Details {
     pub subject: Subject,
     /// The header's chip: its colour and its mark (`#47`, `gate`, `w19`).
-    pub colour: Rgb,
+    pub colour: Paint,
     pub mark: String,
     /// `#47 A details pane for what is selected`, `gate run gate-pr50`, `worker-19 · mini`.
     pub title: String,
@@ -527,7 +527,7 @@ fn helper_entry(ctx: &Ctx<'_>, agent: &Agent, sub: &Sub) -> Entry {
 }
 
 /// How a gate run went, in its colour.
-const fn outcome_look(outcome: Outcome) -> (Rgb, &'static str) {
+const fn outcome_look(outcome: Outcome) -> (Paint, &'static str) {
     match outcome {
         Outcome::Running => (RUNNING, "running"),
         Outcome::Passed => (PASSED, "passed"),
@@ -750,7 +750,7 @@ fn gate_end_entry(run: &GateRun, owner: Option<Who>, logged: Option<&Sub>) -> Op
     Some(finished)
 }
 
-fn gate_lines(ctx: &Ctx<'_>, run: &GateRun, owner: Option<&Who>, verb: &str, colour: Rgb) -> Vec<TipLine> {
+fn gate_lines(ctx: &Ctx<'_>, run: &GateRun, owner: Option<&Who>, verb: &str, colour: Paint) -> Vec<TipLine> {
     let mut line = TipLine::coloured(verb, colour);
     if let Some(end) = run.end {
         line = line.then(" in ").then_strong(duration(end.0.saturating_sub(run.start.0)));
