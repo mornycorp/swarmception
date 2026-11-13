@@ -19,6 +19,7 @@ use swarmception_engine::Session;
 use swarmception_engine::stats_cmds::{At as StatsAt, Get as GetStats, GetParams as StatsParams};
 use swarmception_model::Timestamp;
 
+use crate::catalog;
 use crate::factory_chip::{PASSED, WORKING, drawn};
 
 /// What the strip drew, for a test to check against `stats.get`.
@@ -189,24 +190,17 @@ impl StatsStrip {
     }
 
     fn headline(&mut self, ui: &mut egui::Ui, stats: &Stats) {
-        let window = format!("{} → {} UTC", clock(stats.start), clock(stats.end));
-        ui.weak(egui::RichText::new(window).small()).on_hover_text(format!("The timeline's visible window: {} → {}", stats.start, stats.end));
+        let window = catalog::utc(&(clock(stats.start)), &(clock(stats.end)));
+        ui.weak(egui::RichText::new(window).small()).on_hover_text(catalog::the_timeline_s_visible_window(&stats.start, &stats.end));
         let headline = rate(stats.landed_per_active_hour);
         let quiet = short(stats.quiet_after_seconds);
-        let how = format!(
-            "Tickets landed per active hour: the {} tickets merged in the window ÷ its {} active hours.\n\
-             Active: the time at least one worker has a session going ({} h on shift), its pauses left out, \
-             less every gap of over {quiet} with no event at all ({} such gaps).",
-            stats.landed,
-            hours(stats.active_seconds),
-            hours(stats.on_shift_seconds),
-            stats.quiet_gaps
-        );
+        let how =
+            catalog::tickets_landed_per_active_hour(&stats.landed, &(hours(stats.active_seconds)), &(hours(stats.on_shift_seconds)), &stats.quiet_gaps, &quiet);
         ui.label(egui::RichText::new(&headline).size(22.0).strong().color(drawn(PASSED, ui.visuals()))).on_hover_text(&how);
-        let landed = format!("{} landed · {} active h", stats.landed, hours(stats.active_seconds));
+        let landed = catalog::landed_active_h(&stats.landed, &(hours(stats.active_seconds)));
         ui.vertical(|ui| {
             ui.add_space(2.0);
-            ui.label(egui::RichText::new("landed / active h").small()).on_hover_text(&how);
+            ui.label(egui::RichText::new(catalog::LANDED_ACTIVE_H).small()).on_hover_text(&how);
             ui.weak(egui::RichText::new(&landed).small()).on_hover_text(&how);
         });
         self.drawn.headline = headline;
@@ -245,7 +239,7 @@ impl StatsStrip {
             self.drawn.hours.push((hour.start, bar));
         }
         if n == 0 {
-            painter.text(rect.center(), Align2::CENTER_CENTER, "no hours", FontId::proportional(10.0), weak);
+            painter.text(rect.center(), Align2::CENTER_CENTER, catalog::NO_HOURS, FontId::proportional(10.0), weak);
         }
         let under = |p: egui::Pos2| stats.hours.get(((p.x - rect.left()) / step).floor().max(0.0) as usize);
         let hovered = response.hover_pos().and_then(under);
@@ -259,14 +253,8 @@ impl StatsStrip {
         }
         let response = if hovered.is_some() { response.on_hover_cursor(egui::CursorIcon::PointingHand) } else { response };
         let lines: Vec<String> = hovered.map_or_else(
-            || vec!["Landed per active hour".to_owned(), "Each clock hour (UTC) of the window; the hour holding the factory's t is marked.".to_owned()],
-            |hour| {
-                vec![
-                    format!("{} UTC", clock(hour.start)),
-                    hour_text(hour),
-                    "Click: the timeline to this hour, its playhead at its end; the strip keeps its range".to_owned(),
-                ]
-            },
+            || vec![catalog::LANDED_PER_ACTIVE_HOUR.to_owned(), catalog::EACH_CLOCK_HOUR_UTC_OF_THE.to_owned()],
+            |hour| vec![catalog::utc_2(&(clock(hour.start))), hour_text(hour), catalog::CLICK_THE_TIMELINE_TO_THIS_HOUR.to_owned()],
         );
         crate::factory_tip::show(response, &lines);
         self.drawn.bars = n;
@@ -287,34 +275,16 @@ impl StatsStrip {
     fn figures(&mut self, ui: &mut egui::Ui, stats: &Stats) {
         let quiet = short(stats.quiet_after_seconds);
         let figures = [
+            (catalog::CLAIM_MERGE, span(stats.median_claim_to_merge_seconds), catalog::the_median_over_the_tickets(&stats.landed)),
+            (catalog::DOCK_WAIT, span(stats.median_dock_wait_seconds), catalog::the_median_wait_at_the(&stats.landed)),
+            (catalog::GATES_PASS, percent(stats.gates.pass_rate), gates_text(stats)),
+            (catalog::SENDBACKS_LANDED, rate(stats.sendbacks_per_landed), catalog::the_sendbacks_in_the_window(&stats.sendbacks, &stats.landed)),
             (
-                "claim → merge",
-                span(stats.median_claim_to_merge_seconds),
-                format!(
-                    "The median, over the {} tickets landed in the window, of the time from a ticket's first claim to its merge (wall clock).",
-                    stats.landed
-                ),
-            ),
-            (
-                "dock wait",
-                span(stats.median_dock_wait_seconds),
-                format!("The median wait at the dock, over the {} tickets landed: from a ticket's last submit to its merge (wall clock).", stats.landed),
-            ),
-            ("gates pass", percent(stats.gates.pass_rate), gates_text(stats)),
-            (
-                "sendbacks / landed",
-                rate(stats.sendbacks_per_landed),
-                format!("The {} sendbacks in the window ÷ the {} tickets landed.", stats.sendbacks, stats.landed),
-            ),
-            (
-                "working · in flight",
+                catalog::WORKING_IN_FLIGHT,
                 format!("{} · {}", rate(stats.mean_working), rate(stats.mean_in_flight)),
-                format!(
-                    "The mean tickets working (from work to its submit, sendback, stop or merge), and in flight (claimed, working, waiting or sent back), over the active time: each ticket's time in the phase ÷ the {} active hours.",
-                    hours(stats.active_seconds)
-                ),
+                catalog::the_mean_tickets_working_from(&(hours(stats.active_seconds))),
             ),
-            ("workers busy", percent(mean_utilisation(stats)), workers_text(stats, &quiet)),
+            (catalog::WORKERS_BUSY, percent(mean_utilisation(stats)), workers_text(stats, &quiet)),
         ];
         for (label, value, how) in figures {
             // A weak label, its value strong; the pair shares the tooltip.
@@ -337,18 +307,18 @@ impl StatsStrip {
 fn gates_text(stats: &Stats) -> String {
     let (gates, ready) = (&stats.gates, &stats.ready);
     let causes: Vec<String> = gates.causes.iter().map(|c| format!("{} {}", c.cause, c.count)).collect();
-    format!(
-        "The coordinator's gates that started in the window: {} passed of {} with a result ({} started, {} with none, {} running, {} read from merges and send backs).\nPassed: rc=0, or a merge names the gate. Failed: another rc.\nFailures by cause: {}\nWorkers' own ready gates: {} passed of {} ({}).",
-        gates.passed,
-        gates.passed + gates.failed,
-        gates.runs,
-        gates.no_result,
-        gates.running,
-        gates.inferred,
-        if causes.is_empty() { "none".to_owned() } else { causes.join(", ") },
-        ready.passed,
-        ready.passed + ready.failed,
-        percent(ready.pass_rate)
+    let causes = if causes.is_empty() { catalog::NONE.to_owned() } else { causes.join(", ") };
+    catalog::the_coordinator_s_gates_that(
+        &gates.passed,
+        &(gates.passed + gates.failed),
+        &gates.runs,
+        &gates.no_result,
+        &gates.running,
+        &gates.inferred,
+        &causes,
+        &ready.passed,
+        &(ready.passed + ready.failed),
+        &percent(ready.pass_rate),
     )
 }
 
@@ -360,19 +330,15 @@ fn mean_utilisation(stats: &Stats) -> Option<f64> {
 }
 
 fn workers_text(stats: &Stats, quiet: &str) -> String {
-    let mut lines = vec![format!(
-        "Utilisation: the time a worker's tickets were working ÷ its time on shift, both less the gaps of over {quiet} with no event, in the window. All together: {}.",
-        percent(mean_utilisation(stats))
-    )];
+    let mut lines = vec![catalog::utilisation_the_time_a_worker(&(percent(mean_utilisation(stats))), &quiet)];
     for worker in &stats.workers {
-        lines.push(format!(
-            "{} ({}): {} · {} working of {} on shift · {} landed",
-            worker.name,
-            worker.machine,
-            percent(worker.utilisation),
-            short(worker.working_seconds),
-            short(worker.on_shift_seconds),
-            worker.landed
+        lines.push(catalog::working_of_on_shift_landed(
+            &worker.name,
+            &worker.machine,
+            &(percent(worker.utilisation)),
+            &(short(worker.working_seconds)),
+            &(short(worker.on_shift_seconds)),
+            &worker.landed,
         ));
     }
     lines.join("\n")
@@ -380,7 +346,7 @@ fn workers_text(stats: &Stats, quiet: &str) -> String {
 
 /// One hour of the sparkline, for its tooltip.
 fn hour_text(hour: &Hour) -> String {
-    format!("{} landed in {} active · {} landed / active h", hour.landed, short(hour.active_seconds), rate(hour.landed_per_active_hour))
+    catalog::landed_in_active_landed_active(&hour.landed, &(short(hour.active_seconds)), &(rate(hour.landed_per_active_hour)))
 }
 
 #[cfg(test)]

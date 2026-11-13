@@ -12,6 +12,7 @@
 //! state, `ui.set`), the rows' grouping, collapse and merge marks (`rows.set`'s fields), folding
 //! quiet time and Fit (the widget's view) and Live (`live.set`'s on).
 
+use crate::catalog;
 use swarmception_domain::{Collapse, Grouping};
 use swarmception_engine::command::Shortcut;
 use swarmception_engine::commands;
@@ -176,23 +177,23 @@ impl MenuAction {
     pub fn label(self) -> &'static str {
         match self {
             Self::Command(id) => commands::find(id).and_then(|e| e.menu).map_or(id, |m| m.label),
-            Self::Recent => "Open Recent",
+            Self::Recent => catalog::OPEN_RECENT,
             // Its repository's name and where it is: [`recent_label`].
-            Self::OpenRecent(_) => "Recent Repository",
-            Self::Quit => "Quit",
-            Self::Timeline => "Timeline",
-            Self::Factory => "Factory",
-            Self::Details => "Details",
-            Self::Workers => "Workers",
-            Self::Grouping(Grouping::Flat) => "Flat",
-            Self::Grouping(Grouping::Workers) => "By Worker",
-            Self::Collapse(Collapse::Empty) => "Collapse Empty Rows",
-            Self::Collapse(Collapse::Window) => "Collapse to Window",
-            Self::Collapse(Collapse::Off) => "Every Row",
-            Self::FoldQuiet => "Fold Quiet Time",
-            Self::MergeMarks => "Merge Marks",
-            Self::Fit => "Fit",
-            Self::Live => "Live",
+            Self::OpenRecent(_) => catalog::RECENT_REPOSITORY,
+            Self::Quit => catalog::QUIT,
+            Self::Timeline => catalog::TIMELINE,
+            Self::Factory => catalog::FACTORY,
+            Self::Details => catalog::DETAILS_2,
+            Self::Workers => catalog::WORKERS,
+            Self::Grouping(Grouping::Flat) => catalog::FLAT,
+            Self::Grouping(Grouping::Workers) => catalog::BY_WORKER,
+            Self::Collapse(Collapse::Empty) => catalog::COLLAPSE_EMPTY_ROWS,
+            Self::Collapse(Collapse::Window) => catalog::COLLAPSE_TO_WINDOW,
+            Self::Collapse(Collapse::Off) => catalog::EVERY_ROW,
+            Self::FoldQuiet => catalog::FOLD_QUIET_TIME,
+            Self::MergeMarks => catalog::MERGE_MARKS,
+            Self::Fit => catalog::FIT,
+            Self::Live => catalog::LIVE,
         }
     }
 
@@ -275,7 +276,7 @@ pub fn recent_label(repo: &RecentRepo, home: Option<&std::path::Path>) -> String
             },
         )
     });
-    let gone = if repo.missing { " (missing)" } else { "" };
+    let gone = if repo.missing { catalog::MISSING } else { "" };
     match parent {
         Some(parent) if !parent.is_empty() => format!("{} — {parent}{gone}", repo.name),
         _ => format!("{}{gone}", repo.name),

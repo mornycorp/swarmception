@@ -22,6 +22,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::catalog;
 use crate::icons;
 
 /// A folded band's height: its header's row alone.
@@ -179,9 +180,9 @@ pub fn fold_title(ui: &mut egui::Ui, icon: &str, name: &str, chevron: Chevron) -
     };
     let text = egui::RichText::new(format!("{glyph}  {icon}  {name}")).strong();
     let tip = match chevron {
-        Chevron::Open => format!("Fold the {name} to its header"),
-        Chevron::FoldRight => format!("Fold the {name} to a strip"),
-        Chevron::Folded | Chevron::Left => format!("Open the {name}"),
+        Chevron::Open => catalog::fold_the_to_its_header(&name),
+        Chevron::FoldRight => catalog::fold_the_to_a_strip(&name),
+        Chevron::Folded | Chevron::Left => catalog::open_the(&name),
     };
     ui.add(egui::Button::new(text).frame(false)).on_hover_text(tip)
 }

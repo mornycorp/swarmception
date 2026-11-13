@@ -22,6 +22,7 @@ use swarmception_engine::Session;
 use swarmception_engine::details_cmds::{DetailsParams, Get};
 use swarmception_engine::stats_cmds::At as When;
 
+use crate::catalog;
 use crate::factory_chip::{drawn, rgb, shade};
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
@@ -165,9 +166,10 @@ impl DetailsPane {
             return;
         }
         ui.horizontal(|ui| {
-            self.drawn.fold = fold_title(ui, icons::INFO, "Details", Chevron::FoldRight).clicked();
+            self.drawn.fold = fold_title(ui, icons::INFO, catalog::DETAILS_2, Chevron::FoldRight).clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let back = ui.add_enabled(!self.history.is_empty(), egui::Button::new(icons::BACK).small()).on_hover_text("Back to what was selected before");
+                let back =
+                    ui.add_enabled(!self.history.is_empty(), egui::Button::new(icons::BACK).small()).on_hover_text(catalog::BACK_TO_WHAT_WAS_SELECTED_BEFORE);
                 self.drawn.back = back.clicked();
             });
         });
@@ -177,7 +179,7 @@ impl DetailsPane {
             (None, ..) => {
                 ui.add_space(12.0);
                 ui.vertical_centered(|ui| {
-                    ui.weak("Select a bar on the timeline, or a ticket or gate run in the factory, to see its story here.");
+                    ui.weak(catalog::SELECT_A_BAR_ON_THE_TIMELINE);
                 });
             }
             (Some(_), _, Some(error)) => {
@@ -187,7 +189,7 @@ impl DetailsPane {
                 egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| self.story(ui, &details));
             }
             (Some(_), None, None) => {
-                ui.weak(format!("{}  Reading…", icons::SPINNER));
+                ui.weak(catalog::reading(&icons::SPINNER));
             }
         }
     }
@@ -207,7 +209,7 @@ impl DetailsPane {
         if !d.related.is_empty() {
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                ui.weak("carries");
+                ui.weak(catalog::CARRIES);
                 for related in &d.related {
                     let response = chip(ui, &related.mark, related.colour, 11.0);
                     let label = ui.add(egui::Label::new(RichText::new(&related.label).small()).sense(Sense::click()));
@@ -288,12 +290,12 @@ impl DetailsPane {
             }
             if let Some(who) = &entry.who {
                 let name = ui.add(egui::Label::new(RichText::new(format!("· {}", who.name)).weak()).sense(Sense::click()));
-                if name.on_hover_text(format!("{}: show their session", who.instance)).clicked() {
+                if name.on_hover_text(catalog::show_their_session(&who.instance)).clicked() {
                     self.drawn.chosen = Some(Subject::Session { instance: who.instance.clone(), at: Some(entry.t) });
                 }
             }
             if let Some(took) = &entry.duration {
-                let so_far = if entry.open { " so far" } else { "" };
+                let so_far = if entry.open { catalog::SO_FAR } else { "" };
                 ui.label(RichText::new(format!("· {took}{so_far}")).strong());
             }
         });
@@ -308,8 +310,8 @@ impl DetailsPane {
         }
         let id = ui.scope_id().with((Part::DetailsEntry, entry.t, &entry.what, self.drawn.entries.len()));
         let response = ui.interact(row.response.rect, id, Sense::click());
-        let span = entry.end.map_or_else(|| entry.t.to_string(), |end| format!("{} → {}{}", entry.t, end, if entry.open { " (so far)" } else { "" }));
-        let hint = entry.goes_to.as_ref().map(|s| format!("\nclick: show {}", described(s))).unwrap_or_default();
+        let span = entry.end.map_or_else(|| entry.t.to_string(), |end| format!("{} → {}{}", entry.t, end, if entry.open { catalog::SO_FAR_2 } else { "" }));
+        let hint = entry.goes_to.as_ref().map(|s| catalog::click_show(&(described(s)))).unwrap_or_default();
         let response = response.on_hover_text(format!("{span}{hint}"));
         if response.hovered() && entry.goes_to.is_some() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -323,10 +325,10 @@ impl DetailsPane {
 /// How a person names `subject`, in a hint.
 fn described(subject: &Subject) -> String {
     match subject {
-        Subject::Ticket { issue } => format!("ticket #{issue}"),
-        Subject::Gate { sub, .. } => format!("gate run {sub}"),
-        Subject::Session { instance, .. } => format!("{instance}'s session"),
-        Subject::Merge { commit } => format!("merge {}", commit.get(..8).unwrap_or(commit)),
+        Subject::Ticket { issue } => catalog::ticket(&issue),
+        Subject::Gate { sub, .. } => catalog::gate_run(&sub),
+        Subject::Session { instance, .. } => catalog::s_session(&instance),
+        Subject::Merge { commit } => catalog::merge(&(commit.get(..8).unwrap_or(commit))),
     }
 }
 

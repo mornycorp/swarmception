@@ -39,6 +39,7 @@ use swarmception_engine::factory_cmds::{At, AtParams, PlaceAt, PlaceAtParams, Ru
 use swarmception_engine::repo_cmds::StatusResult;
 use swarmception_model::Timestamp;
 
+use crate::catalog;
 use crate::factory_chip::Motion;
 use crate::factory_paint::{Drawn, Marks, Selected, WallView, paint};
 use crate::factory_stats::StatsStrip;
@@ -76,8 +77,8 @@ impl Speed {
     pub const fn label(self) -> &'static str {
         match self {
             Self::TenSeconds => "10 s / s",
-            Self::Minute => "1 min / s",
-            Self::TenMinutes => "10 min / s",
+            Self::Minute => catalog::MIN_S,
+            Self::TenMinutes => catalog::MIN_S_2,
             Self::Hour => "1 h / s",
         }
     }
@@ -118,13 +119,13 @@ impl Steps {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::All => "every moment",
-            Self::Claims => "claims",
-            Self::Work => "work beginning",
-            Self::Submits => "submits",
-            Self::Gates => "gate runs",
-            Self::SendBacks => "send backs",
-            Self::Merges => "merges onto main",
+            Self::All => catalog::EVERY_MOMENT,
+            Self::Claims => catalog::CLAIMS,
+            Self::Work => catalog::WORK_BEGINNING,
+            Self::Submits => catalog::SUBMITS,
+            Self::Gates => catalog::GATE_RUNS,
+            Self::SendBacks => catalog::SEND_BACKS,
+            Self::Merges => catalog::MERGES_ONTO_MAIN,
         }
     }
 
@@ -209,18 +210,18 @@ impl Source {
     /// What the header's small label says of it; `t`, the time held.
     fn text(self, t: Option<Timestamp>) -> String {
         match self {
-            Self::Playhead => "at the timeline's playhead".to_owned(),
-            Self::WindowEnd => "at the timeline window's end: no playhead".to_owned(),
-            Self::Playing => "playing: the playhead runs through the window".to_owned(),
-            Self::Stepped => "on a key moment".to_owned(),
+            Self::Playhead => catalog::AT_THE_TIMELINE_S_PLAYHEAD.to_owned(),
+            Self::WindowEnd => catalog::AT_THE_TIMELINE_WINDOW_S_END.to_owned(),
+            Self::Playing => catalog::PLAYING_THE_PLAYHEAD_RUNS_THROUGH_THE.to_owned(),
+            Self::Stepped => catalog::ON_A_KEY_MOMENT.to_owned(),
             Self::Held => t.map_or_else(
-                || "not following the timeline".to_owned(),
+                || catalog::NOT_FOLLOWING_THE_TIMELINE.to_owned(),
                 |t| {
                     let (_, _, _, h, m, s) = t.civil();
-                    format!("not following the timeline: held at {h:02}:{m:02}:{s:02} UTC")
+                    catalog::not_following_the_timeline_held(&h, &m, &s)
                 },
             ),
-            Self::Last => "at the last event".to_owned(),
+            Self::Last => catalog::AT_THE_LAST_EVENT.to_owned(),
         }
     }
 }
@@ -549,9 +550,9 @@ impl FactoryPane {
         ui.separator();
         let Some(scene) = &self.scene else {
             let text = match (&status.repo, &status.job) {
-                (None, _) => "No repository is open: start with --repo <path>.".to_owned(),
-                (_, Some(_)) => format!("{}  Reading the tracking branch…", icons::SPINNER),
-                _ => self.error.clone().unwrap_or_else(|| "The tracking branch holds no events yet.".to_owned()),
+                (None, _) => catalog::NO_REPOSITORY_IS_OPEN_START_WITH.to_owned(),
+                (_, Some(_)) => catalog::reading_the_tracking_branch_2(&icons::SPINNER),
+                _ => self.error.clone().unwrap_or_else(|| catalog::THE_TRACKING_BRANCH_HOLDS_NO_EVENTS.to_owned()),
             };
             ui.centered_and_justified(|ui| ui.label(text));
             self.rect = None;
@@ -587,13 +588,11 @@ impl FactoryPane {
     /// where *t* comes from, in a small label. No clock: the timeline's playhead is the time.
     fn header(&mut self, ui: &mut egui::Ui, view: &mut FactoryView) {
         let mut buttons = Vec::new();
-        self.fold = fold_title(ui, icons::FACTORY, "Factory", Chevron::Open).clicked();
+        self.fold = fold_title(ui, icons::FACTORY, catalog::FACTORY, Chevron::Open).clicked();
         ui.separator();
         let size = egui::vec2(BUTTON, ui.spacing().interact_size.y);
         let play = if view.playing { icons::PAUSE } else { icons::PLAY };
-        let response = ui
-            .add_sized(size, egui::Button::new(play))
-            .on_hover_text("Play: the timeline's playhead runs through its window, looping, and the factory follows it");
+        let response = ui.add_sized(size, egui::Button::new(play)).on_hover_text(catalog::PLAY_THE_TIMELINE_S_PLAYHEAD_RUNS);
         if response.clicked() {
             view.playing = !view.playing;
             view.follow |= view.playing;
@@ -609,22 +608,18 @@ impl FactoryPane {
         buttons.push(("speed", speed));
         ui.separator();
         let steps = view.steps.label();
-        let back = ui
-            .add_sized(size, egui::Button::new(icons::START))
-            .on_hover_text(format!("The timeline's playhead back to the previous key moment ({steps}; ←)\nShift-click: to the first event (Home)"));
+        let back = ui.add_sized(size, egui::Button::new(icons::START)).on_hover_text(catalog::the_timeline_s_playhead_back(&steps));
         if back.clicked() {
             self.ask(if ui.input(|i| i.modifiers.shift) { Jump::First } else { Jump::Step(Direction::Previous) });
         }
         buttons.push(("back", back.rect));
-        let on = ui
-            .add_sized(size, egui::Button::new(icons::END))
-            .on_hover_text(format!("The timeline's playhead on to the next key moment ({steps}; →)\nShift-click: to the last event (End)"));
+        let on = ui.add_sized(size, egui::Button::new(icons::END)).on_hover_text(catalog::the_timeline_s_playhead_on(&steps));
         if on.clicked() {
             self.ask(if ui.input(|i| i.modifiers.shift) { Jump::Last } else { Jump::Step(Direction::Next) });
         }
         buttons.push(("on", on.rect));
         let by = fixed(ui, 176.0, |ui| {
-            egui::ComboBox::from_id_salt(Part::FactorySteps).selected_text(format!("by {steps}")).width(176.0).truncate().show_ui(ui, |ui| {
+            egui::ComboBox::from_id_salt(Part::FactorySteps).selected_text(catalog::by(&steps)).width(176.0).truncate().show_ui(ui, |ui| {
                 for kind in Steps::ALL {
                     ui.selectable_value(&mut view.steps, kind, kind.label());
                 }
@@ -632,9 +627,7 @@ impl FactoryPane {
         });
         buttons.push(("steps", by));
         ui.separator();
-        let follow = ui
-            .toggle_value(&mut view.follow, format!("{}  Follow the timeline", icons::FOLLOW))
-            .on_hover_text("The factory shows the timeline's playhead, else its window's end; off, it holds where it is");
+        let follow = ui.toggle_value(&mut view.follow, catalog::follow_the_timeline(&icons::FOLLOW)).on_hover_text(catalog::THE_FACTORY_SHOWS_THE_TIMELINE_S);
         buttons.push(("follow", follow.rect));
         ui.separator();
         let text = self.header_words(ui);
@@ -682,7 +675,7 @@ fn moment_label(ui: &mut egui::Ui, step: &Step) {
     let mut lines: Vec<String> =
         step.moments.iter().map(|m| m.note.as_ref().map_or_else(|| m.text.clone(), |note| format!("{}\n    {note}", m.text))).collect();
     if let Some(index) = step.index {
-        lines.push(format!("key moment {index} of {}", step.count));
+        lines.push(catalog::key_moment_of(&step.count, &index));
     }
     let label = ui.label(text);
     if !lines.is_empty() {

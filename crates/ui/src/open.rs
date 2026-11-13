@@ -20,6 +20,7 @@ use swarmception_engine::EngineError;
 use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{Open, OpenParams, OpenRefused, Recent, RecentRepo, StatusResult};
 
+use crate::catalog;
 use crate::menu::{MenuAction, MenuState, recent_label};
 use crate::part::Part;
 use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
@@ -192,7 +193,7 @@ impl Shell {
             self.engine.remember_all(kept);
             self.opening.store = Some(store.clone());
         }
-        self.opening.home = std::env::var_os("HOME").map(PathBuf::from);
+        self.opening.home = std::env::var_os(catalog::HOME).map(PathBuf::from);
         self.status_at = None;
     }
 
@@ -266,7 +267,7 @@ impl Shell {
     /// Open Recent's submenu in the window's own menu bar: each repository, then Clear Menu.
     pub(crate) fn recent_menu(&mut self, ui: &mut egui::Ui, state: MenuState) {
         if self.opening.recent.is_empty() {
-            ui.add_enabled(false, egui::Label::new("No Recent Repositories"));
+            ui.add_enabled(false, egui::Label::new(catalog::NO_RECENT_REPOSITORIES));
         }
         for item in MenuAction::recent_items(self.opening.recent.len()) {
             let Some(action) = item else {
@@ -298,7 +299,7 @@ impl Shell {
         if let Some(refused) = self.opening.refused.clone() {
             let still = self.status.repo.clone();
             let (mut close, mut again) = (false, false);
-            egui::Window::new(format!("{}  Can't open that folder", icons::WARNING))
+            egui::Window::new(catalog::can_t_open_that_folder(&icons::WARNING))
                 .id(Part::OpenRefused.id())
                 .collapsible(false)
                 .resizable(false)
@@ -308,17 +309,17 @@ impl Shell {
                     ui.label(egui::RichText::new(&refused.path).strong());
                     ui.add_space(4.0);
                     // The path once: "That folder is not in a git repository…".
-                    let why = refused.why.strip_prefix(refused.path.as_str()).map_or_else(|| refused.why.clone(), |rest| format!("That folder{rest}."));
+                    let why = refused.why.strip_prefix(refused.path.as_str()).map_or_else(|| refused.why.clone(), |rest| catalog::that_folder(&rest));
                     ui.label(why);
                     ui.add_space(4.0);
                     match &still {
-                        Some(repo) => ui.weak(format!("{repo} stays open.")),
-                        None => ui.weak("Open a swarm's clone: a git repository with a tracking branch."),
+                        Some(repo) => ui.weak(catalog::stays_open(&repo)),
+                        None => ui.weak(catalog::OPEN_A_SWARM_S_CLONE_A),
                     };
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
-                        close = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
-                        again = ui.button(format!("{}  Open…", icons::FOLDER)).clicked();
+                        close = ui.button(catalog::OK).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
+                        again = ui.button(catalog::open(&icons::FOLDER)).clicked();
                     });
                 });
             if close || again {
@@ -330,19 +331,19 @@ impl Shell {
         }
         let Some(mut text) = self.opening.prompt.clone() else { return };
         let (mut open, mut cancel) = (false, false);
-        egui::Window::new(format!("{}  Open a Repository", icons::FOLDER))
+        egui::Window::new(catalog::open_a_repository(&icons::FOLDER))
             .id(Part::OpenPrompt.id())
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.label("A folder in a swarm's clone (a git repository with a tracking branch):");
+                ui.label(catalog::A_FOLDER_IN_A_SWARM_S);
                 let field = ui.add(egui::TextEdit::singleline(&mut text).desired_width(420.0));
                 field.request_focus();
                 open = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 ui.horizontal(|ui| {
-                    open |= ui.button("Open").clicked();
-                    cancel = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                    open |= ui.button(catalog::OPEN).clicked();
+                    cancel = ui.button(catalog::CANCEL).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
                 });
             });
         if cancel {

@@ -25,6 +25,7 @@ use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScen
 use swarmception_domain::gates::Lane;
 use swarmception_domain::timeline::Link;
 
+use crate::catalog;
 use crate::factory_chip::{CLAIMED, Chip, GATING, IDLE, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb, shade};
 use crate::part::Part;
 use crate::{factory_tip, icons};
@@ -263,7 +264,7 @@ fn sent_back_corner(painter: &egui::Painter, rect: Rect, times: usize, red: Colo
     painter.add(egui::Shape::convex_polygon(triangle, red, Stroke::new(1.0, crate::theme::border(red))));
     if times > 1 {
         let at = tr + vec2(-corner * 0.31, corner * 0.33);
-        painter.text(at, Align2::CENTER_CENTER, times.to_string(), FontId::proportional(corner * 0.62), Color32::BLACK);
+        painter.text(at, Align2::CENTER_CENTER, times.to_string(), FontId::proportional(corner * 0.62), crate::factory_chip::ink(red));
     }
 }
 
@@ -430,6 +431,8 @@ struct Palette {
     cell: Color32,
     /// What is selected (#85): the theme's selection stroke.
     selected: Color32,
+    /// A widget's fill at rest: the theme's `control` (the legend's sample, #162).
+    control: Color32,
     /// The look the swarm's colours are drawn in (#154).
     shade: theme::Look,
 }
@@ -448,6 +451,7 @@ impl Palette {
             edge: visuals.widgets.noninteractive.bg_stroke.color,
             cell: visuals.extreme_bg_color,
             selected: visuals.selection.stroke.color,
+            control: visuals.widgets.inactive.bg_fill,
             shade: shade(visuals),
         }
     }
@@ -552,7 +556,7 @@ impl<'a> Floor<'a> {
     fn more(&mut self, room: Rect, hidden: usize) {
         if hidden > 0 {
             self.drawn.hidden += hidden;
-            self.painter.text(room.center_bottom(), Align2::CENTER_BOTTOM, format!("+{hidden} more"), Self::font(10.5), self.pal.weak);
+            self.painter.text(room.center_bottom(), Align2::CENTER_BOTTOM, catalog::more(&hidden), Self::font(10.5), self.pal.weak);
         }
     }
 
@@ -651,7 +655,7 @@ impl<'a> Floor<'a> {
         let scene = self.scene;
         let shelf_share = if scene.shelf.is_empty() { 0.25 } else { 0.42 };
         let (top, bottom) = column.split_top_bottom_at_fraction(1.0 - shelf_share);
-        let room = self.card(top.shrink2(vec2(0.0, 0.0)).with_max_y(top.bottom() - 3.0), "UP NEXT", &scene.counts.upcoming.to_string());
+        let room = self.card(top.shrink2(vec2(0.0, 0.0)).with_max_y(top.bottom() - 3.0), catalog::UP_NEXT, &scene.counts.upcoming.to_string());
         let rows = ((room.height() - 12.0) / 27.0).floor().max(0.0) as usize;
         let selected = self.selected_ticket();
         let upcoming = into_view(scene.upcoming.iter().collect(), rows, |c: &Crate| Some(c.issue) == selected);
@@ -663,7 +667,7 @@ impl<'a> Floor<'a> {
                 &self.painter,
                 crate_rect.right_center() + vec2(5.0, 0.0),
                 Align2::LEFT_CENTER,
-                &format!("in {}", short(c.age)),
+                &catalog::in_text(&(short(c.age))),
                 (Self::font(10.5), self.pal.weak),
                 text_width,
             );
@@ -671,7 +675,7 @@ impl<'a> Floor<'a> {
         }
         let shown = self.drawn.upcoming.len();
         self.more(room, scene.counts.upcoming.saturating_sub(shown));
-        let room = self.card(bottom.with_min_y(bottom.top() + 3.0), "SHELF", &scene.counts.shelved.to_string());
+        let room = self.card(bottom.with_min_y(bottom.top() + 3.0), catalog::SHELF, &scene.counts.shelved.to_string());
         let shelf: Vec<&Crate> = scene.shelf.iter().collect();
         let (shown, drawn) = self.grid(room, &shelf, Size::Small);
         self.drawn.shelf = drawn;
@@ -699,17 +703,17 @@ impl<'a> Floor<'a> {
     fn benches(&mut self, column: Rect) {
         let scene = self.scene;
         let working = scene.benches.iter().filter(|b| b.status == BenchStatus::Working).count();
-        let room = self.card(column, "BENCHES", &format!("{working} working · {} crates", scene.counts.at_benches));
+        let room = self.card(column, catalog::BENCHES, &catalog::working_crates(&scene.counts.at_benches, &working));
         let n = scene.benches.len();
         if n == 0 {
-            self.painter.text(room.center(), Align2::CENTER_CENTER, "no workers yet", Self::font(11.0), self.pal.weak);
+            self.painter.text(room.center(), Align2::CENTER_CENTER, catalog::NO_WORKERS_YET, Self::font(11.0), self.pal.weak);
             return;
         }
         let room = self.idle_benches(room);
         let (room, open, unfolded) = self.bench_lists(room);
         if open.is_empty() {
             if scene.idle.is_none() {
-                self.painter.text(room.center(), Align2::CENTER_CENTER, "no worker on shift", Self::font(11.0), self.pal.weak);
+                self.painter.text(room.center(), Align2::CENTER_CENTER, catalog::NO_WORKER_ON_SHIFT, Self::font(11.0), self.pal.weak);
             }
             return;
         }
@@ -838,15 +842,15 @@ impl<'a> Floor<'a> {
     fn folded(&mut self, rect: Rect, folded: &[&Bench]) {
         let names: Vec<&str> = folded.iter().map(|b| b.actor.name.as_str()).collect();
         let (text, how) = if self.marks.off_shift {
-            (format!("{}  {} off shift, shown above: fold them", icons::CHEVRON_DOWN, folded.len()), "click to fold them into this line")
+            (catalog::off_shift_shown_above_fold(&icons::CHEVRON_DOWN, &(folded.len())), catalog::CLICK_TO_FOLD_THEM_INTO_THIS)
         } else {
-            (format!("{}  +{} off shift: {}", icons::CHEVRON_RIGHT, folded.len(), names.join(", ")), "click to show their benches")
+            (catalog::off_shift(&icons::CHEVRON_RIGHT, &(folded.len()), &(names.join(", "))), catalog::CLICK_TO_SHOW_THEIR_BENCHES)
         };
         let id = self.ui.scope_id().with(Part::BenchesFolded);
         let response = self.ui.interact(rect, id, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         let colour = if response.hovered() { self.pal.text } else { self.pal.weak };
         fit(&self.painter, rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, &text, (Self::font(11.0), colour), rect.width() - 8.0);
-        let mut tooltip = vec![format!("{} off shift, holding nothing: {how}", folded.len())];
+        let mut tooltip = vec![catalog::off_shift_holding_nothing(&(folded.len()), &how)];
         tooltip.extend(names.iter().map(|n| (*n).to_owned()));
         if factory_tip::show(response, &tooltip).clicked() {
             self.drawn.fold_clicked = true;
@@ -977,9 +981,9 @@ impl<'a> Floor<'a> {
 
     fn dock(&mut self, column: Rect) {
         let scene = self.scene;
-        let room = self.card(column, "DOCK", &format!("{} waiting", scene.counts.waiting));
+        let room = self.card(column, catalog::DOCK, &catalog::waiting(&scene.counts.waiting));
         if scene.dock.is_empty() {
-            self.painter.text(room.center(), Align2::CENTER_CENTER, "empty", Self::font(11.0), self.pal.weak);
+            self.painter.text(room.center(), Align2::CENTER_CENTER, catalog::EMPTY, Self::font(11.0), self.pal.weak);
             return;
         }
         let fits = ((room.height() - 12.0) / 27.0).floor().max(0.0) as usize;
@@ -1004,7 +1008,7 @@ impl<'a> Floor<'a> {
     /// age) in all the room left: a run that never finished (#42) is grey, `never finished`.
     fn gate(&mut self, column: Rect) {
         let gate = &self.scene.gate;
-        let room = self.card(column, "GATE", "");
+        let room = self.card(column, catalog::GATE, "");
         let counts = [
             (format!("{} {}", icons::CHECK, gate.passed), self.pal.paint(PASSED)),
             ("   ".to_owned(), self.pal.text),
@@ -1014,9 +1018,9 @@ impl<'a> Floor<'a> {
         pieces(&self.painter, pos2(column.right() - 8.0, column.top() + 6.0), Align2::RIGHT_TOP, &counts, Self::font(11.0), room.width() * 0.6);
         let mut y = room.top();
         let status = match (gate.running.first(), gate.recent.first()) {
-            (Some(run), _) => (format!("running {} · {}", run.sub, short(run.age)), self.pal.paint(WORKING)),
-            (None, Some(last)) => (format!("idle · last {} {} ago", outcome_word(last.outcome), short(last.age)), self.pal.weak),
-            (None, None) => ("idle · no runs yet".to_owned(), self.pal.weak),
+            (Some(run), _) => (catalog::running(&run.sub, &(short(run.age))), self.pal.paint(WORKING)),
+            (None, Some(last)) => (catalog::idle_last_ago(&(outcome_word(last.outcome)), &(short(last.age))), self.pal.weak),
+            (None, None) => (catalog::IDLE_NO_RUNS_YET.to_owned(), self.pal.weak),
         };
         fit(&self.painter, pos2(room.left(), y), Align2::LEFT_TOP, &status.0, (Self::font(11.0), status.1), room.width());
         y += 17.0;
@@ -1073,7 +1077,7 @@ impl<'a> Floor<'a> {
     fn selected_line(&mut self, line: Rect, sub: &str) {
         self.painter.rect_filled(line, 3.0, self.pal.selected.gamma_multiply(0.25));
         self.painter.rect_stroke(line, 3.0, Stroke::new(1.5, self.pal.selected), StrokeKind::Inside);
-        self.drawn.selected.push(format!("run {sub}"));
+        self.drawn.selected.push(catalog::run(&sub));
     }
 
     /// The mark of a worker's `ready` check in the gate's list (#95), in its second column; a gate
@@ -1109,7 +1113,7 @@ impl<'a> Floor<'a> {
         if sub.starts_with("ready") {
             self.ready_mark(line);
         }
-        let what = [(sub.to_owned(), self.pal.text), ("  not yet run".to_owned(), self.pal.weak)];
+        let what = [(sub.to_owned(), self.pal.text), (catalog::NOT_YET_RUN.to_owned(), self.pal.weak)];
         pieces(&self.painter, line.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &what, font, line.width() - 36.0);
     }
 
@@ -1144,11 +1148,11 @@ impl<'a> Floor<'a> {
 
     fn shipping(&mut self, column: Rect) {
         let ship = &self.scene.shipping;
-        let room = self.card(column, "MAIN", &format!("{} of {} merges", ship.landed, ship.total));
+        let room = self.card(column, catalog::MAIN, &catalog::of_merges(&ship.landed, &ship.total));
         let done_height = if ship.done_count > 0 { 40.0 } else { 0.0 };
         let mut top = room.top();
         if let Some(last) = ship.blocks.last() {
-            let text = format!("last: {} · {} ago", last.label, short(last.age));
+            let text = catalog::last_ago(&last.label, &(short(last.age)));
             fit(&self.painter, pos2(room.left(), top), Align2::LEFT_TOP, &text, (Self::font(11.0), self.pal.paint(PASSED)), room.width());
             top += 16.0;
         }
@@ -1156,7 +1160,7 @@ impl<'a> Floor<'a> {
         self.building(site);
         if done_height > 0.0 {
             let strip = Rect::from_min_max(pos2(room.left(), room.bottom() - done_height + 4.0), room.right_bottom());
-            let title = format!("done, no merge · {}", ship.done_count);
+            let title = catalog::done_no_merge(&ship.done_count);
             self.painter.text(strip.left_top(), Align2::LEFT_TOP, title, Self::font(10.0), self.pal.weak);
             let room = strip.with_min_y(strip.top() + 13.0);
             let done: Vec<&Crate> = ship.done.iter().collect();
@@ -1174,8 +1178,7 @@ impl<'a> Floor<'a> {
         let ground = Rect::from_min_max(pos2(site.left(), site.bottom() - 4.0), site.right_bottom());
         self.painter.rect_filled(ground, 1.0, self.pal.paint(PASSED).gamma_multiply(0.7));
         let area = site.with_max_y(ground.top() - 2.0).with_max_x(site.right() - SCROLLBAR);
-        let labels: Vec<f32> =
-            blocks.iter().map(|b| self.painter.layout_no_wrap(b.mark.clone(), FontId::proportional(10.0), Color32::WHITE).size().x).collect();
+        let labels: Vec<f32> = blocks.iter().map(|b| self.painter.layout_no_wrap(b.mark.clone(), FontId::proportional(10.0), self.pal.text).size().x).collect();
         let wall = wall_layout(blocks, &labels, area.size());
         let content = wall.rows as f32 * (wall.height + BRICK_GAP) - BRICK_GAP;
         let overflow = (content - area.height()).max(0.0);
@@ -1244,7 +1247,7 @@ impl<'a> Floor<'a> {
             painter.rect_stroke(rect.expand(2.5), 5.0, Stroke::new(2.0, ring), StrokeKind::Outside);
         }
         if self.marks.selected.as_ref().is_some_and(|s| s.is_block(block)) {
-            self.mark_selected(painter, rect, format!("brick {}", block.mark));
+            self.mark_selected(painter, rect, catalog::brick(&block.mark));
         }
         self.drawn.marks.push(block.mark.clone());
         let target = rect.intersect(clip);
@@ -1286,7 +1289,7 @@ impl<'a> Floor<'a> {
     /// A brick's life along `strip`: each segment in its phase's colour, as long as its share of
     /// the life; a segment too short to see gets a sliver, the rest giving way.
     fn phases(&self, painter: &egui::Painter, strip: Rect, block: &Block) {
-        painter.rect_filled(strip.expand(0.5), 1.5, Color32::BLACK.gamma_multiply(0.45));
+        painter.rect_filled(strip.expand(0.5), 1.5, crate::theme::border(self.pal.paint(block.colour)));
         let total: i64 = block.segments.iter().map(|s| s.seconds.max(0)).sum();
         if total <= 0 {
             return;
@@ -1307,19 +1310,19 @@ impl<'a> Floor<'a> {
     /// The key's pieces placed along the bottom: in one row when they fit in `width`, else in two
     /// of five each.
     fn legend_layout(&self, width: f32) -> Vec<KeyItem> {
-        let sample = Color32::from_rgb(0x5c, 0x5f, 0x70);
+        let sample = self.pal.control;
         let phase = |colour: Paint, label: &'static str| (Some((sample, Look::Phase(self.pal.paint(colour)))), label);
         let items = [
-            (None, "border = phase · fill = ticket"),
-            (Some((sample, Look::Hollow)), "up next"),
-            phase(CLAIMED, "claimed"),
-            phase(WORKING, "working"),
-            phase(SENT_BACK, "sent back"),
-            phase(STOPPED, "stopped / shelved"),
-            phase(WAITING, "waiting for merge"),
-            phase(GATING, "in the gate"),
-            (Some((sample, Look::Plain)), "merged: a brick, as wide as it took"),
-            (Some((self.pal.paint(swarmception_domain::colours::NO_TICKET), Look::Plain)), "grey !13: a merge, no ticket"),
+            (None, catalog::BORDER_PHASE_FILL_TICKET),
+            (Some((sample, Look::Hollow)), catalog::UP_NEXT_2),
+            phase(CLAIMED, catalog::CLAIMED),
+            phase(WORKING, catalog::WORKING),
+            phase(SENT_BACK, catalog::SENT_BACK),
+            phase(STOPPED, catalog::STOPPED_SHELVED),
+            phase(WAITING, catalog::WAITING_FOR_MERGE),
+            phase(GATING, catalog::IN_THE_GATE),
+            (Some((sample, Look::Plain)), catalog::MERGED_A_BRICK_AS_WIDE_AS),
+            (Some((self.pal.paint(swarmception_domain::colours::NO_TICKET), Look::Plain)), catalog::GREY_A_MERGE_NO_TICKET),
         ];
         let measured: Vec<f32> = items
             .iter()
@@ -1408,18 +1411,18 @@ impl<'a> Floor<'a> {
 
 const fn outcome_word(outcome: Outcome) -> &'static str {
     match outcome {
-        Outcome::Running => "running",
-        Outcome::Passed => "passed",
-        Outcome::Failed => "failed",
-        Outcome::Unknown => "no result",
+        Outcome::Running => catalog::RUNNING,
+        Outcome::Passed => catalog::PASSED,
+        Outcome::Failed => catalog::FAILED,
+        Outcome::Unknown => catalog::NO_RESULT,
     }
 }
 
 const fn shift_word(shift: Shift) -> &'static str {
     match shift {
-        Shift::On => "on shift",
-        Shift::Paused => "paused",
-        Shift::Off => "off shift",
+        Shift::On => catalog::ON_SHIFT,
+        Shift::Paused => catalog::PAUSED,
+        Shift::Off => catalog::OFF_SHIFT,
     }
 }
 
@@ -1431,7 +1434,7 @@ fn status_line(bench: &Bench) -> String {
             let note = c.note.as_ref().filter(|_| bench.status == BenchStatus::SentBack).map(|n| format!(": {n}")).unwrap_or_default();
             format!("{status} {} · {}{note}", c.label, short(c.age))
         }
-        Some(c) => format!("{status} · holds {}", c.label),
+        Some(c) => catalog::holds(&c.label, &status),
         None => status.to_owned(),
     }
 }

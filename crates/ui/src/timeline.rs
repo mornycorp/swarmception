@@ -65,6 +65,7 @@ use timeline_engine::state_cmds::{FocusWire, Get, InstantRefWire, Restore, Resto
 use timeline_engine::view_cmds::{Fit, Show, ShowParams, Zoom, ZoomParams};
 use timeline_engine::wire::{OriginWire, RulerDomainWire, RulerWire, SpanWire};
 
+use crate::catalog;
 use crate::icons;
 
 /// The scale the pane shows, always (#35).
@@ -1089,14 +1090,14 @@ impl TimelinePane {
         }
         let state = self.widget.session().call::<Get>(NoParams {}).ok()?.timeline?;
         if state.scale != TIME {
-            return Some(format!("{} scale: event order, idle time cut out", state.scale));
+            return Some(catalog::scale_event_order_idle_time(&state.scale));
         }
         let mut at = |position: i64| engine.call::<TimeAt>(TimeAtParams { position }).ok().map(|t| t.text.trim_end_matches('Z').to_owned());
         let (start, end) = (at(state.window.start)?, at(state.window.end)?);
         let end = if start.get(..10) == end.get(..10) { end.get(11..).unwrap_or(&end).to_owned() } else { end };
-        let mut text = format!("{} → {} UTC", start.replacen('T', " ", 1), end.replacen('T', " ", 1));
+        let mut text = catalog::utc(&(start.replacen('T', " ", 1)), &(end.replacen('T', " ", 1)));
         if let Some(hover) = state.hover.and_then(&mut at) {
-            text.push_str(&format!("  ·  pointer {}", hover.get(11..).unwrap_or(&hover)));
+            text.push_str(&catalog::pointer(&(hover.get(11..).unwrap_or(&hover))));
         }
         Some(text)
     }
@@ -1105,10 +1106,10 @@ impl TimelinePane {
     pub fn ui(&mut self, ui: &mut egui::Ui, status: &StatusResult) {
         if !self.has_data {
             let text = match (&status.repo, &status.job, &status.error) {
-                (None, _, _) => "No repository is open: start with --repo <path>.".to_owned(),
-                (_, Some(_), _) => format!("{}  Reading the tracking branch…", icons::SPINNER),
+                (None, _, _) => catalog::NO_REPOSITORY_IS_OPEN_START_WITH.to_owned(),
+                (_, Some(_), _) => catalog::reading_the_tracking_branch_2(&icons::SPINNER),
                 (_, None, Some(error)) => format!("{}  {error}", icons::WARNING),
-                (Some(_), None, None) => "The tracking branch holds no events yet.".to_owned(),
+                (Some(_), None, None) => catalog::THE_TRACKING_BRANCH_HOLDS_NO_EVENTS.to_owned(),
             };
             ui.centered_and_justified(|ui| ui.label(text));
             return;

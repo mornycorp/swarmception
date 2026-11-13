@@ -11,6 +11,7 @@
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+mod catalog;
 pub mod control;
 mod details;
 mod factory;
@@ -782,9 +783,10 @@ impl Shell {
         let shown = if folded {
             let shown = egui::Panel::right(Part::DetailsStrip.id()).resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    let chevron = ui.add(egui::Button::new(icons::CHEVRON_LEFT).frame(false)).on_hover_text("Open the Details");
-                    let icon =
-                        ui.add(egui::Label::new(egui::RichText::new(icons::INFO).strong()).sense(egui::Sense::click())).on_hover_text("Open the Details");
+                    let chevron = ui.add(egui::Button::new(icons::CHEVRON_LEFT).frame(false)).on_hover_text(catalog::OPEN_THE_DETAILS);
+                    let icon = ui
+                        .add(egui::Label::new(egui::RichText::new(icons::INFO).strong()).sense(egui::Sense::click()))
+                        .on_hover_text(catalog::OPEN_THE_DETAILS);
                     chevron.clicked() || icon.clicked()
                 })
                 .inner
@@ -807,7 +809,7 @@ impl Shell {
             shown.response.rect.width()
         };
         self.layout.details = Some(layout::BandDrawn {
-            name: "details".into(),
+            name: catalog::DETAILS.into(),
             size: whole_points(shown),
             wanted: whole_points(wanted),
             folded,
@@ -842,7 +844,7 @@ impl Shell {
     fn central(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
         let panes = self.ui.panes;
         if !panes.timeline && !panes.factory {
-            ui.centered_and_justified(|ui| ui.weak("No pane is shown: View ▸ Timeline or Factory shows one."));
+            ui.centered_and_justified(|ui| ui.weak(catalog::NO_PANE_IS_SHOWN_VIEW_TIMELINE));
             return;
         }
         let folded = self.ui.folded.or(defaults.folded);
@@ -979,9 +981,9 @@ impl Shell {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.menu_state();
         egui::MenuBar::new().ui(ui, |ui| {
-            let file = ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::file_items()));
+            let file = ui.menu_button(catalog::FILE, |ui| self.menu_items(ui, state, &MenuAction::file_items()));
             self.note_menu(Some(file.response.rect), None);
-            ui.menu_button("View", |ui| self.menu_items(ui, state, &MenuAction::VIEW));
+            ui.menu_button(catalog::VIEW, |ui| self.menu_items(ui, state, &MenuAction::VIEW));
         });
     }
 
@@ -992,7 +994,7 @@ impl Shell {
                 continue;
             };
             if action == MenuAction::Grouping(Grouping::Flat) {
-                ui.label("Tickets");
+                ui.label(catalog::TICKETS);
             }
             if action == MenuAction::Recent {
                 let shown = ui.menu_button(format!("{}  {}", action.icon(), action.label()), |ui| self.recent_menu(ui, state));
@@ -1049,17 +1051,17 @@ impl Shell {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let can = self.status.repo.is_some() && !self.loading();
-            if ui.add_enabled(can, icon_button(icons::RELOAD)).on_hover_text("Reload the tracking branch").clicked() {
+            if ui.add_enabled(can, icon_button(icons::RELOAD)).on_hover_text(catalog::RELOAD_THE_TRACKING_BRANCH).clicked() {
                 self.reload();
             }
-            if ui.add_enabled(can, icon_button(icons::FETCH)).on_hover_text("Fetch the remote's tracking branch, then reload").clicked() {
+            if ui.add_enabled(can, icon_button(icons::FETCH)).on_hover_text(catalog::FETCH_THE_REMOTE_S_TRACKING_BRANCH).clicked() {
                 self.fetch();
             }
             self.live_toggle(ui);
             ui.separator();
             let mut spec = self.spec;
-            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text("Tickets packed onto shared rows, in the order they began");
-            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text("Tickets by worker: machine / worker / its rows");
+            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text(catalog::TICKETS_PACKED_ONTO_SHARED_ROWS_IN);
+            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text(catalog::TICKETS_BY_WORKER_MACHINE_WORKER_ITS);
             ui.separator();
             let mut collapse = |ui: &mut egui::Ui, mode: Collapse, icon: &str, hover: &str| {
                 let on = spec.collapse == mode;
@@ -1067,25 +1069,24 @@ impl Shell {
                     spec.collapse = if on { Collapse::Off } else { mode };
                 }
             };
-            collapse(ui, Collapse::Empty, icons::COLLAPSE, "Collapse: leave out rows with no events at all");
-            collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, "Collapse to the window: leave out rows with nothing in the visible window, as it settles");
+            collapse(ui, Collapse::Empty, icons::COLLAPSE, catalog::COLLAPSE_LEAVE_OUT_ROWS_WITH_NO);
+            collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, catalog::COLLAPSE_TO_THE_WINDOW_LEAVE_OUT);
             if spec != self.spec {
                 self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse), merge_marks: Some(spec.merge_marks) });
             }
             let mut fold = self.ui.fold.on;
             let minutes = self.ui.fold.after_seconds.unwrap_or(swarmception_domain::stats::QUIET) / 60;
-            let hover =
-                format!("Fold quiet time: each stretch where nothing happened for over {minutes} min drawn as a narrow marker; the ruler jumps over it");
-            if ui.checkbox(&mut fold, format!("{}  Fold quiet time", icons::FOLD)).on_hover_text(hover).changed() {
+            let hover = catalog::fold_quiet_time_each_stretch(&minutes);
+            if ui.checkbox(&mut fold, catalog::fold_quiet_time(&icons::FOLD)).on_hover_text(hover).changed() {
                 self.set_fold(fold);
             }
             // The zoom in / out / fit buttons are the timeline widget's own toolbar's (#35).
             if let Some(path) = &self.status.opening {
                 ui.separator();
-                ui.label(format!("{}  opening {path}…", icons::SPINNER));
+                ui.label(catalog::opening(&icons::SPINNER, &path));
             } else if self.loading() {
                 ui.separator();
-                ui.label(format!("{}  reading the tracking branch…", icons::SPINNER));
+                ui.label(catalog::reading_the_tracking_branch(&icons::SPINNER));
             }
         });
     }
@@ -1097,22 +1098,14 @@ impl Shell {
             let s = &self.status;
             match &s.repo {
                 Some(repo) => ui.label(format!("{}  {repo}", icons::FOLDER)),
-                None => ui.weak("No repository: File ▸ Open… (⌘O) opens a swarm's clone"),
+                None => ui.weak(catalog::NO_REPOSITORY_FILE_OPEN_O_OPENS),
             };
             if let (Some(reference), Some(commit)) = (&s.reference, &s.commit) {
                 ui.separator();
                 let short = commit.get(..8).unwrap_or(commit);
                 ui.label(format!("{}  {} @ {short}", icons::BRANCH, reference.trim_start_matches("refs/")));
                 ui.separator();
-                ui.label(format!(
-                    "{}  {} tickets · {} merged · {} merges to main · {} workers · {} events",
-                    icons::TICKETS,
-                    s.tickets,
-                    s.merged,
-                    s.main_merges,
-                    s.workers,
-                    s.events
-                ));
+                ui.label(catalog::tickets_merged_merges_to_main(&icons::TICKETS, &s.tickets, &s.merged, &s.main_merges, &s.workers, &s.events));
             }
             if let Some(text) = self.timeline.clock_text(&mut self.engine) {
                 ui.separator();
@@ -1127,9 +1120,8 @@ impl Shell {
                 ui.colored_label(ui.visuals().error_fg_color, format!("{}  {problem}", icons::WARNING));
             } else if s.line_errors > 0 {
                 ui.separator();
-                let lines: Vec<String> = s.errors.iter().map(|e| format!("{} line {}: {}", e.instance, e.line, e.message)).collect();
-                ui.colored_label(ui.visuals().warn_fg_color, format!("{}  {} lines didn't read", icons::WARNING, s.line_errors))
-                    .on_hover_text(lines.join("\n"));
+                let lines: Vec<String> = s.errors.iter().map(|e| catalog::line(&e.instance, &e.line, &e.message)).collect();
+                ui.colored_label(ui.visuals().warn_fg_color, catalog::lines_didn_t_read(&icons::WARNING, &s.line_errors)).on_hover_text(lines.join("\n"));
             }
         });
     }
@@ -1141,7 +1133,7 @@ pub const LIVE_INTERVALS: [u64; 5] = [10, 30, 60, 120, 300];
 /// An interval as the toolbar shows it: `30 s`, `2 min`.
 #[must_use]
 pub fn interval_text(seconds: u64) -> String {
-    if seconds >= 60 && seconds.is_multiple_of(60) { format!("{} min", seconds / 60) } else { format!("{seconds} s") }
+    if seconds >= 60 && seconds.is_multiple_of(60) { catalog::min(&(seconds / 60)) } else { format!("{seconds} s") }
 }
 
 /// A time of day, `HH:MM:SS`, as the status bar shows it (UTC).
@@ -1154,11 +1146,8 @@ impl Shell {
     /// The toolbar's Live toggle and, while it is on, its interval (#54): `live.set`.
     fn live_toggle(&mut self, ui: &mut egui::Ui) {
         let mut on = self.live.on;
-        let hover = format!(
-            "Live: fetch the remote's tracking and main every {}, off the UI thread, and reload when either moved; the view stays, or follows the end when it was there",
-            interval_text(self.live.interval_seconds)
-        );
-        if ui.add_enabled(self.status.repo.is_some(), egui::Button::selectable(on, format!("{}  Live", icons::LIVE))).on_hover_text(hover).clicked() {
+        let hover = catalog::live_fetch_the_remote_s(&(interval_text(self.live.interval_seconds)));
+        if ui.add_enabled(self.status.repo.is_some(), egui::Button::selectable(on, catalog::live(&icons::LIVE))).on_hover_text(hover).clicked() {
             on = !on;
             self.set_live(SetLiveParams { on: Some(on), interval_seconds: None });
         }
@@ -1184,28 +1173,28 @@ impl Shell {
             return;
         }
         ui.separator();
-        let checked = live.last_check.map(|t| format!(" · checked {}", time_of_day(t))).unwrap_or_default();
-        let mut hover = vec![format!("Every {}: fetches tracking and main, and reloads when either moved.", interval_text(live.interval_seconds))];
-        hover.extend(live.last_new.map(|t| format!("Last new events: {} UTC", time_of_day(t))));
+        let checked = live.last_check.map(|t| catalog::checked(&(time_of_day(t)))).unwrap_or_default();
+        let mut hover = vec![catalog::every_fetches_tracking_and_main(&(interval_text(live.interval_seconds)))];
+        hover.extend(live.last_new.map(|t| catalog::last_new_events_utc(&(time_of_day(t)))));
         if let Some(cost) = live.cost {
-            let mut parts = vec![format!("fetch {} ms", cost.fetch_ms)];
-            parts.extend(cost.read_ms.map(|ms| format!("read {ms} ms")));
-            parts.extend(cost.build_ms.map(|ms| format!("build {ms} ms")));
-            parts.extend(cost.new_events.map(|n| format!("{n} new events")));
-            hover.push(format!("Last check: {}", parts.join(", ")));
+            let mut parts = vec![catalog::fetch_ms(&cost.fetch_ms)];
+            parts.extend(cost.read_ms.map(|ms| catalog::read_ms(&ms)));
+            parts.extend(cost.build_ms.map(|ms| catalog::build_ms(&ms)));
+            parts.extend(cost.new_events.map(|n| catalog::new_events(&n)));
+            hover.push(catalog::last_check(&(parts.join(", "))));
         }
         let label = match (&live.error, live.on) {
             (Some(error), true) => {
                 let retry = live
                     .last_check
                     .zip(live.next_in_seconds)
-                    .map(|(t, s)| format!(" · retry at {}", time_of_day(swarmception_model::Timestamp(t.0.saturating_add(i64::try_from(s).unwrap_or(0))))));
+                    .map(|(t, s)| catalog::retry_at(&(time_of_day(swarmception_model::Timestamp(t.0.saturating_add(i64::try_from(s).unwrap_or(0)))))));
                 hover.push(error.clone());
-                let failed = if live.failures > 1 { format!("check failed ×{}", live.failures) } else { "check failed".to_owned() };
-                ui.colored_label(ui.visuals().warn_fg_color, format!("{}  live · {failed}{}  {}", icons::LIVE, retry.unwrap_or_default(), icons::WARNING))
+                let failed = if live.failures > 1 { catalog::check_failed(&live.failures) } else { catalog::CHECK_FAILED.to_owned() };
+                ui.colored_label(ui.visuals().warn_fg_color, catalog::live_2(&icons::LIVE, &(retry.unwrap_or_default()), &icons::WARNING, &failed))
             }
-            (_, true) => ui.label(format!("{}  live{checked}", icons::LIVE)),
-            (_, false) => ui.weak(format!("{}  paused{checked}", icons::LIVE)),
+            (_, true) => ui.label(catalog::live_3(&icons::LIVE, &checked)),
+            (_, false) => ui.weak(catalog::paused(&icons::LIVE, &checked)),
         };
         label.on_hover_text(hover.join("\n"));
     }
@@ -1217,7 +1206,7 @@ impl Shell {
         let short: String = note.chars().take(120).collect();
         let short = if short.len() < note.len() { format!("{short}…") } else { short };
         let file = self.saved().file.unwrap_or_default();
-        let full = format!("{note}\n{file}\n(click to dismiss)");
+        let full = catalog::click_to_dismiss(&note, &file);
         let text = egui::RichText::new(format!("{}  {short}", icons::WARNING)).color(ui.visuals().warn_fg_color);
         if ui.add(egui::Label::new(text).sense(egui::Sense::click())).on_hover_text(full).clicked()
             && let Some(keeper) = &mut self.keeper
@@ -1236,19 +1225,19 @@ impl Shell {
         }
         ui.separator();
         let from = match issues.source {
-            Some(swarmception_engine::issues::IssuesSource::Github) => "from GitHub",
-            Some(swarmception_engine::issues::IssuesSource::Cache) => "cached",
+            Some(swarmception_engine::issues::IssuesSource::Github) => catalog::FROM_GITHUB,
+            Some(swarmception_engine::issues::IssuesSource::Cache) => catalog::CACHED,
             None => "",
         };
         let mut text = match (&issues.github, issues.issues) {
             (Some(repo), 0) if issues.source.is_none() => format!("{}  {repo}", icons::ISSUES),
-            (Some(repo), n) => format!("{}  {repo}: {n} issues and PRs {from}", icons::ISSUES),
-            (None, _) => format!("{}  no issues", icons::ISSUES),
+            (Some(repo), n) => catalog::issues_and_prs(&icons::ISSUES, &repo, &n, &from),
+            (None, _) => catalog::no_issues(&icons::ISSUES),
         };
         if issues.fetching {
-            text.push_str(" · fetching…");
+            text.push_str(catalog::FETCHING);
         }
-        let hover = issues.fetched.map(|t| format!("fetched {t}")).into_iter().chain(issues.cache.iter().map(|c| format!("cached in {c}")));
+        let hover = issues.fetched.map(|t| catalog::fetched(&t)).into_iter().chain(issues.cache.iter().map(|c| catalog::cached_in(&c)));
         let hover: Vec<String> = hover.chain(issues.error.iter().cloned()).collect();
         let label = match &issues.error {
             Some(_) => ui.colored_label(ui.visuals().warn_fg_color, format!("{text} {}", icons::WARNING)),
@@ -1280,7 +1269,7 @@ impl BandKind {
 
     const fn title(self) -> &'static str {
         match self {
-            Self::Factory => "Factory",
+            Self::Factory => catalog::FACTORY,
         }
     }
 
