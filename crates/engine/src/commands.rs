@@ -8,6 +8,7 @@ use crate::{details_cmds, engine_cmds, factory_cmds, gates_cmds, issues_cmds, li
 static REGISTRY: LazyLock<Vec<Entry>> = LazyLock::new(|| {
     vec![
         Entry::of::<engine_cmds::Commands>(),
+        Entry::of::<engine_cmds::States>(),
         Entry::of::<repo_cmds::Open>(),
         Entry::of::<repo_cmds::Reload>(),
         Entry::of::<repo_cmds::Fetch>(),

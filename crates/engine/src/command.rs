@@ -1,7 +1,9 @@
 //! A command: an id, a label, a typed params type and result type with their JSON Schemas, an
 //! `enabled` check, and `run`. The one adapter, [`Entry::of`], erases its types for the
 //! registry: it bounds and parses the params, catches a panic in `enabled` or `run`, and
-//! serializes the result, so no command reads raw JSON.
+//! serializes the result, so no command reads raw JSON. A command a person runs from the menus says
+//! where ([`MenuPlace`], #160): the UI builds its menus and shortcuts from the registry, and greys
+//! out what can't run now with [`Entry::state`]'s reason.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
@@ -15,6 +17,52 @@ use crate::session::Session;
 /// The largest params text a command takes.
 pub const MAX_PARAMS: usize = 1024 * 1024;
 
+/// Where a command sits in the menus (#160, swarm-core's contract: the UI builds its menus,
+/// toolbars and shortcuts from the registry), so a front end names no command to make a menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MenuPlace {
+    /// Its menu, then any submenu: `["File"]`, `["File", "Open Recent"]`.
+    pub path: &'static [&'static str],
+    /// What the item shows.
+    pub label: &'static str,
+    /// Its group in the menu: groups in order, a separator between them; within one, the
+    /// registry's order.
+    pub group: u8,
+    pub shortcut: Option<Shortcut>,
+    /// What the front end asks the person for before it runs, put in the params.
+    pub asks: Option<Ask>,
+}
+
+/// A menu item's shortcut: the platform's command key (⌘ on macOS, Ctrl elsewhere), Shift with
+/// it or not, and a letter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Shortcut {
+    pub shift: bool,
+    /// `A` to `Z`.
+    pub key: char,
+}
+
+impl Shortcut {
+    /// ⌘ (Ctrl) and `key`.
+    #[must_use]
+    pub const fn command(key: char) -> Self {
+        Self { shift: false, key }
+    }
+
+    /// ⌘ (Ctrl), Shift and `key`.
+    #[must_use]
+    pub const fn command_shift(key: char) -> Self {
+        Self { shift: true, key }
+    }
+}
+
+/// What a front end asks for before it runs a menu's command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ask {
+    /// A folder (the host's picker), as the param named.
+    Folder { param: &'static str },
+}
+
 /// One action or query. Its params type refuses unknown fields (`#[serde(deny_unknown_fields)]`).
 pub trait Command {
     /// `area.name`, lowerCamelCase segments: `rows.set`.
@@ -25,6 +73,8 @@ pub trait Command {
     type Result: Serialize + JsonSchema;
     /// Whether it only reads: a read-only command leaves the session's revision where it was.
     const READ_ONLY: bool = false;
+    /// Where it sits in the menus, when a person runs it from there (#160).
+    const MENU: Option<MenuPlace> = None;
 
     /// Whether it can run now, or why not.
     ///
@@ -49,6 +99,8 @@ pub struct Entry {
     pub id: &'static str,
     pub label: &'static str,
     pub read_only: bool,
+    pub menu: Option<MenuPlace>,
+    enabled: fn(&Session) -> Result<(), Unavailable>,
     params_schema: fn() -> Schema,
     result_schema: fn() -> Schema,
     execute: fn(&mut Session, &str) -> Result<String, EngineError>,
@@ -62,9 +114,25 @@ impl Entry {
             id: C::ID,
             label: C::LABEL,
             read_only: C::READ_ONLY,
+            menu: C::MENU,
+            enabled: C::enabled,
             params_schema: || schema_for!(C::Params),
             result_schema: || schema_for!(C::Result),
             execute: execute::<C>,
+        }
+    }
+
+    /// Whether it can run now, or why not, as a menu says it: the dispatch's own check, a panic
+    /// in it caught and said.
+    ///
+    /// # Errors
+    ///
+    /// Why it can't run now.
+    pub fn state(&self, session: &Session) -> Result<(), String> {
+        match catch_unwind(AssertUnwindSafe(|| (self.enabled)(session))) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(why)) => Err(why.to_string()),
+            Err(_) => Err(format!("{}'s check failed", self.id)),
         }
     }
 

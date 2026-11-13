@@ -456,6 +456,7 @@ pub fn ui_commands() -> CommandsResult {
         read_only,
         params: params.to_value(),
         result: result.to_value(),
+        menu: None,
     };
     CommandsResult {
         commands: vec![
@@ -472,6 +473,7 @@ pub fn ui_commands() -> CommandsResult {
             read_only: false,
             params: entry.params_schema().to_value(),
             result: entry.result_schema().to_value(),
+            menu: None,
         }))
         .collect(),
     }

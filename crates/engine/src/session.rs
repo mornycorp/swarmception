@@ -205,6 +205,19 @@ impl Session {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Whether each command can run now, and why not (`engine.states`, #160): the dispatch's own
+    /// check, in the registry's order.
+    #[must_use]
+    pub fn states(&self) -> Vec<crate::engine_cmds::CommandState> {
+        commands::all()
+            .iter()
+            .map(|entry| {
+                let state = entry.state(self);
+                crate::engine_cmds::CommandState { id: entry.id.to_owned(), enabled: state.is_ok(), reason: state.err() }
+            })
+            .collect()
+    }
+
     /// The waker a background job calls when it lands; none for a session that works in the
     /// foreground.
     pub(crate) fn waker(&self) -> Option<Waker> {

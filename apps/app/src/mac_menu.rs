@@ -33,7 +33,7 @@ pub struct NativeMenu {
     /// File ▸ Open Recent (#69): its items, rebuilt when the shell's recent list changes.
     recent: Submenu,
     /// What Open Recent lists now: its repositories' labels.
-    recent_shown: Option<Vec<String>>,
+    recent_shown: Option<(Vec<String>, swarmception_ui::menu::CommandsEnabled)>,
     clicks: Receiver<MenuAction>,
     /// What the items show now; `None` after a click, which may have toggled a check mark itself.
     shown: Option<MenuState>,
@@ -63,31 +63,48 @@ impl Item {
     }
 }
 
-/// The Mac shortcut of `action`.
-const fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
-    match action {
-        MenuAction::Open => Some((Modifiers::META, Code::KeyO)),
-        MenuAction::Reload => Some((Modifiers::META, Code::KeyR)),
-        MenuAction::Fetch => Some((Modifiers::META.union(Modifiers::SHIFT), Code::KeyR)),
-        MenuAction::Quit => Some((Modifiers::META, Code::KeyQ)),
-        MenuAction::Live => Some((Modifiers::META, Code::KeyL)),
-        MenuAction::Timeline
-        | MenuAction::Factory
-        | MenuAction::Details
-        | MenuAction::Workers
-        | MenuAction::Grouping(_)
-        | MenuAction::Collapse(_)
-        | MenuAction::FoldQuiet
-        | MenuAction::MergeMarks
-        | MenuAction::Fit
-        | MenuAction::Recent
-        | MenuAction::OpenRecent(_)
-        | MenuAction::ClearRecent => None,
-    }
+/// The Mac shortcut of `action`: the registry's (#160) or the window's own, ⌘ and the key.
+fn shortcut(action: MenuAction) -> Option<(Modifiers, Code)> {
+    let shortcut = action.shortcut()?;
+    let modifiers = if shortcut.shift { Modifiers::META.union(Modifiers::SHIFT) } else { Modifiers::META };
+    Some((modifiers, letter(shortcut.key)?))
+}
+
+/// The key code of the letter `key`.
+const fn letter(key: char) -> Option<Code> {
+    Some(match key.to_ascii_uppercase() {
+        'A' => Code::KeyA,
+        'B' => Code::KeyB,
+        'C' => Code::KeyC,
+        'D' => Code::KeyD,
+        'E' => Code::KeyE,
+        'F' => Code::KeyF,
+        'G' => Code::KeyG,
+        'H' => Code::KeyH,
+        'I' => Code::KeyI,
+        'J' => Code::KeyJ,
+        'K' => Code::KeyK,
+        'L' => Code::KeyL,
+        'M' => Code::KeyM,
+        'N' => Code::KeyN,
+        'O' => Code::KeyO,
+        'P' => Code::KeyP,
+        'Q' => Code::KeyQ,
+        'R' => Code::KeyR,
+        'S' => Code::KeyS,
+        'T' => Code::KeyT,
+        'U' => Code::KeyU,
+        'V' => Code::KeyV,
+        'W' => Code::KeyW,
+        'X' => Code::KeyX,
+        'Y' => Code::KeyY,
+        'Z' => Code::KeyZ,
+        _ => return None,
+    })
 }
 
 /// What the system menu bar calls `action`: a Mac app's Quit names the app.
-const fn label(action: MenuAction) -> &'static str {
+fn label(action: MenuAction) -> &'static str {
     match action {
         MenuAction::Quit => "Quit Swarmception",
         other => other.label(),
@@ -129,7 +146,11 @@ impl NativeMenu {
     /// What muda ran into building them; the window keeps its own menu bar then.
     pub fn install(ctx: &egui::Context, state: &MenuState) -> Result<Self, muda::Error> {
         let mut items = Vec::new();
-        for action in MenuAction::ALL.into_iter().filter(|a| *a != MenuAction::Recent) {
+        // The window's own items, then the commands the registry places (#160); Open Recent's
+        // are built as its list changes.
+        let placed_in_recent: Vec<MenuAction> = MenuAction::recent_items(0).into_iter().flatten().collect();
+        let all = MenuAction::ALL.into_iter().chain(MenuAction::commands());
+        for action in all.filter(|a| *a != MenuAction::Recent && !placed_in_recent.contains(a)) {
             let accelerator = shortcut(action).map(|(mods, code)| Accelerator::new(mods, code));
             let item = match state.checked(action) {
                 Some(checked) => Item::Check(CheckMenuItem::with_id(action.id(), label(action), state.enabled(action), checked, accelerator)),
@@ -159,7 +180,7 @@ impl NativeMenu {
         let recent = Submenu::with_id(MenuAction::Recent.id(), label(MenuAction::Recent), true);
         append(&app, &[Some(MenuAction::Quit)], &items, &recent)?;
         let file = Submenu::new("File", true);
-        append(&file, &mac_items(&MenuAction::FILE), &items, &recent)?;
+        append(&file, &mac_items(&MenuAction::file_items()), &items, &recent)?;
         let view = Submenu::new("View", true);
         append(&view, &mac_items(&MenuAction::VIEW), &items, &recent)?;
 
@@ -179,26 +200,29 @@ impl NativeMenu {
         Ok(Self { _menu: menu, items, recent, recent_shown: None, clicks, shown: Some(*state) })
     }
 
-    /// Open Recent's items as `labels` has them (#69): each repository, then Clear Menu, which is
-    /// greyed out when there is none.
-    fn show_recent(&mut self, labels: Vec<String>) {
-        if self.recent_shown.as_ref() == Some(&labels) {
+    /// Open Recent's items as `labels` has them (#69): each repository, then the commands the
+    /// registry places there (Clear Menu, #160), greyed out by the engine's check.
+    fn show_recent(&mut self, labels: Vec<String>, state: &MenuState) {
+        let shown = (labels, state.commands);
+        if self.recent_shown.as_ref() == Some(&shown) {
             return;
         }
         while self.recent.remove_at(0).is_some() {}
-        let built = labels
-            .iter()
-            .zip(0u8..)
-            .map(|(text, n)| self.recent.append(&MenuItem::with_id(MenuAction::OpenRecent(n).id(), text, true, None)))
-            .chain([
-                self.recent.append(&PredefinedMenuItem::separator()),
-                self.recent.append(&MenuItem::with_id(MenuAction::ClearRecent.id(), label(MenuAction::ClearRecent), !labels.is_empty(), None)),
-            ])
+        let built = MenuAction::recent_items(shown.0.len())
+            .into_iter()
+            .map(|item| match item {
+                None => self.recent.append(&PredefinedMenuItem::separator()),
+                Some(MenuAction::OpenRecent(n)) => {
+                    let text = shown.0.get(usize::from(n)).map_or("", String::as_str);
+                    self.recent.append(&MenuItem::with_id(MenuAction::OpenRecent(n).id(), text, true, None))
+                }
+                Some(action) => self.recent.append(&MenuItem::with_id(action.id(), label(action), state.enabled(action), None)),
+            })
             .collect::<Result<Vec<()>, _>>();
         if let Err(e) = built {
             eprintln!("swarmception: Open Recent's items: {e}");
         }
-        self.recent_shown = Some(labels);
+        self.recent_shown = Some(shown);
     }
 
     /// Runs the items clicked since the last frame.
@@ -213,7 +237,7 @@ impl NativeMenu {
     pub fn show(&mut self, shell: &mut Shell) {
         let state = shell.menu_state();
         let labels: Vec<String> = (0..state.recent).filter_map(|n| shell.recent_label(n)).collect();
-        self.show_recent(labels);
+        self.show_recent(labels, &state);
         if self.shown == Some(state) {
             return;
         }
@@ -231,8 +255,9 @@ mod tests {
     #[test]
     fn shortcuts_are_the_mac_ones_and_distinct() {
         assert_eq!(shortcut(MenuAction::Quit), Some((Modifiers::META, Code::KeyQ)));
-        assert_eq!(shortcut(MenuAction::Reload), Some((Modifiers::META, Code::KeyR)));
-        let all: Vec<_> = MenuAction::ALL.into_iter().filter_map(shortcut).collect();
+        assert_eq!(shortcut(MenuAction::Command("repo.reload")), Some((Modifiers::META, Code::KeyR)), "the registry's");
+        assert_eq!(shortcut(MenuAction::Command("repo.fetch")), Some((Modifiers::META.union(Modifiers::SHIFT), Code::KeyR)));
+        let all: Vec<_> = MenuAction::ALL.into_iter().chain(MenuAction::commands()).filter_map(shortcut).collect();
         for (i, a) in all.iter().enumerate() {
             assert!(!all[i + 1..].contains(a), "{a:?} twice");
         }
@@ -251,14 +276,16 @@ mod tests {
 
     #[test]
     fn quit_moves_to_the_app_menu() {
-        assert_eq!(mac_items(&MenuAction::FILE), [Some(MenuAction::Open), Some(MenuAction::Recent), None, Some(MenuAction::Reload), Some(MenuAction::Fetch)]);
+        let open = MenuAction::Command("repo.open");
+        let (reload, fetch) = (MenuAction::Command("repo.reload"), MenuAction::Command("repo.fetch"));
+        assert_eq!(mac_items(&MenuAction::file_items()), [Some(open), Some(MenuAction::Recent), None, Some(reload), Some(fetch)]);
         assert_eq!(mac_items(&MenuAction::VIEW), MenuAction::VIEW);
     }
 
     #[test]
     fn open_is_command_o() {
-        assert_eq!(shortcut(MenuAction::Open), Some((Modifiers::META, Code::KeyO)));
-        assert_eq!(label(MenuAction::Open), "Open…");
+        assert_eq!(shortcut(MenuAction::Command("repo.open")), Some((Modifiers::META, Code::KeyO)));
+        assert_eq!(label(MenuAction::Command("repo.open")), "Open…");
         assert_eq!(shortcut(MenuAction::OpenRecent(0)), None);
     }
 }

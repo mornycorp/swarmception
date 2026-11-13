@@ -461,7 +461,7 @@ impl Shell {
     pub fn menu_state(&mut self) -> MenuState {
         self.sync();
         MenuState {
-            can_reload: self.status.repo.is_some() && !self.loading(),
+            commands: menu::CommandsEnabled::of(&self.engine.states()),
             can_fit: self.timeline.has_data(),
             timeline: self.ui.panes.timeline,
             factory: self.ui.panes.factory,
@@ -502,13 +502,10 @@ impl Shell {
     pub fn run_menu(&mut self, ctx: &egui::Context, action: MenuAction) {
         self.sync();
         match action {
-            MenuAction::Open => self.ask_open(),
+            MenuAction::Command(id) => self.run_command(id),
             // A submenu: its items run.
             MenuAction::Recent => {}
             MenuAction::OpenRecent(n) => self.open_recent(n),
-            MenuAction::ClearRecent => self.clear_recent(),
-            MenuAction::Reload => self.reload(),
-            MenuAction::Fetch => self.fetch(),
             MenuAction::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 // The close lands on the next frame: a click in the system menu bar brings none.
@@ -534,6 +531,26 @@ impl Shell {
     #[must_use]
     pub fn has_timeline(&mut self) -> bool {
         self.timeline.has_data()
+    }
+
+    /// Runs a command the registry placed in a menu (#160): one that asks for a folder through
+    /// the host's picker, then the shell's open (the open repository's state saved first); the
+    /// rest with no params, a failure said in the window.
+    fn run_command(&mut self, id: &str) {
+        let Some(entry) = swarmception_engine::commands::find(id) else { return };
+        match entry.menu.and_then(|m| m.asks) {
+            Some(swarmception_engine::command::Ask::Folder { .. }) => self.ask_open(),
+            None => {
+                let result = self.engine.execute(id, "");
+                self.note(result);
+                self.sync();
+            }
+        }
+    }
+
+    /// Why the command `id` can't run now, as its greyed menu item says (`engine.states`, #160).
+    fn command_reason(&self, id: &str) -> Option<String> {
+        self.engine.states().into_iter().find(|s| s.id == id).and_then(|s| s.reason)
     }
 
     fn note<T>(&mut self, result: Result<T, swarmception_engine::EngineError>) {
@@ -603,10 +620,7 @@ impl Shell {
         }
         if !self.native_menu {
             egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-            // ⌘O / Ctrl+O, as the system menu bar's File ▸ Open… has it.
-            if ui.ctx().input_mut(|i| i.consume_shortcut(&egui::KeyboardShortcut::new(egui::Modifiers::COMMAND, egui::Key::O))) {
-                self.ask_open();
-            }
+            self.command_shortcuts(ui.ctx());
         }
         self.opening_ui(ui.ctx());
         egui::Panel::top("toolbar").show(ui, |ui| self.toolbar(ui));
@@ -963,7 +977,7 @@ impl Shell {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.menu_state();
         egui::MenuBar::new().ui(ui, |ui| {
-            let file = ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::FILE));
+            let file = ui.menu_button("File", |ui| self.menu_items(ui, state, &MenuAction::file_items()));
             self.note_menu(Some(file.response.rect), None);
             ui.menu_button("View", |ui| self.menu_items(ui, state, &MenuAction::VIEW));
         });
@@ -983,18 +997,49 @@ impl Shell {
                 self.note_menu(None, Some(shown.response.rect));
                 continue;
             }
-            let label = format!("{}  {}", action.icon(), action.label());
-            let enabled = state.enabled(action);
-            let clicked = match state.checked(action) {
-                Some(checked) if matches!(action, MenuAction::Grouping(_)) => ui.add_enabled(enabled, egui::RadioButton::new(checked, label)).clicked(),
-                Some(mut checked) => ui.add_enabled(enabled, egui::Checkbox::new(&mut checked, label)).clicked(),
-                None => ui.add_enabled(enabled, egui::Button::new(label)).clicked(),
-            };
+            let clicked = self.menu_item(ui, state, action).clicked();
             if clicked {
                 self.run_menu(ui.ctx(), action);
                 if action.closes_menu() {
                     ui.close();
                 }
+            }
+        }
+    }
+
+    /// One item of the window's own menus: a radio or check item for one that shows a state, a
+    /// button with its shortcut for the rest; a command greyed out says why (the engine's own
+    /// check, #160).
+    fn menu_item(&self, ui: &mut egui::Ui, state: MenuState, action: MenuAction) -> egui::Response {
+        let label = format!("{}  {}", action.icon(), action.label());
+        let enabled = state.enabled(action);
+        let response = match state.checked(action) {
+            Some(checked) if matches!(action, MenuAction::Grouping(_)) => ui.add_enabled(enabled, egui::RadioButton::new(checked, label)),
+            Some(mut checked) => ui.add_enabled(enabled, egui::Checkbox::new(&mut checked, label)),
+            None => {
+                let shortcut = action.shortcut().map(|s| ui.ctx().format_shortcut(&keyboard_shortcut(s))).unwrap_or_default();
+                ui.add_enabled(enabled, egui::Button::new(label).shortcut_text(shortcut))
+            }
+        };
+        match action {
+            MenuAction::Command(id) if !enabled => match self.command_reason(id) {
+                Some(why) => response.on_disabled_hover_text(why),
+                None => response,
+            },
+            _ => response,
+        }
+    }
+
+    /// The registry's shortcuts in the window's own menu bar (#160): ⌘ / Ctrl and the key, Shift
+    /// ones looked at first, so ⌘R doesn't take ⌘⇧R; each runs its command when it can.
+    fn command_shortcuts(&mut self, ctx: &egui::Context) {
+        let mut placed: Vec<(MenuAction, swarmception_engine::command::Shortcut)> =
+            MenuAction::commands().into_iter().filter_map(|a| a.shortcut().map(|s| (a, s))).collect();
+        placed.sort_by_key(|(_, s)| !s.shift);
+        let state = self.menu_state();
+        for (action, shortcut) in placed {
+            if ctx.input_mut(|i| i.consume_shortcut(&keyboard_shortcut(shortcut))) && state.enabled(action) {
+                self.run_menu(ctx, action);
             }
         }
     }
@@ -1306,6 +1351,13 @@ fn icon_button(icon: &str) -> egui::Button<'_> {
     egui::Button::new(egui::RichText::new(icon).size(15.0))
 }
 
+/// A registry shortcut as egui's: the platform's command key, Shift or not, the letter.
+fn keyboard_shortcut(shortcut: swarmception_engine::command::Shortcut) -> egui::KeyboardShortcut {
+    let modifiers = if shortcut.shift { egui::Modifiers::COMMAND | egui::Modifiers::SHIFT } else { egui::Modifiers::COMMAND };
+    let key = egui::Key::from_name(&shortcut.key.to_string()).unwrap_or(egui::Key::Questionmark);
+    egui::KeyboardShortcut::new(modifiers, key)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,7 +1406,7 @@ mod tests {
         assert_eq!(
             state,
             MenuState {
-                can_reload: false,
+                commands: menu::CommandsEnabled::of(&shell.engine().states()),
                 can_fit: false,
                 timeline: true,
                 factory: true,
@@ -1368,6 +1420,13 @@ mod tests {
                 recent: 0
             }
         );
+        // #160: a command the registry places is enabled by the engine's own check, greyed with
+        // its reason: no repository, nothing to reload; nothing recent, nothing to clear.
+        assert!(state.enabled(MenuAction::Command("repo.open")));
+        assert!(!state.enabled(MenuAction::Command("repo.reload")) && !state.enabled(MenuAction::Command("repo.clearRecent")));
+        assert_eq!(shell.command_reason("repo.reload").as_deref(), Some("no repository is open"));
+        assert_eq!(shell.command_reason("repo.clearRecent").as_deref(), Some("no repository was opened before"));
+        assert_eq!(shell.command_reason("repo.open"), None);
         // Live is `live.set`, and the menu's mark is what `live.get` says.
         shell.run_menu(&ctx, MenuAction::Live);
         assert!(shell.menu_state().live && shell.live().on && !shell.live().default);
@@ -1399,7 +1458,7 @@ mod tests {
         assert_eq!(shell.menu_state().collapse, Collapse::Off);
 
         // No repository: Reload is an error the status bar shows, never a panic.
-        shell.run_menu(&ctx, MenuAction::Reload);
+        shell.run_menu(&ctx, MenuAction::Command("repo.reload"));
         assert!(shell.error.is_some());
     }
 

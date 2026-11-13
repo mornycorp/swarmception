@@ -115,7 +115,7 @@ fn open_switches_repositories_each_with_its_own_state() {
         *seen.borrow_mut() = start.map(Path::to_path_buf);
         Picked::Folder(answer.clone())
     }));
-    shell.run_menu(&ctx, MenuAction::Open);
+    shell.run_menu(&ctx, MenuAction::Command("repo.open"));
     assert_eq!(asked.borrow().as_deref(), a.parent());
     settle(&mut shell, &ctx);
     let now = inspect(&mut shell);
@@ -148,10 +148,10 @@ fn open_switches_repositories_each_with_its_own_state() {
     assert_eq!(store.load_recent(), [a.clone(), b.clone()]);
 
     // Clear Menu: empty, in the file too; a stays open.
-    shell.run_menu(&ctx, MenuAction::ClearRecent);
+    shell.run_menu(&ctx, MenuAction::Command("repo.clearRecent"));
     frame(&mut shell, &ctx);
     assert!(shell.recent().is_empty() && store.load_recent().is_empty());
-    assert!(!shell.menu_state().enabled(MenuAction::ClearRecent));
+    assert!(!shell.menu_state().enabled(MenuAction::Command("repo.clearRecent")));
     assert_eq!(inspect(&mut shell).repo.as_deref(), Some(a.display().to_string().as_str()));
     for dir in [a, b, state] {
         std::fs::remove_dir_all(dir).ok();
@@ -193,14 +193,14 @@ fn a_refused_folder_is_said_in_the_window_and_the_open_repository_stays() {
 
     // A missing folder from Open Recent, through the picker: refused the same way.
     shell.set_folder_picker(Box::new(|_| Picked::Folder(PathBuf::from("/no/such/swarm"))));
-    shell.run_menu(&ctx, MenuAction::Open);
+    shell.run_menu(&ctx, MenuAction::Command("repo.open"));
     support::until("the missing folder refused", || {
         frame(&mut shell, &ctx);
         shell.refused().is_some_and(|r| r.why.contains("no such folder"))
     });
     // Cancelled: nothing more is said or changed.
     shell.set_folder_picker(Box::new(|_| Picked::Cancelled));
-    shell.run_menu(&ctx, MenuAction::Open);
+    shell.run_menu(&ctx, MenuAction::Command("repo.open"));
     assert_eq!(inspect(&mut shell).repo.as_deref(), Some(a.display().to_string().as_str()));
     for dir in [a, plain, state] {
         std::fs::remove_dir_all(dir).ok();
@@ -226,6 +226,26 @@ fn an_agents_run_keeps_no_recent_list_and_a_kept_one_comes_back() {
     assert_eq!(recent, [a.display().to_string(), "/no/such/older".to_owned()]);
     assert!(shell.recent()[1].missing);
     assert_eq!(inspect(&mut shell).open.recent_file, Some(state.join("recent.json").display().to_string()));
+    for dir in [a, state] {
+        std::fs::remove_dir_all(dir).ok();
+    }
+}
+
+/// #160: the window's own menu bar takes the registry's shortcuts: ⌘R (Ctrl+R) runs
+/// `repo.reload`, as the File menu's Reload, when it can run.
+#[test]
+fn the_registrys_shortcuts_run_their_commands_in_the_window() {
+    let a = swarm("shortcut", 7);
+    let state = scratch("shortcut-state");
+    let store = StateStore::new(state.clone());
+    let (ctx, mut shell) = started(&a, &store);
+    assert!(!shell.loading());
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
+    let press = egui::Event::Key { key: egui::Key::R, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
+    let input = egui::RawInput { screen_rect: Some(screen), events: vec![press], ..Default::default() };
+    let _ = ctx.run_ui(input, |ui| shell.ui(ui));
+    assert_eq!(shell.engine().job(), Some(swarmception_engine::session::Job::Read), "⌘R reloads");
+    settle(&mut shell, &ctx);
     for dir in [a, state] {
         std::fs::remove_dir_all(dir).ok();
     }
