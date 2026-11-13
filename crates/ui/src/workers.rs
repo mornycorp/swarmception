@@ -16,7 +16,7 @@
 use egui::{Align2, Color32, FontId, Rect, Sense, Stroke, StrokeKind, pos2, vec2};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::colours::PALETTE;
+use swarmception_domain::colours::series_colour;
 use swarmception_domain::details::Subject;
 use swarmception_domain::workers::{Comparison, Figures, Group, Measure, Worker};
 use swarmception_engine::Session;
@@ -193,9 +193,10 @@ const WORKER_ROW: f32 = 21.0;
 const VALUE: f32 = 64.0;
 const SAMPLES: f32 = 34.0;
 
-/// A model × effort's colour: its place in `workers.compare`'s order, in the tickets' palette.
+/// A model × effort's colour: its place in `workers.compare`'s order, the theme's range8 by number
+/// (#152).
 fn group_colour(index: usize) -> Color32 {
-    rgb(PALETTE.get(index % PALETTE.len()).copied().unwrap_or([0x80, 0x80, 0x80]))
+    rgb(series_colour(u64::try_from(index).unwrap_or(u64::MAX)))
 }
 
 /// Seconds, as a person reads a duration in a table: `42 s`, `4 min 36 s`, `25 min`, `1 h 05 min`.

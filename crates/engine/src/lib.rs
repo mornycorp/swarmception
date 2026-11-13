@@ -22,6 +22,7 @@ pub mod repo_cmds;
 pub mod rows_cmds;
 pub mod session;
 pub mod stats_cmds;
+pub mod theme_cmds;
 pub mod workers_cmds;
 
 pub use command::{Command, Entry};

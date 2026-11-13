@@ -282,8 +282,8 @@ fn pack(widths: &[f32], width: f32) -> Vec<Place> {
         .collect()
 }
 
-/// An idle bench: a quiet sea green (hue 150°, saturation 0.34, value 0.76), softer than main's.
-const IDLE: Color32 = Color32::from_rgb(0x80, 0xc2, 0xa1);
+/// An idle bench: the theme's `idle`, a quiet sea green (#152).
+const IDLE: Color32 = crate::factory_chip::rgb(swarmception_domain::colours::IDLE);
 
 /// The gate's list (#95): its runs and the workers' `ready` checks together, those going on first
 /// (the last begun first), then those ended (the last ended first).

@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-06 · **Change:** minor (group idle benches and opt-in X row constraint, #147; reconcile main merge evidence and bound stopped/unresolved ticket histories, #142; Alt + click on a ticket's bar shows its end, by the pin to swarm-timeline 7e372fe, #137; the minimap draws the tickets' strips, #134; a sent-back ticket's red corner, merge dots optional, a red dot where given up, #127; the Gates band removed, #128; a stage named everywhere in its strip's colour, `Stage::colour` the one source, and no Gate runs or Ready checks rows, #117; merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-13 · **Change:** minor (colours from swarm-core's theme, `theme.get`, #152; group idle benches and opt-in X row constraint, #147; reconcile main merge evidence and bound stopped/unresolved ticket histories, #142; Alt + click on a ticket's bar shows its end, by the pin to swarm-timeline 7e372fe, #137; the minimap draws the tickets' strips, #134; a sent-back ticket's red corner, merge dots optional, a red dot where given up, #127; the Gates band removed, #128; a stage named everywhere in its strip's colour, `Stage::colour` the one source, and no Gate runs or Ready checks rows, #117; merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -94,12 +94,19 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   segments, the widget's segment line and its ■ swatch, the tooltip's stretch lines and
   milestones and the details' story all call it; a wait's gate runs listed under it, *in the
   gate*, by id), merged green, sent back, its cause and abandoned red, durations and the title
-  strong). `colours` is the one source of colours, the timeline's and the
-  factory's (#15): a ticket's own colour from its issue number (its entry in a fixed, curated palette of
-  eleven muted colours, the owner's scheme B (#40): consecutive ids never share one, none is
-  near a phase's hue, dark labels legible on every one), in which its bar and its merge are
-  drawn; claimed yellow, working a warm white, waiting for merge blue, in the gate magenta, sent
-  back red, stopped grey, merges onto main green. `timeline` builds
+  strong). `colours` is the one source of the swarm's colours, the timeline's and the
+  factory's (#15), each from `theme` (#152, the owner's: swarm-core's skeleton theme as it is,
+  its docs/app-architecture.md › Colours from the theme): a ticket's own colour is
+  `RANGE_32`'s pick of its issue number (FNV-1a over its digits, the same on every run and
+  machine), in which its bar and its merge are drawn; a stage takes the token named for what
+  it means: claimed `warning`, working `strong`, waiting for merge `accent`, in the gate
+  Swarmception's `gate`, sent back `error`, stopped `muted`, merges onto main `success`; an idle
+  bench Swarmception's `idle`; the Workers pane's groups `RANGE_8` by number. The theme's tests
+  measure each token's contrast (4.5:1 on the background, both looks), each range entry's (3:1),
+  strong text on each entry made a text background, the ranges' spacing (CIEDE2000) and the
+  pick's pins; `theme.get` returns it (each token's name, meaning, dark and light; each range's
+  entries), swarm-core's `ui.theme` under the engine's name, as `ui.*` is the window's. The
+  swarm's colours are the dark look's (a follow-up draws the light look's). `timeline` builds
   swarm-timeline's host data (`TimelineData`) from the rows, each range in its bar's colour: the axis's items are the distinct
   times, with a `Time` (Spans) scale, positions in nanoseconds from the first time floored to
   the hour; a time with a bar of no length at it (a merge, #115) has an item of no width first,
@@ -381,7 +388,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   taking no room in the layout: a comparison is opened, read and put away. It draws what
   `workers.compare` returns for the timeline's window (or the whole run, its choice; asked again
   only when the window or the data moves): a row per model × effort (a swatch in its colour, the
-  tickets' palette by its place), its workers under it (name, start, `open` for a session with no
+  theme's range8 by its place), its workers under it (name, start, `open` for a session with no
   stop), then all workers; each figure with a small bar scaled to its column's largest, in the
   group's colour, and its samples (`n=…`); a thin one marked `~`, its bar only outlined. A
   header sorts by its column (again: the other way; none last either way; the first column: the
@@ -610,6 +617,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | #152: colours from swarm-core's theme (`domain::theme`: tokens, ranges, the pick, `behind_text`, its tests); a ticket range32's pick, the stages the tokens named for what they mean, the gate and idle Swarmception's own tokens; `theme.get`; scheme B's palette gone |
 | 2026-11-06 | minor | #142: main merge closure evidence shared by ticket consumers; finite paused/blocked stops; stale unfinished histories end at last observation with outcome unknown |
 | 2026-11-04 | minor | #134: the minimap draws the tickets' strips (`view.minimapStrips`, set in `TimelinePane::fix_view` with the minimap's visibility), by the pin to swarm-timeline c5a7b06 (#222) |
 | 2026-11-03 | minor | #127: a sent-back ticket's bar carries the factory's red corner with its count (`Bar::corner`, swarm-timeline's range corner, pinned at 19eb5e0), its diamonds gone; merge dots only on `rows.set {"mergeMarks": true}` (View ▸ Merge Marks); a red dot where a ticket was given up (`MarkKind::GivenUp`); `SwarmData` forwards `range_corner` |

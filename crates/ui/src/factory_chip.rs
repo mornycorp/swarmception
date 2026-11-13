@@ -23,13 +23,10 @@ pub const SENT_BACK: Color32 = rgb(colours::SENT_BACK);
 pub const STOPPED: Color32 = rgb(colours::STOPPED);
 /// Main's green: a merge onto it, a gate passed.
 pub const PASSED: Color32 = rgb(colours::MAIN_MERGE);
-/// The factory's own: a working border (its fill is the ticket's colour), a run going on. A warm
-/// white, lit: lighter than every ticket's colour and every phase's, and 0.15 or more from each
-/// in OKLab (#42: the soft orange before it was all but scheme B's sand, 0.04 away).
+/// The factory's own: a working border (its fill is the ticket's colour), a run going on: the
+/// theme's `strong` (#152).
 pub const WORKING: Color32 = rgb(colours::WORKING);
-/// The factory's own: in a gate run. A magenta, more vivid than the palette's muted purple and
-/// pink, and 0.15 or more from every ticket's and phase's colour in OKLab (#42: the soft cyan
-/// before it was 0.06 from scheme B's sky).
+/// The factory's own: in a gate run, the theme's `gate` (#152).
 pub const GATING: Color32 = rgb(colours::GATING);
 
 const GLIDE: f64 = 0.7;
@@ -222,22 +219,12 @@ impl Motion {
 mod tests {
     use super::*;
 
-    /// How far, in OKLab, the factory's own borders keep from every ticket's colour, every
-    /// phase's and each other: well past the palette's own spacing (`colours::DISTANCE`), so a
-    /// border never reads as a fill.
-    const BORDER_DISTANCE: f64 = 0.15;
-
+    /// #152: the factory's own borders are the theme's tokens, and read on the dark floor.
     #[test]
-    fn the_factorys_own_borders_stand_apart_from_every_ticket_and_phase_colour() {
-        let fixed = [colours::CLAIMED, colours::WAITING, colours::SENT_BACK, colours::STOPPED, colours::MAIN_MERGE, colours::NO_TICKET];
+    fn the_factorys_own_borders_are_the_themes_tokens() {
         for own in [colours::WORKING, colours::GATING] {
-            for other in colours::PALETTE.iter().chain(&fixed) {
-                let d = colours::distance(own, *other);
-                assert!(d >= BORDER_DISTANCE, "{own:02x?} is {d:.3} from {other:02x?}");
-            }
             assert!(colours::contrast(own, [0x1b, 0x1b, 0x1b]) >= 4.5, "{own:02x?} reads on the dark floor");
         }
-        assert!(colours::distance(colours::WORKING, colours::GATING) >= BORDER_DISTANCE);
         assert_eq!((rgb(colours::WORKING), rgb(colours::GATING)), (WORKING, GATING));
     }
 
