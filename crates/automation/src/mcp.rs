@@ -341,6 +341,7 @@ mod tests {
                         read_only: true,
                         params: serde_json::json!({"type": "object"}),
                         result: serde_json::json!({}),
+                        menu: None,
                     })
                     .collect();
                 Ok(serde_json::to_string(&CommandsResult { commands }).unwrap())

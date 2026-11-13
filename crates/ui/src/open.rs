@@ -18,7 +18,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_engine::EngineError;
 use swarmception_engine::engine_cmds::NoParams;
-use swarmception_engine::repo_cmds::{ClearRecent, Open, OpenParams, OpenRefused, Recent, RecentRepo, StatusResult};
+use swarmception_engine::repo_cmds::{Open, OpenParams, OpenRefused, Recent, RecentRepo, StatusResult};
 
 use crate::menu::{MenuAction, MenuState, recent_label};
 use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
@@ -180,13 +180,6 @@ impl Shell {
         if let Some(repo) = self.opening.recent.get(usize::from(n)).cloned() {
             let _ = self.open_repo(&repo.path);
         }
-    }
-
-    /// File ▸ Open Recent ▸ Clear Menu.
-    pub(crate) fn clear_recent(&mut self) {
-        let result = self.engine.call::<ClearRecent>(NoParams {});
-        self.note(result);
-        self.sync();
     }
 
     /// Where the recent list is kept from now on (the state's directory), what it held put after
@@ -369,16 +362,16 @@ mod tests {
     fn open_with_no_picker_asks_in_the_window_and_cancels() {
         let ctx = egui::Context::default();
         let mut shell = Shell::new(&ctx, None);
-        shell.run_menu(&ctx, MenuAction::Open);
+        shell.run_menu(&ctx, MenuAction::Command("repo.open"));
         assert_eq!(shell.open_inspect().prompt.as_deref(), Some(""), "no repository: an empty path to type");
         shell.opening.prompt = None;
         // A picker cancelled: nothing opens, nothing is said.
         shell.set_folder_picker(Box::new(|_| Picked::Cancelled));
-        shell.run_menu(&ctx, MenuAction::Open);
+        shell.run_menu(&ctx, MenuAction::Command("repo.open"));
         assert_eq!(shell.open_inspect(), OpenInspect::default());
         // A picker that couldn't show (none installed, no display): the window asks (#76).
         shell.set_folder_picker(Box::new(|_| Picked::NoPicker));
-        shell.run_menu(&ctx, MenuAction::Open);
+        shell.run_menu(&ctx, MenuAction::Command("repo.open"));
         assert_eq!(shell.open_inspect().prompt.as_deref(), Some(""));
     }
 }

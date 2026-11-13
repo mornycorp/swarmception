@@ -452,3 +452,35 @@ fn a_gitlab_batch_ends_missing_tracking_merges_in_rows_factory_and_stats() {
     assert!(details.entries.iter().any(|e| e.what == "merged" && e.t.to_string() == merged));
     std::fs::remove_dir_all(dir).ok();
 }
+
+/// #160: the registry places the commands a person runs from the menus (`engine.commands`'
+/// `menu`: path, label, group, shortcut, what it asks for), and `engine.states` says which can run
+/// now and why not: the dispatch's own check, for a front end to grey them out with the reason.
+#[test]
+fn the_registry_places_its_menu_commands_and_says_which_can_run() {
+    use swarmception_engine::engine_cmds::{CommandsResult, StatesResult};
+    let mut session = Session::new();
+    let listed: CommandsResult = call(&mut session, "engine.commands", "");
+    let placed: Vec<(&str, Vec<String>, &str)> =
+        listed.commands.iter().filter_map(|c| c.menu.as_ref().map(|m| (c.id.as_str(), m.path.clone(), m.label.as_str()))).collect();
+    assert_eq!(
+        placed,
+        [
+            ("repo.open", vec!["File".to_owned()], "Open…"),
+            ("repo.reload", vec!["File".to_owned()], "Reload"),
+            ("repo.fetch", vec!["File".to_owned()], "Fetch and Reload"),
+            ("repo.clearRecent", vec!["File".to_owned(), "Open Recent".to_owned()], "Clear Menu"),
+        ]
+    );
+    let open = listed.commands.iter().find(|c| c.id == "repo.open").and_then(|c| c.menu.clone()).unwrap();
+    assert_eq!((open.asks_folder.as_deref(), open.shortcut.map(|s| (s.shift, s.key))), (Some("path"), Some((false, "O".to_owned()))));
+
+    let states: StatesResult = call(&mut session, "engine.states", "");
+    assert_eq!(states.states.len(), listed.commands.len(), "one a command, in the registry's order");
+    let state = |id: &str| states.states.iter().find(|s| s.id == id).map(|s| (s.enabled, s.reason.clone())).unwrap();
+    assert_eq!(state("repo.open"), (true, None));
+    assert_eq!(state("repo.reload"), (false, Some("no repository is open".to_owned())));
+    assert_eq!(state("repo.clearRecent"), (false, Some("no repository was opened before".to_owned())));
+    // What the states say is what a call meets.
+    assert!(matches!(session.execute("repo.reload", ""), Err(swarmception_engine::EngineError::Disabled { .. })));
+}

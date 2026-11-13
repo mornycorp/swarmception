@@ -1,30 +1,33 @@
 //! The menus as data: every item is a [`MenuAction`] with a stable id, and [`MenuState`] says
 //! which are enabled and checked. The in-window menu bar and macOS's system menu bar draw the
-//! same items and run them through the same [`crate::Shell::run_menu`], so both reach the same
-//! engine commands (`repo.open`, `repo.recent`, `repo.clearRecent`, `repo.reload`, `repo.fetch`,
-//! `rows.set`, `live.set`) and widget commands (`view.fit`); File opens a repository (Open…,
-//! Open Recent, #69), View lists the panes, the timeline, the factory, the details and
-//! the workers, and Live.
+//! same items and run them through the same [`crate::Shell::run_menu`].
+//!
+//! **The engine's commands are placed by the registry** (#160, swarm-core's contract: the UI
+//! builds its menus and shortcuts from the registry): a command whose `MenuPlace` puts it in a
+//! menu is a [`MenuAction::Command`] there, with its label, group, shortcut and what it asks for
+//! (`repo.open`'s folder), enabled by the engine's own check (`engine.states`, the reason shown on
+//! a greyed item). This module names no command. **The window's own items stay here**, each for a
+//! reason: Open Recent's list (one item a repository `repo.recent` lists), Quit (the window's), and
+//! the View menu's check items, which show and set state rather than run an action: the panes (UI
+//! state, `ui.set`), the rows' grouping, collapse and merge marks (`rows.set`'s fields), folding
+//! quiet time and Fit (the widget's view) and Live (`live.set`'s on).
 
 use swarmception_domain::{Collapse, Grouping};
+use swarmception_engine::command::Shortcut;
+use swarmception_engine::commands;
 use swarmception_engine::repo_cmds::{MAX_RECENT, RecentRepo};
 
 /// One menu item.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MenuAction {
-    /// File ▸ Open…: a folder chosen (the host's dialog), then `repo.open` (#69).
-    Open,
-    /// File ▸ Open Recent: the submenu of [`MenuAction::OpenRecent`]s and
-    /// [`MenuAction::ClearRecent`] (#69); choosing it does nothing itself.
+    /// An engine command the registry places in a menu (#160), by its id: File ▸ Open…,
+    /// Reload, Fetch and Reload, Open Recent ▸ Clear Menu.
+    Command(&'static str),
+    /// File ▸ Open Recent: the submenu of [`MenuAction::OpenRecent`]s and the commands the
+    /// registry places there (#69); choosing it does nothing itself.
     Recent,
     /// File ▸ Open Recent ▸ the `n`th repository `repo.recent` lists, newest first: `repo.open`.
     OpenRecent(u8),
-    /// File ▸ Open Recent ▸ Clear Menu: `repo.clearRecent`.
-    ClearRecent,
-    /// File ▸ Reload: `repo.reload`.
-    Reload,
-    /// File ▸ Fetch and Reload: `repo.fetch`.
-    Fetch,
     /// File ▸ Quit: closes the window.
     Quit,
     /// View ▸ Timeline: shows or hides the timeline pane.
@@ -53,13 +56,10 @@ pub enum MenuAction {
 }
 
 impl MenuAction {
-    /// Every item of the menus themselves, in menu order (Open Recent's own are
-    /// [`MenuAction::recent_items`]).
-    pub const ALL: [Self; 17] = [
-        Self::Open,
+    /// The window's own items, in menu order (the commands the registry places are
+    /// [`MenuAction::commands`]; Open Recent's repositories [`MenuAction::recent_items`]).
+    pub const ALL: [Self; 14] = [
         Self::Recent,
-        Self::Reload,
-        Self::Fetch,
         Self::Quit,
         Self::Timeline,
         Self::Factory,
@@ -75,14 +75,51 @@ impl MenuAction {
         Self::Live,
     ];
 
-    /// The File menu's items, separated where `None` is.
-    pub const FILE: [Option<Self>; 7] = [Some(Self::Open), Some(Self::Recent), None, Some(Self::Reload), Some(Self::Fetch), None, Some(Self::Quit)];
+    /// Every command the registry places in a menu, in the registry's order.
+    #[must_use]
+    pub fn commands() -> Vec<Self> {
+        commands::all().iter().filter(|e| e.menu.is_some()).map(|e| Self::Command(e.id)).collect()
+    }
 
-    /// Open Recent's items for `count` repositories: each, then (separated) Clear Menu.
+    /// The commands the registry places at `path`, each with its group, in the registry's order.
+    fn placed(path: &[&str]) -> Vec<(u8, Self)> {
+        commands::all().iter().filter_map(|e| e.menu.filter(|m| m.path == path).map(|m| (m.group, Self::Command(e.id)))).collect()
+    }
+
+    /// `items` (each with its group) in group order, a separator between groups.
+    fn grouped(mut items: Vec<(u8, Self)>) -> Vec<Option<Self>> {
+        // Stable: within a group, the order they came in.
+        items.sort_by_key(|(group, _)| *group);
+        let mut out = Vec::new();
+        let mut last = None;
+        for (group, item) in items {
+            if last.is_some_and(|l| l != group) {
+                out.push(None);
+            }
+            last = Some(group);
+            out.push(Some(item));
+        }
+        out
+    }
+
+    /// The File menu's items, separated where `None` is: the commands the registry places there,
+    /// with the window's Open Recent (after the first group's) and Quit (last).
+    #[must_use]
+    pub fn file_items() -> Vec<Option<Self>> {
+        let mut items = Self::placed(&["File"]);
+        let first = items.iter().map(|(group, _)| *group).min().unwrap_or(0);
+        items.push((first, Self::Recent));
+        items.push((u8::MAX, Self::Quit));
+        Self::grouped(items)
+    }
+
+    /// Open Recent's items for `count` repositories: each, then (separated) the commands the
+    /// registry places in Open Recent (Clear Menu).
     #[must_use]
     pub fn recent_items(count: usize) -> Vec<Option<Self>> {
         let repos = (0..count.min(MAX_RECENT)).filter_map(|n| u8::try_from(n).ok()).map(|n| Some(Self::OpenRecent(n)));
-        repos.chain([None, Some(Self::ClearRecent)]).collect()
+        let placed = Self::grouped(Self::placed(&["File", "Open Recent"]));
+        repos.chain(std::iter::once(None)).chain(placed).collect()
     }
 
     /// The View menu's items, separated where `None` is.
@@ -108,12 +145,9 @@ impl MenuAction {
     #[must_use]
     pub const fn id(self) -> &'static str {
         match self {
-            Self::Open => "file.open",
+            Self::Command(id) => id,
             Self::Recent => "file.recent",
             Self::OpenRecent(n) => recent_id(n),
-            Self::ClearRecent => "file.recent.clear",
-            Self::Reload => "file.reload",
-            Self::Fetch => "file.fetch",
             Self::Quit => "file.quit",
             Self::Timeline => "view.timeline",
             Self::Factory => "view.factory",
@@ -134,20 +168,17 @@ impl MenuAction {
     /// The item with id `id`.
     #[must_use]
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().chain(Self::recent_items(MAX_RECENT).into_iter().flatten()).find(|a| a.id() == id)
+        Self::ALL.into_iter().chain(Self::commands()).chain(Self::recent_items(MAX_RECENT).into_iter().flatten()).find(|a| a.id() == id)
     }
 
-    /// What the menu shows.
+    /// What the menu shows: a command's from the registry.
     #[must_use]
-    pub const fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            Self::Open => "Open…",
+            Self::Command(id) => commands::find(id).and_then(|e| e.menu).map_or(id, |m| m.label),
             Self::Recent => "Open Recent",
             // Its repository's name and where it is: [`recent_label`].
             Self::OpenRecent(_) => "Recent Repository",
-            Self::ClearRecent => "Clear Menu",
-            Self::Reload => "Reload",
-            Self::Fetch => "Fetch and Reload",
             Self::Quit => "Quit",
             Self::Timeline => "Timeline",
             Self::Factory => "Factory",
@@ -165,16 +196,32 @@ impl MenuAction {
         }
     }
 
-    /// Its Font Awesome glyph, for the in-window menu.
+    /// Its shortcut: a command's from the registry; the window's own Quit and Live.
     #[must_use]
-    pub const fn icon(self) -> &'static str {
+    pub fn shortcut(self) -> Option<Shortcut> {
+        match self {
+            Self::Command(id) => commands::find(id).and_then(|e| e.menu).and_then(|m| m.shortcut),
+            Self::Quit => Some(Shortcut::command('Q')),
+            Self::Live => Some(Shortcut::command('L')),
+            _ => None,
+        }
+    }
+
+    /// Its Font Awesome glyph, for the in-window menu: the window's look, a command's by its id
+    /// (none for a command it has no glyph for).
+    #[must_use]
+    pub fn icon(self) -> &'static str {
         use crate::icons;
         match self {
-            Self::Open | Self::OpenRecent(_) => icons::FOLDER,
+            Self::Command(id) => match id {
+                "repo.open" => icons::FOLDER,
+                "repo.clearRecent" => icons::CLEAR,
+                "repo.reload" => icons::RELOAD,
+                "repo.fetch" => icons::FETCH,
+                _ => "",
+            },
+            Self::OpenRecent(_) => icons::FOLDER,
             Self::Recent => icons::RECENT,
-            Self::ClearRecent => icons::CLEAR,
-            Self::Reload => icons::RELOAD,
-            Self::Fetch => icons::FETCH,
             Self::Quit => icons::QUIT,
             Self::Timeline => icons::TIMELINE,
             Self::Factory => icons::FACTORY,
@@ -194,7 +241,7 @@ impl MenuAction {
     /// Whether choosing it closes the menu: a check item leaves it open.
     #[must_use]
     pub const fn closes_menu(self) -> bool {
-        matches!(self, Self::Open | Self::OpenRecent(_) | Self::ClearRecent | Self::Reload | Self::Fetch | Self::Quit | Self::Fit)
+        matches!(self, Self::Command(_) | Self::OpenRecent(_) | Self::Quit | Self::Fit)
     }
 }
 
@@ -235,11 +282,30 @@ pub fn recent_label(repo: &RecentRepo, home: Option<&std::path::Path>) -> String
     }
 }
 
+/// Which of the registry's commands can run now (`engine.states`, #160): bit `i` its `i`th
+/// command's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommandsEnabled(pub u128);
+
+impl CommandsEnabled {
+    /// From the engine's states, in the registry's order.
+    #[must_use]
+    pub fn of(states: &[swarmception_engine::engine_cmds::CommandState]) -> Self {
+        Self(states.iter().take(128).enumerate().filter(|(_, s)| s.enabled).fold(0, |bits, (i, _)| bits | (1 << i)))
+    }
+
+    /// Whether the command `id` can run now.
+    #[must_use]
+    pub fn enabled(self, id: &str) -> bool {
+        commands::all().iter().position(|e| e.id == id).is_some_and(|i| i < 128 && self.0 & (1 << i) != 0)
+    }
+}
+
 /// What the menus show now: which items are enabled and which are checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MenuState {
-    /// A repository is open and no read is going.
-    pub can_reload: bool,
+    /// Which commands can run now: the engine's own check (#160).
+    pub commands: CommandsEnabled,
     /// The timeline shows data.
     pub can_fit: bool,
     pub timeline: bool,
@@ -261,14 +327,12 @@ pub struct MenuState {
 impl MenuState {
     /// Whether `action` can run now.
     #[must_use]
-    pub const fn enabled(&self, action: MenuAction) -> bool {
+    pub fn enabled(&self, action: MenuAction) -> bool {
         match action {
-            MenuAction::Reload | MenuAction::Fetch => self.can_reload,
+            MenuAction::Command(id) => self.commands.enabled(id),
             MenuAction::Fit => self.can_fit,
             MenuAction::OpenRecent(n) => n < self.recent,
-            MenuAction::ClearRecent => self.recent > 0,
-            MenuAction::Open
-            | MenuAction::Recent
+            MenuAction::Recent
             | MenuAction::Quit
             | MenuAction::Timeline
             | MenuAction::Factory
@@ -295,14 +359,7 @@ impl MenuState {
             MenuAction::FoldQuiet => Some(self.fold_quiet),
             MenuAction::MergeMarks => Some(self.merge_marks),
             MenuAction::Live => Some(self.live),
-            MenuAction::Open
-            | MenuAction::Recent
-            | MenuAction::OpenRecent(_)
-            | MenuAction::ClearRecent
-            | MenuAction::Reload
-            | MenuAction::Fetch
-            | MenuAction::Quit
-            | MenuAction::Fit => None,
+            MenuAction::Command(_) | MenuAction::Recent | MenuAction::OpenRecent(_) | MenuAction::Quit | MenuAction::Fit => None,
         }
     }
 }
@@ -313,9 +370,10 @@ mod tests {
 
     #[test]
     fn ids_are_unique_and_read_back() {
-        for action in MenuAction::ALL {
-            assert_eq!(MenuAction::from_id(action.id()), Some(action));
-            assert_eq!(MenuAction::ALL.iter().filter(|a| a.id() == action.id()).count(), 1);
+        let all: Vec<MenuAction> = MenuAction::ALL.into_iter().chain(MenuAction::commands()).collect();
+        for action in &all {
+            assert_eq!(MenuAction::from_id(action.id()), Some(*action));
+            assert_eq!(all.iter().filter(|a| a.id() == action.id()).count(), 1);
         }
         assert_eq!(MenuAction::from_id("file.nope"), None);
         // Open Recent's items too, each its own id.
@@ -323,12 +381,34 @@ mod tests {
         assert_eq!(recent.len(), MAX_RECENT + 1);
         for action in &recent {
             assert_eq!(MenuAction::from_id(action.id()), Some(*action));
-            assert!(!MenuAction::ALL.iter().any(|a| a.id() == action.id()));
         }
         assert_eq!(MenuAction::from_id("file.recent.3"), Some(MenuAction::OpenRecent(3)));
         assert_eq!(MenuAction::from_id("file.recent.10"), None);
         assert_eq!(MenuAction::recent_items(30).len(), MAX_RECENT + 2, "ten at most, then Clear Menu");
-        assert_eq!(MenuAction::recent_items(0), [None, Some(MenuAction::ClearRecent)]);
+        assert_eq!(MenuAction::recent_items(0), [None, Some(MenuAction::Command("repo.clearRecent"))], "Clear Menu, placed by the registry");
+    }
+
+    /// #160: File is built from the registry's places: each placed command with its label and
+    /// shortcut, in its group, the window's Open Recent after the first group and Quit last.
+    #[test]
+    fn the_file_menu_is_the_registrys_places() {
+        let file = MenuAction::file_items();
+        let ids: Vec<Option<&str>> = file.iter().map(|a| a.map(MenuAction::id)).collect();
+        assert_eq!(ids, [Some("repo.open"), Some("file.recent"), None, Some("repo.reload"), Some("repo.fetch"), None, Some("file.quit")]);
+        let labels: Vec<&str> = file.iter().flatten().map(|a| a.label()).collect();
+        assert_eq!(labels, ["Open…", "Open Recent", "Reload", "Fetch and Reload", "Quit"]);
+        assert_eq!(MenuAction::Command("repo.open").shortcut(), Some(Shortcut::command('O')));
+        assert_eq!(MenuAction::Command("repo.fetch").shortcut(), Some(Shortcut::command_shift('R')));
+        // Every placed command is in a menu: File, or Open Recent.
+        let shown: Vec<MenuAction> = file.into_iter().chain(MenuAction::recent_items(0)).flatten().collect();
+        for command in MenuAction::commands() {
+            assert!(shown.contains(&command), "{command:?} placed but not shown");
+        }
+        // Shortcuts are distinct.
+        let mut keys: Vec<Shortcut> = MenuAction::ALL.into_iter().chain(MenuAction::commands()).filter_map(MenuAction::shortcut).collect();
+        let count = keys.len();
+        keys.dedup();
+        assert_eq!(keys.len(), count);
     }
 
     #[test]
@@ -350,14 +430,16 @@ mod tests {
 
     #[test]
     fn the_menus_hold_every_item_once() {
-        let listed: Vec<MenuAction> = MenuAction::FILE.iter().chain(&MenuAction::VIEW).flatten().copied().collect();
+        let listed: Vec<MenuAction> =
+            MenuAction::file_items().iter().chain(&MenuAction::VIEW).flatten().copied().filter(|a| !matches!(a, MenuAction::Command(_))).collect();
         assert_eq!(listed, MenuAction::ALL);
     }
 
     #[test]
     fn state_enables_and_checks() {
+        let only_open = commands::all().iter().position(|e| e.id == "repo.open").unwrap();
         let state = MenuState {
-            can_reload: false,
+            commands: CommandsEnabled(1 << only_open),
             can_fit: true,
             timeline: true,
             factory: false,
@@ -370,12 +452,11 @@ mod tests {
             live: true,
             recent: 2,
         };
-        assert!(state.enabled(MenuAction::Open) && state.enabled(MenuAction::Recent));
+        assert!(state.enabled(MenuAction::Command("repo.open")) && state.enabled(MenuAction::Recent));
         assert!(state.enabled(MenuAction::OpenRecent(1)) && !state.enabled(MenuAction::OpenRecent(2)));
-        assert!(state.enabled(MenuAction::ClearRecent));
-        assert!(!MenuState { recent: 0, ..state }.enabled(MenuAction::ClearRecent), "nothing to clear");
-        assert!(!state.enabled(MenuAction::Reload));
-        assert!(!state.enabled(MenuAction::Fetch));
+        assert!(!state.enabled(MenuAction::Command("repo.reload")), "the engine's check, not the menu's");
+        assert!(!state.enabled(MenuAction::Command("repo.fetch")));
+        assert!(!state.enabled(MenuAction::Command("no.such")));
         assert!(state.enabled(MenuAction::Fit));
         assert!(state.enabled(MenuAction::Quit));
         assert_eq!(state.checked(MenuAction::Timeline), Some(true));
@@ -392,6 +473,6 @@ mod tests {
         assert!(state.enabled(MenuAction::FoldQuiet));
         assert!(state.enabled(MenuAction::Live), "on or off whatever is being read");
 
-        assert_eq!(state.checked(MenuAction::Reload), None);
+        assert_eq!(state.checked(MenuAction::Command("repo.reload")), None);
     }
 }

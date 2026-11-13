@@ -8,7 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_model::Timestamp;
 
-use crate::command::Command;
+use crate::command::{Ask, Command, MenuPlace, Shortcut};
 use crate::engine_cmds::NoParams;
 use crate::error::{EngineError, Refusal, Unavailable};
 use crate::issues::IssuesStatus;
@@ -154,6 +154,8 @@ pub struct Open;
 impl Command for Open {
     const ID: &'static str = "repo.open";
     const LABEL: &'static str = "Open Repository";
+    const MENU: Option<MenuPlace> =
+        Some(MenuPlace { path: &["File"], label: "Open…", group: 0, shortcut: Some(Shortcut::command('O')), asks: Some(Ask::Folder { param: "path" }) });
     type Params = OpenParams;
     type Result = StatusResult;
 
@@ -250,8 +252,14 @@ pub struct ClearRecent;
 impl Command for ClearRecent {
     const ID: &'static str = "repo.clearRecent";
     const LABEL: &'static str = "Clear Recent Repositories";
+    const MENU: Option<MenuPlace> = Some(MenuPlace { path: &["File", "Open Recent"], label: "Clear Menu", group: 1, shortcut: None, asks: None });
     type Params = NoParams;
     type Result = RecentResult;
+
+    /// Something to clear (#160: the menu item greyed, saying why, when there isn't).
+    fn enabled(session: &Session) -> Result<(), Unavailable> {
+        if session.recent().is_empty() { Err(Unavailable::NothingRecent) } else { Ok(()) }
+    }
 
     fn run(session: &mut Session, _params: NoParams) -> Result<RecentResult, EngineError> {
         session.clear_recent();
@@ -277,6 +285,7 @@ pub struct Reload;
 impl Command for Reload {
     const ID: &'static str = "repo.reload";
     const LABEL: &'static str = "Reload";
+    const MENU: Option<MenuPlace> = Some(MenuPlace { path: &["File"], label: "Reload", group: 2, shortcut: Some(Shortcut::command('R')), asks: None });
     type Params = NoParams;
     type Result = StatusResult;
 
@@ -298,6 +307,8 @@ pub struct Fetch;
 impl Command for Fetch {
     const ID: &'static str = "repo.fetch";
     const LABEL: &'static str = "Fetch and Reload";
+    const MENU: Option<MenuPlace> =
+        Some(MenuPlace { path: &["File"], label: "Fetch and Reload", group: 2, shortcut: Some(Shortcut::command_shift('R')), asks: None });
     type Params = NoParams;
     type Result = StatusResult;
 
