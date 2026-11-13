@@ -69,3 +69,4 @@
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-d6b81a3","t":"2026-11-13T18:51:45Z"}
 {"event":"sub.stop","note":"rc=0","sub":"ready-d6b81a3","t":"2026-11-13T18:51:55Z"}
 {"event":"submit","issue":163,"mr":171,"t":"2026-11-13T18:52:03Z"}
+{"event":"sub.start","name":"gate","note":"#171; capacity=3 free=10.0; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-171","t":"2026-11-13T18:52:11Z"}
