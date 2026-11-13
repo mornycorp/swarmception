@@ -339,9 +339,11 @@ fn viewport(options: &Options, keep: &Keep) -> (egui::ViewportBuilder, Option<sa
     (viewport, place)
 }
 
-/// The fonts, the theme and the UI's scale as the command line asks.
+/// The fonts, egui styled in the theme's tokens, the look and the UI's scale as the command line asks.
 fn style(ctx: &egui::Context, options: &Options) {
     swarmception_ui::fonts::install(ctx);
+    // The window is drawn in the theme's colours: the palette the swarm's tools share (#158).
+    swarmception_ui::theme::apply(ctx);
     // Ctrl + +, Ctrl + − and Ctrl + 0 are the timeline's zoom keys, not egui's.
     ctx.options_mut(|o| o.zoom_with_keyboard = false);
     if let Some(theme) = options.theme {

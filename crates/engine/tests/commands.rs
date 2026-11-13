@@ -124,13 +124,9 @@ fn the_theme_is_data_a_command_returns() {
     let mut session = Session::new();
     let theme: ThemeData = call(&mut session, "theme.get", "");
     let token = |name: &str| theme.tokens.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("no {name} token"));
-    for (name, colour) in [
-        ("warning", colours::CLAIMED),
-        ("accent", colours::WAITING),
-        ("error", colours::SENT_BACK),
-        ("success", colours::MAIN_MERGE),
-        ("gate", colours::GATING),
-    ] {
+    for (name, colour) in
+        [("warning", colours::CLAIMED), ("link", colours::WAITING), ("error", colours::SENT_BACK), ("success", colours::MAIN_MERGE), ("gate", colours::GATING)]
+    {
         assert_eq!(Rgb::parse(&token(name).dark).map(bytes), Some(colour.dark), "{name}");
         assert_eq!(Rgb::parse(&token(name).light).map(bytes), Some(colour.light), "{name}");
         assert!(!token(name).meaning.is_empty(), "{name}");

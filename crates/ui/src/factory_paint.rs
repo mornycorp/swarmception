@@ -259,7 +259,7 @@ fn sent_back_corner(painter: &egui::Painter, rect: Rect, times: usize, red: Colo
     let corner = if times > 1 { (rect.height() * 0.72).clamp(11.0, 17.0) } else { (rect.height() * 0.55).clamp(8.0, 13.0) };
     let tr = rect.right_top();
     let triangle = vec![tr, tr + vec2(0.0, corner), tr - vec2(corner, 0.0)];
-    painter.add(egui::Shape::convex_polygon(triangle, red, Stroke::new(1.0, red.lerp_to_gamma(Color32::BLACK, 0.3))));
+    painter.add(egui::Shape::convex_polygon(triangle, red, Stroke::new(1.0, crate::theme::border(red))));
     if times > 1 {
         let at = tr + vec2(-corner * 0.31, corner * 0.33);
         painter.text(at, Align2::CENTER_CENTER, times.to_string(), FontId::proportional(corner * 0.62), Color32::BLACK);
@@ -1268,7 +1268,7 @@ impl<'a> Floor<'a> {
     /// A brick's body in its ticket's colour, its number, and its life's strip along its foot.
     fn brick_face(&self, painter: &egui::Painter, rect: Rect, block: &Block) {
         let fill = self.pal.paint(block.colour);
-        painter.rect(rect, 3.0, fill, Stroke::new(1.0, fill.lerp_to_gamma(Color32::BLACK, 0.35)), StrokeKind::Inside);
+        painter.rect(rect, 3.0, fill, Stroke::new(1.0, crate::theme::border(fill)), StrokeKind::Inside);
         let strip_height = if block.segments.is_empty() { 0.0 } else { (rect.height() * 0.28).max(4.0) };
         let face = rect.with_max_y(rect.bottom() - strip_height);
         if strip_height > 0.0 {

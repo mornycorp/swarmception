@@ -96,13 +96,17 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   gate*, by id), merged green, sent back, its cause and abandoned red, durations and the title
   strong). `colours` is the one source of the swarm's colours, the timeline's and the
   factory's (#15), each from `theme` (#152, the owner's: swarm-core's skeleton theme as it is,
-  its docs/app-architecture.md › Colours from the theme): a ticket's own colour is
+  its docs/app-architecture.md › Colours from the theme; since #158 the palette the swarm's
+  tools share, swarm-core#100): a ticket's own colour is
   `RANGE_32`'s pick of its issue number (FNV-1a over its digits, the same on every run and
   machine), in which its bar and its merge are drawn; a stage takes the token named for what
-  it means: claimed `warning`, working `strong`, waiting for merge `accent`, in the gate
+  it means: claimed `warning`, working `strong`, waiting for merge `link` (the
+  shared blue that reads as text: its `accent` carries none), in the gate
   Swarmception's `gate`, sent back `error`, stopped `muted`, merges onto main `success`; an idle
-  bench Swarmception's `idle`; the Workers pane's groups `RANGE_8` by number. The theme's tests
-  measure each token's contrast (4.5:1 on the background, both looks), each range entry's (3:1),
+  bench Swarmception's `idle`; the Workers pane's groups the `SERIES` by number (entry `n % 7`).
+  The theme's tests hold each value to the shared palette's, measure each token's contrast where
+  it is read (4.5:1 for text, both looks), each range entry's (3:1), every shortfall of the
+  shared palette's kept and recorded with its ratio (`KEPT_SHORT`), the gate and idle nudged to 4.5:1,
   strong text on each entry made a text background, the ranges' spacing (CIEDE2000) and the
   pick's pins; `theme.get` returns it (each token's name, meaning, dark and light; each range's
   entries), swarm-core's `ui.theme` under the engine's name, as `ui.*` is the window's. Each of
@@ -391,7 +395,7 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   taking no room in the layout: a comparison is opened, read and put away. It draws what
   `workers.compare` returns for the timeline's window (or the whole run, its choice; asked again
   only when the window or the data moves): a row per model × effort (a swatch in its colour, the
-  theme's range8 by its place), its workers under it (name, start, `open` for a session with no
+  theme's series by its place), its workers under it (name, start, `open` for a session with no
   stop), then all workers; each figure with a small bar scaled to its column's largest, in the
   group's colour, and its samples (`n=…`); a thin one marked `~`, its bar only outlined. A
   header sorts by its column (again: the other way; none last either way; the first column: the
@@ -620,6 +624,7 @@ error the user or agent can act on, never a panic.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | #158: swarm-core d4df5a2, its theme the palette the swarm's tools share (22 tokens with the gate and idle, nudged to 4.5:1 on the new backgrounds; the series and markers in place of range8; range32 with 11 entries nudged); waiting for merge `link`, the Workers groups the series; `ui::theme::apply` styles egui's visuals in the tokens, so the window, the Factory and the timeline widget's background are the shared palette's; a brick's edge the theme's `darker` |
 | 2026-11-13 | minor | #154: a colour is a `Paint`, the theme's dark and light (a breaking change to every colour in a command's answer: `[r,g,b]` became `{dark, light}`); the UI draws egui's look's, `factory_tip::legible`'s darkening gone; `theme.set` builds the timeline in the window's look |
 | 2026-11-13 | minor | #152: colours from swarm-core's theme (`domain::theme`: tokens, ranges, the pick, `behind_text`, its tests); a ticket range32's pick, the stages the tokens named for what they mean, the gate and idle Swarmception's own tokens; `theme.get`; scheme B's palette gone |
 | 2026-11-06 | minor | #142: main merge closure evidence shared by ticket consumers; finite paused/blocked stops; stale unfinished histories end at last observation with outcome unknown |
