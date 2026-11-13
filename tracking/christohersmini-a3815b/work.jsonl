@@ -8,3 +8,4 @@
 {"event":"merge","issue":150,"mr":151,"sub":"gate-151","t":"2026-11-13T14:37:55Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #151","sub":"gate-151","t":"2026-11-13T14:38:01Z"}
 {"event":"claim","issue":152,"mr":153,"t":"2026-11-13T14:40:57Z"}
+{"event":"work","issue":152,"t":"2026-11-13T14:40:59Z"}
