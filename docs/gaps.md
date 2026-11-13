@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-06 · **Last updated:** 2026-11-06 · **Change:** minor (batch 17: G32 done, idle benches grouped and dragging across rows, X to hold the row; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 18: G33, colours from swarm-core's theme, and swarm-core at 57fb6a2; the light look open, #154) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| 1 | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | partial | #152, #154 | 2–4 h |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
 | — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
 | — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
@@ -417,6 +418,24 @@ marked **Human:** with what is needed.
   `factory_pane::dragging_crosses_ticket_rows_and_x_constrains_with_or_without_alt`; screenshots
   in `docs/screenshots/idle-benches-*.png`.
 
+## G33 Colours from swarm-core's theme
+
+- **Why:** the owner's (2026-11-13): Swarmception's colours follow swarm-core's recommendations
+  (docs/app-architecture.md › Colours from the theme), in place of scheme B (#40).
+- **Done** (#152, PR #153): `domain::theme`, swarm-core's skeleton theme as it is (tokens named for
+  what they mean, egui's look nudged to 4.5:1; the 8, 16 and 32 ranges from ColorBrewer Set1 and
+  Glasbey; the FNV-1a pick; `behind_text`), with Swarmception's own `gate` and `idle`. A ticket's
+  colour is range32's pick of its number; a stage takes its meaning's token (claimed `warning`,
+  working `strong`, waiting `accent`, sent back `error`, stopped `muted`, merges `success`); the
+  Workers pane's groups range8 in order; `theme.get` returns the theme as data. Also batch 18:
+  swarm-core bumped to 57fb6a2 (#150, PR #151; `Project::proof` set to `Proof::Ready`).
+- **Left:** the light look (#154): the swarm's colours are the dark look's on either look.
+- **Measured:** 414 tests, `cargo nextest run --workspace` (2026-11-13).
+- **Evidence:** `theme::tests`, `colours::tests::a_tickets_colour_is_range32s_pick_of_its_number`,
+  `colours::tests::the_stages_are_the_tokens_named_for_what_they_mean`, engine
+  `the_theme_is_data_a_command_returns`; `docs/screenshots/theme-colours-*.png`.
+- **Estimate:** 2–4 agent-hours for #154.
+
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
@@ -568,6 +587,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Batch 18: G33 partial (#152; #154 open); swarm-core at 57fb6a2 (#150) |
 | 2026-11-06 | minor | Batch 17: G32 done (#147, swarm-timeline#233); no gaps open |
 | 2026-11-06 | minor | Batch 16: G31 done (#140, #142, #144); no gaps open |
 | 2026-11-05 | minor | Batch 15: G30 gains Alt + click (#137, swarm-timeline#228, #230) |
