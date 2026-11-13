@@ -21,6 +21,7 @@ use swarmception_engine::engine_cmds::NoParams;
 use swarmception_engine::repo_cmds::{Open, OpenParams, OpenRefused, Recent, RecentRepo, StatusResult};
 
 use crate::menu::{MenuAction, MenuState, recent_label};
+use crate::part::Part;
 use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
 
 /// The host's folder picker: shown starting in a folder (the open repository's parent), what it
@@ -298,7 +299,7 @@ impl Shell {
             let still = self.status.repo.clone();
             let (mut close, mut again) = (false, false);
             egui::Window::new(format!("{}  Can't open that folder", icons::WARNING))
-                .id(egui::Id::unique("open-refused"))
+                .id(Part::OpenRefused.id())
                 .collapsible(false)
                 .resizable(false)
                 .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
@@ -330,7 +331,7 @@ impl Shell {
         let Some(mut text) = self.opening.prompt.clone() else { return };
         let (mut open, mut cancel) = (false, false);
         egui::Window::new(format!("{}  Open a Repository", icons::FOLDER))
-            .id(egui::Id::unique("open-prompt"))
+            .id(Part::OpenPrompt.id())
             .collapsible(false)
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))

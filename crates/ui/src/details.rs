@@ -25,6 +25,7 @@ use swarmception_engine::stats_cmds::At as When;
 use crate::factory_chip::{drawn, rgb, shade};
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
+use crate::part::Part;
 
 /// What the details pane is about: plain data in the shell's state.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -305,7 +306,7 @@ impl DetailsPane {
                 ui.add(egui::Label::new(job).wrap());
             });
         }
-        let id = ui.scope_id().with(("details-entry", entry.t, &entry.what, self.drawn.entries.len()));
+        let id = ui.scope_id().with((Part::DetailsEntry, entry.t, &entry.what, self.drawn.entries.len()));
         let response = ui.interact(row.response.rect, id, Sense::click());
         let span = entry.end.map_or_else(|| entry.t.to_string(), |end| format!("{} → {}{}", entry.t, end, if entry.open { " (so far)" } else { "" }));
         let hint = entry.goes_to.as_ref().map(|s| format!("\nclick: show {}", described(s))).unwrap_or_default();

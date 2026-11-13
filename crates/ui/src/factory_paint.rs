@@ -26,6 +26,7 @@ use swarmception_domain::gates::Lane;
 use swarmception_domain::timeline::Link;
 
 use crate::factory_chip::{CLAIMED, Chip, GATING, IDLE, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb, shade};
+use crate::part::Part;
 use crate::{factory_tip, icons};
 use swarmception_domain::colours::Paint;
 use swarmception_domain::theme;
@@ -456,7 +457,7 @@ impl Palette {
 pub fn paint(ui: &egui::Ui, rect: Rect, scene: &FactoryScene, state: (&mut Motion, &mut WallView), marks: Marks) -> Drawn {
     let (motion, wall) = state;
     motion.begin(ui.input(|i| i.time), rect);
-    let floor_click = ui.interact(rect, ui.scope_id().with("factory-floor"), egui::Sense::click()).clicked();
+    let floor_click = ui.interact(rect, ui.scope_id().with(Part::FactoryFloor), egui::Sense::click()).clicked();
     let mut floor = Floor { ui, painter: ui.painter_at(rect), pal: Palette::of(ui.visuals()), motion, drawn: Drawn::default(), scene, marks, wall };
     let key = floor.legend_layout(rect.width() - 8.0);
     let rows = key.iter().map(|item| item.row).max().map_or(1, |r| r + 1);
@@ -532,8 +533,8 @@ impl<'a> Floor<'a> {
         (1.0 - age.max(0) as f32 / recent).clamp(0.0, 1.0)
     }
 
-    fn tooltip(&self, rect: Rect, id: impl std::hash::Hash + std::fmt::Debug, lines: &[String]) {
-        let response = self.ui.interact(rect, self.ui.scope_id().with(("factory", id)), egui::Sense::hover());
+    fn tooltip(&self, rect: Rect, part: Part, key: &str, lines: &[String]) {
+        let response = self.ui.interact(rect, self.ui.scope_id().with((part, key)), egui::Sense::hover());
         factory_tip::show(response, lines);
     }
 
@@ -609,7 +610,7 @@ impl<'a> Floor<'a> {
     /// The tooltip of ticket `issue`'s chip at `rect`, whether the pointer is on it or clicks it,
     /// and its context menu: Open Issue, and Open PR when it has one (`pr`).
     fn pointed(&mut self, rect: Rect, issue: u64, pr: Option<u64>, tooltip: &[String]) {
-        let id = self.ui.scope_id().with(("factory-chip", issue, self.drawn.chips.len()));
+        let id = self.ui.scope_id().with((Part::FactoryChip, issue, self.drawn.chips.len()));
         let response = self.ui.interact(rect, id, egui::Sense::click());
         if response.hovered() {
             self.drawn.hovered = Some(issue);
@@ -745,7 +746,7 @@ impl<'a> Floor<'a> {
             (Self::font(11.5), self.pal.paint(bench_colour(BenchStatus::Idle))),
             (cell.width() - 12.0).max(0.0),
         );
-        let response = self.ui.interact(cell, self.ui.scope_id().with("idle-benches"), egui::Sense::hover());
+        let response = self.ui.interact(cell, self.ui.scope_id().with(Part::IdleBenches), egui::Sense::hover());
         response.on_hover_ui(|ui| {
             egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 let font = egui::TextStyle::Body.resolve(ui.style());
@@ -841,7 +842,7 @@ impl<'a> Floor<'a> {
         } else {
             (format!("{}  +{} off shift: {}", icons::CHEVRON_RIGHT, folded.len(), names.join(", ")), "click to show their benches")
         };
-        let id = self.ui.scope_id().with(("factory", "benches-folded"));
+        let id = self.ui.scope_id().with(Part::BenchesFolded);
         let response = self.ui.interact(rect, id, egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
         let colour = if response.hovered() { self.pal.text } else { self.pal.weak };
         fit(&self.painter, rect.left_center() + vec2(4.0, 0.0), Align2::LEFT_CENTER, &text, (Self::font(11.0), colour), rect.width() - 8.0);
@@ -871,7 +872,7 @@ impl<'a> Floor<'a> {
         let text = Rect::from_min_max(pos2(avatar.x + radius + 8.0, cell.top()), pos2(cell.right() - crates_width - 4.0, cell.bottom()));
         let line = self.bench_text(text, bench, compact);
         self.helper(bench, line, text.right());
-        self.tooltip(cell, ("bench", &bench.key), &bench.tooltip);
+        self.tooltip(cell, Part::BenchTip, &bench.key, &bench.tooltip);
         self.bench_crates(cell, bench, sizes);
     }
 
@@ -961,7 +962,7 @@ impl<'a> Floor<'a> {
         let text = format!("{mark} {} {}", helper.name, short(helper.age));
         let at = pos2((name.right() + 8.0).min(right - 40.0), name.center().y);
         let rect = fit(&self.painter, at, Align2::LEFT_CENTER, &text, (Self::font(10.0), colour), (right - at.x).max(10.0));
-        self.tooltip(rect, ("helper", &bench.key), &helper.tooltip);
+        self.tooltip(rect, Part::HelperTip, &bench.key, &helper.tooltip);
     }
 
     /// How long a ticket has been in its phase at the bench: a bar under its chip in its phase's
@@ -1132,7 +1133,7 @@ impl<'a> Floor<'a> {
         let age = self.painter.text(line.right_center() - vec2(3.0, 0.0), Align2::RIGHT_CENTER, short(run.age), font.clone(), self.pal.weak);
         let width = age.left() - line.left() - 36.0;
         pieces(&self.painter, line.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &self.run_words(run), font, width);
-        let id = self.ui.scope_id().with(("factory", ("run", n, &run.sub)));
+        let id = self.ui.scope_id().with((Part::FactoryRun, n, &run.sub));
         let response = factory_tip::show(self.ui.interact(line, id, egui::Sense::click()), &run.tooltip);
         if response.clicked() {
             self.drawn.run_clicked = Some((run.sub.clone(), run.start));
@@ -1258,7 +1259,7 @@ impl<'a> Floor<'a> {
     /// A merge no ticket names: its tooltip, and a click selecting it (#85), as choosing its bar
     /// on the timeline does.
     fn merge_brick(&mut self, target: Rect, block: &Block) {
-        let id = self.ui.scope_id().with(("factory", ("block", block.t.0, block.pr)));
+        let id = self.ui.scope_id().with((Part::FactoryBlock, block.t.0, block.pr));
         let response = factory_tip::show(self.ui.interact(target, id, egui::Sense::click()), &block.tooltip);
         if response.clicked() {
             self.drawn.merge_clicked.clone_from(&block.commit);
