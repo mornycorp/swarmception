@@ -25,3 +25,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #156","sub":"gate-156","t":"2026-11-13T15:05:22Z"}
 {"event":"claim","issue":158,"mr":159,"t":"2026-11-13T17:58:31Z"}
 {"event":"work","issue":158,"t":"2026-11-13T17:58:34Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-2e4d796","t":"2026-11-13T18:05:17Z"}
