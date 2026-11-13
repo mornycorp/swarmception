@@ -26,6 +26,7 @@ pub mod moments;
 pub mod rows;
 pub mod sendbacks;
 pub mod stats;
+pub mod theme;
 pub mod tickets;
 pub mod timeline;
 pub mod titles;

@@ -1,19 +1,21 @@
 //! The one source of the swarm's colours (#15, the owner's): the timeline and the factory both
-//! take them from here, so a ticket and a phase look the same in both.
+//! take them from here, so a ticket and a phase look the same in both. Every one is the
+//! [`theme`]'s (#152, the owner's: swarm-core's recommendations, in place of scheme B, #40), in
+//! its dark look; `theme.get` gives each one's light.
 //!
-//! - **A ticket's own colour** ([`ticket_colour`]): its issue number's entry in [`PALETTE`], a
-//!   fixed, hand-picked set of muted colours (#40, the owner's scheme B, Tableau-like), taken in
-//!   turn so consecutive ids never share one. Its bar and its merge are drawn in it.
-//! - **The fixed colours**: claimed [`CLAIMED`] yellow, working [`WORKING`] a warm white, waiting
-//!   for merge [`WAITING`] blue, in the gate [`GATING`] magenta, sent back [`SENT_BACK`] red,
-//!   stopped [`STOPPED`] grey, and every merge onto main [`MAIN_MERGE`] green; [`NO_TICKET`], a
-//!   slate grey for what is no ticket's. A stage of a ticket takes its colour from
-//!   [`crate::rows::Stage::colour`] alone (#117), wherever it is named.
+//! - **A ticket's own colour** ([`ticket_colour`]): its issue number's pick of the theme's
+//!   [`theme::RANGE_32`], the range for identifiers side by side (Glasbey et al.'s set, via
+//!   colorcet), by the FNV-1a hash of the number, so the same issue is the same colour on every
+//!   run, surface and machine. Its bar and its merge are drawn in it.
+//! - **The stages, from the tokens named for what they mean**: claimed [`CLAIMED`] (`warning`),
+//!   working [`WORKING`] (`strong`), waiting for merge [`WAITING`] (`accent`), in the gate
+//!   [`GATING`] (Swarmception's `gate`), sent back [`SENT_BACK`] (`error`), stopped [`STOPPED`]
+//!   (`muted`), and every merge onto main [`MAIN_MERGE`] (`success`); [`NO_TICKET`] (`muted`) for
+//!   what is no ticket's. A stage of a ticket takes its colour from [`crate::rows::Stage::colour`]
+//!   alone (#117), wherever it is named.
 //!
-//! The palette leaves the phases' own hues to them: it has no blue, no mid green, no amber and no
-//! red, and every entry keeps at least [`CLEARANCE`] of hue and [`DISTANCE`] of colour (OKLab)
-//! from each fixed colour, so a ticket never reads as a phase. Every colour takes a dark label at
-//! a contrast of 4.5 or more, and reads on the dark background.
+//! The range is chosen for telling identifiers apart, not for keeping clear of the stages' hues:
+//! a ticket may be red or green. Its stages say what happened to it, on its strip and in words.
 //!
 //! - **Each bar's importance** ([`importance`], #108): zoomed out, the timeline packs a column of
 //!   narrow bars into one in the colour of its most important (swarm-timeline's spec §6.1), so
@@ -22,64 +24,55 @@
 //!   merges the widget's default, 0, as before.
 
 use crate::rows::Style;
+use crate::theme::{self, Look, Token};
 
 /// A colour as red, green and blue bytes (sRGB).
 pub type Rgb = [u8; 3];
 
-/// The tickets' colours, in the order consecutive ids take them (#40): each is far from the
-/// entries either side of it, warm and cool, light and mid in turn.
-pub const PALETTE: [Rgb; 11] = [
-    [0x45, 0xa6, 0xab], // teal
-    [0xf2, 0x8e, 0x2b], // orange
-    [0x98, 0xa2, 0xea], // periwinkle
-    [0xa7, 0xbc, 0x61], // olive
-    [0xdc, 0x7d, 0x97], // rose
-    [0x7c, 0xc6, 0xe6], // sky
-    [0xb7, 0x87, 0x5f], // brown
-    [0xe9, 0xa0, 0xcf], // pink
-    [0x7d, 0xd1, 0xb8], // mint
-    [0xab, 0x7c, 0xc7], // purple
-    [0xe2, 0xb2, 0x94], // sand
-];
+/// A theme colour as bytes.
+#[must_use]
+pub const fn bytes(colour: theme::Rgb) -> Rgb {
+    [colour.r, colour.g, colour.b]
+}
 
-/// Claimed: a clear yellow, yellower than the proposal's amber so the palette's orange and sand
-/// keep clear of it.
-pub const CLAIMED: Rgb = [0xe6, 0xc8, 0x4f];
-/// Waiting for merge: a mid blue.
-pub const WAITING: Rgb = [0x5b, 0x8e, 0xc9];
-/// Sent back: a brick red, light enough for a dark label.
-pub const SENT_BACK: Rgb = [0xdc, 0x5f, 0x56];
-/// Stopped: grey.
-pub const STOPPED: Rgb = [0x8a, 0x8a, 0x8a];
-/// A merge onto main: a mid green, one colour for all of them.
-pub const MAIN_MERGE: Rgb = [0x5a, 0xa4, 0x69];
-/// A slate grey, for what is no ticket's (a merge onto main that no ticket names): bluer than
-/// [`STOPPED`].
-pub const NO_TICKET: Rgb = [0x7f, 0x87, 0x96];
+/// A token's colour in the dark look, as bytes.
+const fn dark(token: Token) -> Rgb {
+    bytes(token.of(Look::Dark))
+}
 
+/// Claimed: `warning`, something to look at that hasn't failed.
+pub const CLAIMED: Rgb = dark(theme::WARNING);
+/// Waiting for merge: `accent`.
+pub const WAITING: Rgb = dark(theme::ACCENT);
+/// Sent back: `error`.
+pub const SENT_BACK: Rgb = dark(theme::ERROR);
+/// Stopped: `muted`.
+pub const STOPPED: Rgb = dark(theme::MUTED);
+/// A merge onto main: `success`, one colour for all of them.
+pub const MAIN_MERGE: Rgb = dark(theme::SUCCESS);
+/// What is no ticket's (a merge onto main that no ticket names): `muted`.
+pub const NO_TICKET: Rgb = dark(theme::MUTED);
 /// Working, on a phase's border and strip (#42, the factory's own, and the timeline's strip since
-/// #110): a warm white, lit, lighter than every ticket's colour and every phase's, so it shows on
-/// a bar in its ticket's colour.
-pub const WORKING: Rgb = [0xff, 0xf3, 0xd6];
-/// In a gate run (#42, the factory's own; the timeline's strip since #110): a magenta, more vivid
-/// than the palette's muted purple and pink.
-pub const GATING: Rgb = [0xe0, 0x40, 0xfb];
+/// #110): `strong`, so it shows on a bar in its ticket's colour.
+pub const WORKING: Rgb = dark(theme::STRONG);
+/// In a gate run (#42, the factory's own; the timeline's strip since #110): Swarmception's
+/// `gate`, a magenta.
+pub const GATING: Rgb = dark(theme::GATE);
+/// An idle bench: Swarmception's `idle`, a quiet sea green.
+pub const IDLE: Rgb = dark(theme::IDLE);
 
-/// The fixed colours with a hue, which a ticket's colour keeps clear of.
-pub const FIXED: [Rgb; 4] = [CLAIMED, WAITING, SENT_BACK, MAIN_MERGE];
-/// How far, in degrees of OKLCh hue, a ticket's colour keeps from each of [`FIXED`]'s.
-pub const CLEARANCE: f64 = 20.0;
-/// How far, in OKLab, a ticket's colour keeps from every fixed colour and every other ticket's.
-pub const DISTANCE: f64 = 0.08;
-/// How far, in OKLab, consecutive ids' colours are apart at least.
-pub const NEIGHBOURS: f64 = 0.15;
-
-/// A ticket's own colour: entry `issue` modulo [`PALETTE`]'s size, so consecutive ids differ and
-/// the same issue is the same colour everywhere.
+/// A ticket's own colour: [`theme::RANGE_32`]'s pick of its issue number in the dark look, so the
+/// same issue is the same colour everywhere.
 #[must_use]
 pub fn ticket_colour(issue: u64) -> Rgb {
-    const SIZE: u64 = PALETTE.len() as u64;
-    usize::try_from(issue % SIZE).ok().and_then(|i| PALETTE.get(i)).copied().unwrap_or(NO_TICKET)
+    bytes(theme::RANGE_32.of(Look::Dark).pick(issue))
+}
+
+/// The `n`th colour of a series in order (the Workers pane's model × effort groups): the theme's
+/// [`theme::RANGE_8`] by number.
+#[must_use]
+pub fn series_colour(n: u64) -> Rgb {
+    bytes(theme::RANGE_8.of(Look::Dark).at(n))
 }
 
 /// The colour a bar of `style` is drawn in, `ticket` the ticket it is (none for a merge onto
@@ -129,131 +122,61 @@ pub fn ink(fill: Rgb) -> Rgb {
 const BLACK: Rgb = [0x1a, 0x1a, 0x1a];
 const WHITE: Rgb = [0xff, 0xff, 0xff];
 
-/// The contrast ratio of two colours, 1 to 21 (WCAG 2's).
+/// The contrast ratio of two colours, 1 to 21 (WCAG 2's, as the theme measures it).
 #[must_use]
-pub fn contrast(a: Rgb, b: Rgb) -> f64 {
-    let (la, lb) = (luminance(a), luminance(b));
-    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-}
-
-/// sRGB's byte, linear, 0 to 1.
-fn linear(byte: u8) -> f64 {
-    let c = f64::from(byte) / 255.0;
-    if c <= 0.040_45 { c / 12.92 } else { ((c + 0.055) / 1.055).powf(2.4) }
-}
-
-/// The relative luminance of `colour`, 0 to 1 (WCAG 2's).
-#[must_use]
-pub fn luminance(colour: Rgb) -> f64 {
-    let [r, g, b] = colour.map(linear);
-    0.0722f64.mul_add(b, 0.2126f64.mul_add(r, 0.7152 * g))
-}
-
-/// `colour` in OKLab (Björn Ottosson's): lightness 0 to 1, then the green–red and blue–yellow
-/// axes. Distances in it are close to how different two colours look.
-#[must_use]
-pub fn oklab(colour: Rgb) -> [f64; 3] {
-    let [r, g, b] = colour.map(linear);
-    let l = 0.051_445_992_9f64.mul_add(b, 0.412_221_470_8f64.mul_add(r, 0.536_332_536_3 * g)).cbrt();
-    let m = 0.107_396_956_6f64.mul_add(b, 0.211_903_498_2f64.mul_add(r, 0.680_699_545_1 * g)).cbrt();
-    let s = 0.629_978_700_5f64.mul_add(b, 0.088_302_461_9f64.mul_add(r, 0.281_718_837_6 * g)).cbrt();
-    [
-        (-0.004_072_046_8f64).mul_add(s, 0.210_454_255_3f64.mul_add(l, 0.793_617_785_0 * m)),
-        0.450_593_709_9f64.mul_add(s, 1.977_998_495_1f64.mul_add(l, -2.428_592_205_0 * m)),
-        (-0.808_675_766_0f64).mul_add(s, 0.025_904_037_1f64.mul_add(l, 0.782_771_766_2 * m)),
-    ]
-}
-
-/// How different two colours look: their distance in OKLab (0 the same; 0.02 just noticeable).
-#[must_use]
-pub fn distance(a: Rgb, b: Rgb) -> f64 {
-    let ([l1, a1, b1], [l2, a2, b2]) = (oklab(a), oklab(b));
-    (l1 - l2).hypot(a1 - a2).hypot(b1 - b2)
-}
-
-/// `colour`'s chroma in OKLCh: 0 for a grey, about 0.1 for the palette's muted colours.
-#[must_use]
-pub fn chroma(colour: Rgb) -> f64 {
-    let [_, a, b] = oklab(colour);
-    a.hypot(b)
-}
-
-/// The hue of `colour` in OKLCh, in degrees (0 for a grey).
-#[must_use]
-pub fn hue_of(colour: Rgb) -> f64 {
-    let [_, a, b] = oklab(colour);
-    if a.hypot(b) <= 1e-6 { 0.0 } else { b.atan2(a).to_degrees().rem_euclid(360.0) }
+pub fn contrast([r1, g1, b1]: Rgb, [r2, g2, b2]: Rgb) -> f64 {
+    theme::Rgb::new(r1, g1, b1).contrast(theme::Rgb::new(r2, g2, b2))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The distance between two hues, in degrees, round the wheel.
-    fn apart(a: f64, b: f64) -> f64 {
-        let d = (a - b).rem_euclid(360.0);
-        d.min(360.0 - d)
-    }
-
     const DARK: Rgb = [0x1b, 0x1b, 0x1b];
 
+    /// #152: a ticket's colour is range32's pick of its number, the same on every call, and the
+    /// pick swarm-core pins (FNV-1a over its decimal digits).
     #[test]
-    fn a_tickets_colour_is_its_ids_palette_entry_and_the_entries_are_distinct() {
-        assert!((10..=12).contains(&PALETTE.len()), "enough entries that a packed row rarely repeats one");
+    fn a_tickets_colour_is_range32s_pick_of_its_number() {
+        let range = theme::RANGE_32.of(Look::Dark);
         assert_eq!(ticket_colour(170), ticket_colour(170), "the same issue, the same colour");
-        for issue in 0..100u64 {
-            assert_eq!(ticket_colour(issue), PALETTE[(issue % PALETTE.len() as u64) as usize]);
+        for issue in [0, 7, 169, 170, 4_000, u64::MAX] {
+            assert_eq!(ticket_colour(issue), bytes(range.pick(issue)));
+            assert_eq!(ticket_colour(issue), bytes(range.entries()[range.index_of(issue)]));
         }
-        assert!(PALETTE.contains(&ticket_colour(u64::MAX)));
-        for (i, a) in PALETTE.iter().enumerate() {
-            for b in &PALETTE[i + 1..] {
-                assert!(distance(*a, *b) >= DISTANCE, "{a:?} and {b:?} are too alike: {:.3}", distance(*a, *b));
-            }
+        let used: std::collections::BTreeSet<Rgb> = (1..=200).map(ticket_colour).collect();
+        assert!(used.len() >= 28, "200 tickets spread over the range: {}", used.len());
+    }
+
+    /// #152: every stage's colour is a theme token's, the one named for what it means; a series is
+    /// range8's in order.
+    #[test]
+    fn the_stages_are_the_tokens_named_for_what_they_mean() {
+        let named = [
+            (CLAIMED, theme::WARNING),
+            (WAITING, theme::ACCENT),
+            (SENT_BACK, theme::ERROR),
+            (STOPPED, theme::MUTED),
+            (MAIN_MERGE, theme::SUCCESS),
+            (NO_TICKET, theme::MUTED),
+            (WORKING, theme::STRONG),
+            (GATING, theme::GATE),
+            (IDLE, theme::IDLE),
+        ];
+        for (colour, token) in named {
+            assert_eq!(colour, bytes(token.dark), "{}", token.name);
+            assert!(contrast(colour, DARK) >= theme::TEXT_CONTRAST, "{} reads on the dark background", token.name);
         }
+        assert_eq!(series_colour(0), bytes(theme::RANGE_8.dark.at(0)));
+        assert_eq!(series_colour(9), series_colour(1), "a series wraps round range8");
     }
 
     #[test]
-    fn consecutive_ids_never_share_a_colour() {
-        for issue in 0..2_000 {
-            let (here, next) = (ticket_colour(issue), ticket_colour(issue + 1));
-            assert!(distance(here, next) >= NEIGHBOURS, "#{issue} {here:?} and #{} {next:?}: {:.3}", issue + 1, distance(here, next));
+    fn a_label_reads_on_every_tickets_colour() {
+        for &entry in theme::RANGE_32.dark.entries() {
+            let colour = bytes(entry);
+            assert!(contrast(colour, ink(colour)) >= theme::FILL_CONTRAST, "the label on {colour:02x?}: {:.1}", contrast(colour, ink(colour)));
         }
-    }
-
-    #[test]
-    fn a_tickets_colour_keeps_clear_of_the_phase_colours() {
-        for colour in PALETTE {
-            for fixed in FIXED {
-                let (h, f) = (hue_of(colour), hue_of(fixed));
-                assert!(apart(h, f) >= CLEARANCE, "{colour:?} at {h:.0}° is near {fixed:?} at {f:.0}°");
-            }
-            for fixed in FIXED.into_iter().chain([STOPPED, NO_TICKET]) {
-                assert!(distance(colour, fixed) >= DISTANCE, "{colour:?} looks like {fixed:?}: {:.3}", distance(colour, fixed));
-            }
-            assert!(chroma(colour) >= 0.06, "{colour:?} reads as a grey: chroma {:.3}", chroma(colour));
-        }
-    }
-
-    #[test]
-    fn labels_read_on_every_colour_and_every_colour_reads_on_the_dark_background() {
-        for colour in PALETTE.into_iter().chain(FIXED).chain([STOPPED, NO_TICKET]) {
-            assert_eq!(ink(colour), BLACK, "a dark label on {colour:?}");
-            assert!(contrast(colour, ink(colour)) >= 4.5, "the label on {colour:?}: {:.1}", contrast(colour, ink(colour)));
-            assert!(contrast(colour, DARK) >= 4.5, "{colour:?} on the background: {:.1}", contrast(colour, DARK));
-        }
-    }
-
-    #[test]
-    fn every_colour_is_muted_not_neon() {
-        for colour in PALETTE.into_iter().chain(FIXED) {
-            let [l, ..] = oklab(colour);
-            assert!(chroma(colour) <= 0.17, "{colour:?} is neon: chroma {:.3}", chroma(colour));
-            assert!((0.6..=0.86).contains(&l), "{colour:?} at lightness {l:.2} is too dark or glares");
-        }
-        for grey in [STOPPED, NO_TICKET] {
-            assert!(chroma(grey) < 0.03, "{grey:?} is grey");
-        }
-        assert!(distance(STOPPED, NO_TICKET) > 0.02, "no ticket's slate is not stopped's grey");
     }
 
     #[test]
@@ -372,17 +295,5 @@ mod tests {
         for level in [HIGH, MIDDLE, LOW, MERGE] {
             assert_eq!(Importance::new(level).map(Importance::value), Ok(level), "{level} is the widget's");
         }
-    }
-
-    #[test]
-    fn the_phases_keep_their_hues() {
-        let within = |colour: Rgb, from: f64, to: f64| (from..=to).contains(&hue_of(colour));
-        assert!(within(CLAIMED, 85.0, 110.0), "claimed is yellow: {:.0}°", hue_of(CLAIMED));
-        assert!(within(MAIN_MERGE, 135.0, 160.0), "merges are green: {:.0}°", hue_of(MAIN_MERGE));
-        assert!(within(WAITING, 240.0, 265.0), "waiting is blue: {:.0}°", hue_of(WAITING));
-        assert!(within(SENT_BACK, 15.0, 40.0), "sent back is red: {:.0}°", hue_of(SENT_BACK));
-        assert!(hue_of(STOPPED).abs() < f64::EPSILON);
-        let [l, a, b] = oklab([0xff, 0xff, 0xff]);
-        assert!((l - 1.0).abs() < 1e-3 && a.abs() < 1e-3 && b.abs() < 1e-3, "white is OKLab's white");
     }
 }

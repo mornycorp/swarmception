@@ -2,7 +2,7 @@
      own now. Nothing checks it against Swarm Core. -->
 # Owner directions
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-05 · **Change:** minor (group idle benches, X for row-constrained drag, #147; CI is always local, #140) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-13 · **Change:** minor (colours from swarm-core's theme, #152; group idle benches, X for row-constrained drag, #147; CI is always local, #140) · **Target:** M1
 
 The owner's standing directions and decisions for Swarmception, dated, newest first in each
 section. Every agent reads this with `AGENTS.md`. The owner writes it, or an agent records a
@@ -47,6 +47,7 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 | Date | Decision | Why | Where |
 |---|---|---|---|
+| 2026-11-13 | Colours follow swarm-core's recommendations: the theme's tokens named for what they mean (a stage takes its meaning's: claimed `warning`, waiting `accent`, sent back `error`, merged `success`, stopped `muted`, working `strong`; the gate and an idle bench Swarmception's own tokens), a ticket's colour range32's pick of its number, and `theme.get` the theme as data | the owner's: "update your color scheme to match the swarm core recommendations" | #152 |
 | 2026-11-06 | Group idle workers into one tile (for example, "3 idle"), with names when they fit and the full list in a tooltip. Ordinary click-drag and Alt-click-drag select the nearest ticket across rows; hold X to constrain either to its starting row. Alt still selects ends. | The owner wants compact benches and the old cross-row default; X adds the row constraint independently of Alt. | Owner, ticket-lifecycle chat; #147 |
 | 2026-11-03 | Ticket bars: a sent-back ticket shows the factory's red corner (with the count); merge dots are off by default but can be turned on (the bar ending at its merge says it); a red dot marks a ticket abandoned or cancelled | the owner's | #127 |
 | 2026-11-03 | No Gates band: "We can remove the 'Gate' dock/window; it isn't useful." Kept: `gates.list`, `stats.get`, the Factory's figures and Gate list, the details' gate subjects | the owner's | #128 |
@@ -59,6 +60,9 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 ## Superseded
 
+- **Scheme B**: tickets in eleven hand-picked muted colours, taken in turn so consecutive ids
+  differ and none near a stage's hue (owner, 2026-11-01, #40); ended 2026-11-13, replaced by
+  **colours from swarm-core's theme** (#152).
 - **GitHub CI runs once a day**, on `main`, not on every push or PR (owner, 2026-10-31); ended
   2026-11-05, replaced by **CI is always local** (#140).
 
@@ -66,6 +70,7 @@ date and where (`(owner, YYYY-MM-DD, #n)`). The protocol and AGENTS.md cite them
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Colours from swarm-core's theme (#152); scheme B superseded |
 | 2026-11-04 | minor | Alt + click on a ticket's bar shows its end (#137) |
 | 2026-11-03 | minor | No Gates band (#128); no Gate runs or Ready checks rows (#117, reversing #84); a stage in one colour everywhere (#117) |
 | 2026-11-02 | minor | The Collapse decision notes that a window-relative choice now exists (#74); the default stays |

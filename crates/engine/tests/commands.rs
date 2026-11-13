@@ -114,6 +114,33 @@ fn rows_list_answers_each_tooltip_as_plain_text_and_as_styled_lines() {
     std::fs::remove_dir_all(dir).ok();
 }
 
+/// #152: `theme.get` answers the theme as data, with no repository open: each token by what it
+/// means in both looks (the swarm's stages among them), and the ranges a ticket's colour is
+/// picked from; the colours the rows are drawn in are its.
+#[test]
+fn the_theme_is_data_a_command_returns() {
+    use swarmception_domain::colours::{self, bytes};
+    use swarmception_domain::theme::{Look, RANGE_32, Rgb, ThemeData};
+    let mut session = Session::new();
+    let theme: ThemeData = call(&mut session, "theme.get", "");
+    let token = |name: &str| theme.tokens.iter().find(|t| t.name == name).unwrap_or_else(|| panic!("no {name} token"));
+    for (name, colour) in [
+        ("warning", colours::CLAIMED),
+        ("accent", colours::WAITING),
+        ("error", colours::SENT_BACK),
+        ("success", colours::MAIN_MERGE),
+        ("gate", colours::GATING),
+    ] {
+        let dark = Rgb::parse(&token(name).dark).map(bytes);
+        assert_eq!(dark, Some(colour), "{name}");
+        assert!(Rgb::parse(&token(name).light).is_some() && !token(name).meaning.is_empty(), "{name}");
+    }
+    let range32 = theme.ranges.iter().find(|r| r.name == "range32").unwrap();
+    assert_eq!(range32.size, 32);
+    let picked = RANGE_32.of(Look::Dark).index_of(169);
+    assert_eq!(Rgb::parse(&range32.entries[picked].dark).map(bytes), Some(colours::ticket_colour(169)), "#169's colour is its pick");
+}
+
 #[test]
 fn a_reload_before_an_open_is_disabled() {
     let mut session = Session::new();
