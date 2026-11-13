@@ -18,7 +18,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use swarmception_engine::EngineError;
 use swarmception_engine::engine_cmds::NoParams;
-use swarmception_engine::repo_cmds::{ClearRecent, Open, OpenParams, Recent, RecentRepo, StatusResult};
+use swarmception_engine::repo_cmds::{ClearRecent, Open, OpenParams, OpenRefused, Recent, RecentRepo, StatusResult};
 
 use crate::menu::{MenuAction, MenuState, recent_label};
 use crate::{DetailsPane, DetailsView, FactoryPane, FactoryView, Shell, TimelinePane, UiState, WorkersPane, icons, saved};
@@ -73,6 +73,8 @@ pub(crate) struct Opening {
     /// The engine's [`swarmception_engine::Session::opens`] the shell has switched to.
     pub(crate) opens: u64,
     refused: Option<Refused>,
+    /// The engine's last background refusal taken in (#161), so one is said once.
+    landed: Option<OpenRefused>,
     prompt: Option<String>,
     /// Where the recent list is kept: the state's directory, when the shell keeps state.
     store: Option<saved::StateStore>,
@@ -136,11 +138,13 @@ impl Shell {
     }
 
     /// Opens the repository `path` is in (`repo.open`), the open one's state saved first; a
-    /// refusal is said in the window and changes nothing.
+    /// refusal is said in the window and changes nothing. The folder is checked in the background
+    /// (#161): the answer says `opening`, and the repository opens, or the refusal is said, when
+    /// the check lands ([`Self::open_answer`]).
     ///
     /// # Errors
     ///
-    /// `repo.open`'s refusal.
+    /// `repo.open`'s refusal, when it came at once.
     pub fn open_repo(&mut self, path: &str) -> Result<StatusResult, EngineError> {
         self.opening.prompt = None;
         if let Err(why) = self.save_state() {
@@ -198,9 +202,32 @@ impl Shell {
         self.status_at = None;
     }
 
+    /// What `repo.open` came to once its background check landed (#161): none while it is
+    /// checking; the status once the repository opened; the refusal when it was refused.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, as `repo.open` gives it.
+    pub fn open_answer(&mut self) -> Option<Result<StatusResult, EngineError>> {
+        self.sync();
+        if self.engine.opening().is_some() {
+            return None;
+        }
+        Some(match self.engine.refused() {
+            Some(refused) => Err(EngineError::from(refused.refusal.clone())),
+            None => self.engine.call::<swarmception_engine::repo_cmds::Status>(NoParams {}),
+        })
+    }
+
     /// In [`Shell::sync`], when the engine's revision moved: another repository opened (switch to
-    /// it), and the recent list read again and written when it changed.
+    /// it), a background refusal said (#161), and the recent list read again and written when it
+    /// changed.
     pub(crate) fn sync_opening(&mut self) {
+        let refused = self.engine.refused().cloned();
+        if refused.is_some() && refused != self.opening.landed {
+            self.opening.refused = refused.as_ref().map(|r| Refused { path: r.path.clone(), why: EngineError::from(r.refusal.clone()).to_string() });
+        }
+        self.opening.landed = refused;
         if self.engine.opens() != self.opening.opens {
             self.switch_repo();
         }

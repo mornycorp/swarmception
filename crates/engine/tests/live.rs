@@ -289,7 +289,7 @@ fn a_session_with_a_waker_checks_on_the_interval_in_the_background() {
     let swarm = Swarm::new(old());
     let (mut session, wakes) = Wakes::session();
     swarm.open(&mut session);
-    let wait = |session: &mut Session| wakes.poll_until(session, "the read landed", |s| s.job().is_none());
+    let wait = |session: &mut Session| wakes.poll_until(session, "the read landed", |s| s.opening().is_none() && s.job().is_none());
     wait(&mut session);
     assert_eq!(session.live_wait(Instant::now()), None, "off by default: an old swarm");
 

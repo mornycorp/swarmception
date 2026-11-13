@@ -411,10 +411,10 @@ impl Shell {
     }
 
     /// Whether a read is still going: a Reload's or a Fetch's, not a live check's, which goes on
-    /// unseen until it brings something (#54).
+    /// unseen until it brings something (#54); or `repo.open` checking a folder (#161).
     #[must_use]
     pub fn loading(&self) -> bool {
-        self.status.job.is_some_and(|job| job != Job::Live)
+        self.status.job.is_some_and(|job| job != Job::Live) || self.status.opening.is_some()
     }
 
     /// The live watch (#54), as `live.get` said last.
@@ -1033,7 +1033,10 @@ impl Shell {
                 self.set_fold(fold);
             }
             // The zoom in / out / fit buttons are the timeline widget's own toolbar's (#35).
-            if self.loading() {
+            if let Some(path) = &self.status.opening {
+                ui.separator();
+                ui.label(format!("{}  opening {path}…", icons::SPINNER));
+            } else if self.loading() {
                 ui.separator();
                 ui.label(format!("{}  reading the tracking branch…", icons::SPINNER));
             }

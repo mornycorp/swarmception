@@ -175,3 +175,44 @@ fn an_open_while_a_read_goes_on_lands_the_new_repository() {
         std::fs::remove_dir_all(dir).ok();
     }
 }
+
+/// #161: with a waker (a front end's session), `repo.open` checks the folder in the background:
+/// the answer comes at once saying `opening`, the repository open stays open meanwhile, and the
+/// check lands through `poll`, opening the repository or keeping why not in `repo.status`'s
+/// `refused`. A second `repo.open` before the first lands takes its place.
+#[test]
+fn a_front_ends_open_checks_the_folder_in_the_background() {
+    let (a, b) = (swarm("bg-a", 7), swarm("bg-b", 9));
+    let plain = temp("bg-plain");
+    let (mut session, wakes) = Wakes::session();
+    session.set_github(Github { gh: PathBuf::from("/no/such/gh"), cache_dir: None });
+    let status = |session: &mut Session| -> StatusResult { serde_json::from_str(&session.execute("repo.status", "").unwrap()).unwrap() };
+
+    let asked = open(&mut session, &a).unwrap();
+    assert_eq!((asked.opening.as_deref(), asked.repo, session.opens()), (Some(a.display().to_string().as_str()), None, 0), "nothing opened yet");
+    wakes.settle(&mut session);
+    let opened = status(&mut session);
+    assert_eq!((opened.repo.as_deref(), opened.tickets, opened.opening, opened.refused), (Some(a.display().to_string().as_str()), 1, None, None));
+    assert_eq!(session.opens(), 1);
+
+    // Refused once it lands: a stays open, the refusal kept until the next open.
+    let asked = open(&mut session, &plain).unwrap();
+    assert!(asked.opening.is_some() && asked.refused.is_none());
+    wakes.settle(&mut session);
+    let refused = status(&mut session);
+    assert_eq!((refused.repo.as_deref(), refused.tickets, session.opens()), (Some(a.display().to_string().as_str()), 1, 1));
+    let kept = refused.refused.unwrap();
+    assert_eq!(kept.path, plain.display().to_string());
+    assert!(matches!(kept.refusal, Refusal::NotARepository { .. }), "{kept:?}");
+
+    // Two asked one after the other: the second takes the first's place.
+    open(&mut session, &plain).unwrap();
+    let asked = open(&mut session, &b).unwrap();
+    assert_eq!((asked.opening.as_deref(), asked.refused), (Some(b.display().to_string().as_str()), None));
+    wakes.settle(&mut session);
+    let now = status(&mut session);
+    assert_eq!((now.repo.as_deref(), now.refused, session.opens()), (Some(b.display().to_string().as_str()), None, 2));
+    for dir in [a, b, plain] {
+        std::fs::remove_dir_all(dir).ok();
+    }
+}

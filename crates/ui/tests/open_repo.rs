@@ -167,9 +167,18 @@ fn a_refused_folder_is_said_in_the_window_and_the_open_repository_stays() {
     let (ctx, mut shell) = started(&a, &store);
     let before = inspect(&mut shell);
 
-    // Through the control channel, as File ▸ Open… would.
+    // Through the control channel, as File ▸ Open… would: the folder checked in the background
+    // (#161), the answer once that lands, the refusal as it always was.
     let params = serde_json::json!({ "path": plain.display().to_string() }).to_string();
-    assert!(matches!(shell.answer("repo.open", &params), Answer::Now(Err(_))));
+    assert_eq!(shell.answer("repo.open", &params), Answer::Opening);
+    assert!(shell.loading(), "checking the folder");
+    let mut answer = None;
+    support::until("the folder checked", || {
+        answer = shell.open_answer();
+        answer.is_some()
+    });
+    let refusal = answer.unwrap().unwrap_err();
+    assert!(refusal.to_string().contains("is not in a git repository"), "{refusal}");
     // A new window sizes itself on its first frame, unseen: the second draws it.
     frame(&mut shell, &ctx);
     let drawn = frame(&mut shell, &ctx).join("\n");
@@ -185,7 +194,10 @@ fn a_refused_folder_is_said_in_the_window_and_the_open_repository_stays() {
     // A missing folder from Open Recent, through the picker: refused the same way.
     shell.set_folder_picker(Box::new(|_| Picked::Folder(PathBuf::from("/no/such/swarm"))));
     shell.run_menu(&ctx, MenuAction::Open);
-    assert!(shell.refused().is_some_and(|r| r.why.contains("no such folder")), "{:?}", shell.refused());
+    support::until("the missing folder refused", || {
+        frame(&mut shell, &ctx);
+        shell.refused().is_some_and(|r| r.why.contains("no such folder"))
+    });
     // Cancelled: nothing more is said or changed.
     shell.set_folder_picker(Box::new(|_| Picked::Cancelled));
     shell.run_menu(&ctx, MenuAction::Open);

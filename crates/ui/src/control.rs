@@ -440,6 +440,9 @@ pub enum Answer {
     Now(Result<String, ShellError>),
     Screenshot(Screenshot),
     Loaded(Loaded),
+    /// `repo.open` checking its folder in the background (#161): answered with
+    /// [`Shell::open_answer`] once that lands, the UI's thread not waiting meanwhile.
+    Opening,
 }
 
 /// The window's own commands, then the widget's forwarded as `timeline.<id>`, with their
@@ -492,6 +495,16 @@ impl Shell {
                 Ok(loaded) => Answer::Loaded(loaded),
                 Err(error) => Answer::Now(Err(error.into())),
             },
+            // Through the shell, as File ▸ Open… is (#69): the open repository's state saved
+            // first, a refusal said in the window; answered once the folder's check lands (#161).
+            "repo.open" => match parse::<swarmception_engine::repo_cmds::OpenParams>(params) {
+                Ok(open) => match self.open_repo(&open.path) {
+                    Ok(status) if status.opening.is_some() => Answer::Opening,
+                    Ok(status) => Answer::Now(reply(&status)),
+                    Err(error) => Answer::Now(Err(ShellError::Engine(error))),
+                },
+                Err(error) => Answer::Now(Err(error.into())),
+            },
             _ => Answer::Now(self.answer_now(command, params)),
         }
     }
@@ -522,12 +535,6 @@ impl Shell {
             other if other.starts_with("ui.") => Err(EngineError::UnknownCommand { command: other.to_owned() }.into()),
             other => match other.strip_prefix(WIDGET_PREFIX).filter(|rest| rest.contains('.')) {
                 Some(widget) => self.timeline.widget().answer(widget, params).map_err(ShellError::Widget),
-                // Through the shell, as File ▸ Open… is (#69): the open repository's state saved
-                // first, a refusal said in the window.
-                None if other == "repo.open" => {
-                    let open = parse::<swarmception_engine::repo_cmds::OpenParams>(params)?;
-                    reply(&self.open_repo(&open.path)?)
-                }
                 None => self.engine.execute(other, params).map_err(ShellError::Engine),
             },
         }
