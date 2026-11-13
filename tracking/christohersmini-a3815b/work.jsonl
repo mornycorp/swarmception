@@ -31,3 +31,4 @@
 {"event":"sub.start","name":"gate","note":"#159: the shared palette (swarm-core d4df5a2); capacity=3 free=9.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-159","t":"2026-11-13T18:05:51Z"}
 {"event":"sub.stop","note":"rc=1; cause=other; kind=smoke","sub":"gate-159","t":"2026-11-13T18:05:54Z"}
 {"event":"sub.start","name":"gate","note":"#159: the shared palette (swarm-core d4df5a2); capacity=3 free=9.8; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-159","t":"2026-11-13T18:06:04Z"}
+{"event":"merge","issue":158,"mr":159,"sub":"gate-159","t":"2026-11-13T18:06:32Z"}
