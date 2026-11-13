@@ -1,11 +1,12 @@
-//! `git`, run with a deadline and a cap on what it says. Its output is read on threads of their
-//! own, so a full pipe never stalls it; past the deadline it is killed.
+//! `git`, run with a deadline and a cap on what it says, through the one place a program is
+//! started ([`crate::process`]): its output read on threads of their own, so a full pipe never
+//! stalls it; past the deadline it is killed.
 
 use std::fmt;
-use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use crate::process::{ProcessError, Program};
 
 /// Why a git call failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,47 +65,25 @@ impl Git {
     /// [`GitError`]: it couldn't start, ran past the deadline, said too much or failed.
     pub fn run(&self, args: &[&str], input: Option<Vec<u8>>) -> Result<Vec<u8>, GitError> {
         let shown = args.join(" ");
-        let mut child = Command::new(&self.program)
-            .current_dir(&self.dir)
-            .args(args)
+        let mut program = Program::new(&self.program, self.deadline, self.cap)
+            .args(args.iter().copied())
+            .dir(&self.dir)
             .env("GIT_TERMINAL_PROMPT", "0")
             .env("GH_PROMPT_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| GitError::Spawn(e.to_string()))?;
-        if let (Some(mut stdin), Some(input)) = (child.stdin.take(), input) {
-            std::thread::spawn(move || stdin.write_all(&input));
+            .env("NO_COLOR", "1");
+        if let Some(input) = input {
+            program = program.input(input);
         }
-        let cap = self.cap;
-        let out = child.stdout.take().map(|s| std::thread::spawn(move || capped_read(s, cap)));
-        let err = child.stderr.take().map(|s| std::thread::spawn(move || capped_read(s, 64 * 1024)));
-        let started = Instant::now();
-        let status = loop {
-            match child.try_wait() {
-                Ok(Some(status)) => break status,
-                Ok(None) if started.elapsed() > self.deadline => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(GitError::Deadline { args: shown, seconds: self.deadline.as_secs() });
-                }
-                Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-                Err(e) => return Err(GitError::Spawn(e.to_string())),
-            }
-        };
-        let joined = |h: Option<std::thread::JoinHandle<(Vec<u8>, bool)>>| h.and_then(|h| h.join().ok()).unwrap_or_default();
-        let (stdout, over) = joined(out);
-        let (stderr, _) = joined(err);
-        if over {
-            return Err(GitError::TooLarge { args: shown, cap });
+        let ran = program.run().map_err(|e| match e {
+            ProcessError::NotFound(_) | ProcessError::Spawn(_) => GitError::Spawn(e.to_string()),
+            ProcessError::Deadline { seconds } => GitError::Deadline { args: shown.clone(), seconds },
+            ProcessError::TooLarge { cap } => GitError::TooLarge { args: shown.clone(), cap },
+        })?;
+        if !ran.success {
+            let stderr = String::from_utf8_lossy(&ran.stderr).trim().to_owned();
+            return Err(GitError::Failed { args: shown, status: ran.status, stderr });
         }
-        if !status.success() {
-            let stderr = String::from_utf8_lossy(&stderr).trim().to_owned();
-            return Err(GitError::Failed { args: shown, status: status.to_string(), stderr });
-        }
-        Ok(stdout)
+        Ok(ran.stdout)
     }
 
     /// The contents of each of `paths` at `commit`, in order, through one `git cat-file --batch`.
@@ -137,22 +116,10 @@ impl Git {
     }
 }
 
-/// Reads all of `source`, up to `cap` bytes: what it read, and whether there was more.
-fn capped_read(source: impl Read, cap: usize) -> (Vec<u8>, bool) {
-    let mut out = Vec::new();
-    let limit = u64::try_from(cap).unwrap_or(u64::MAX).saturating_add(1);
-    let mut taken = source.take(limit);
-    let _ = taken.read_to_end(&mut out);
-    let over = out.len() > cap;
-    // Drain the rest, so the process isn't left blocked on a full pipe.
-    let _ = std::io::copy(&mut taken.into_inner(), &mut std::io::sink());
-    out.truncate(cap);
-    (out, over)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     #[test]
     fn a_deadline_stops_it() {

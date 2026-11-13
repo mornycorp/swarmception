@@ -47,13 +47,8 @@ impl<H: Handler> Handler for Shared<H> {
 /// The write's I/O error.
 pub fn write_listening(path: &Path, listening: &Listening) -> io::Result<()> {
     let text = serde_json::to_string(listening).map_err(io::Error::other)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(path)?;
-    writeln!(file, "{text}")?;
-    file.flush()
+    // Whole and private, by the one file writer (#164).
+    swarmception_source::files::write_private(path, format!("{text}\n").as_bytes())
 }
 
 /// Reads where a server listens and its token from `path`, as [`write_listening`] wrote it (the

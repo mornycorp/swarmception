@@ -12,10 +12,10 @@
 //! The picker is modal, as AppKit's open panel is on macOS: the window waits for it, at most
 //! [`DEADLINE`], after which it is stopped and taken as cancelled.
 
-use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use swarmception_source::process::{ProcessError, Program};
 
 use swarmception_ui::Picked;
 
@@ -188,43 +188,18 @@ pub fn outcome(platform: Platform, picker: &Invocation, code: Option<i32>, stdou
 ///
 /// [`RunError`]: not installed, couldn't start, past the deadline, or printed too much.
 pub fn run(picker: &Invocation, deadline: Duration, most: usize) -> Result<(Option<i32>, Vec<u8>), RunError> {
-    let mut child = Command::new(&picker.program)
-        .args(&picker.args)
-        .envs(picker.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|e| if e.kind() == std::io::ErrorKind::NotFound { RunError::NotFound } else { RunError::Spawn(e.to_string()) })?;
-    // Read on a thread of its own, so a full pipe never stalls it.
-    let reader = child.stdout.take().map(|out| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = out.take(u64::try_from(most).unwrap_or(u64::MAX).saturating_add(1)).read_to_end(&mut bytes);
-            bytes
-        })
-    });
-    let started = Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if started.elapsed() > deadline => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(RunError::Deadline);
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(20)),
-            Err(e) => {
-                let _ = child.kill();
-                return Err(RunError::Spawn(e.to_string()));
-            }
-        }
-    };
-    let stdout = reader.and_then(|r| r.join().ok()).unwrap_or_default();
-    if stdout.len() > most {
-        return Err(RunError::TooLarge);
+    // Through the one place a program starts (#164): a deadline, a cap, its output read aside.
+    let mut program = Program::new(Path::new(&picker.program), deadline, most).args(picker.args.iter().cloned());
+    for (key, value) in &picker.env {
+        program = program.env(key, value);
     }
-    Ok((status.code(), stdout))
+    match program.run() {
+        Ok(ran) => Ok((ran.code, ran.stdout)),
+        Err(ProcessError::NotFound(_)) => Err(RunError::NotFound),
+        Err(ProcessError::Spawn(message)) => Err(RunError::Spawn(message)),
+        Err(ProcessError::Deadline { .. }) => Err(RunError::Deadline),
+        Err(ProcessError::TooLarge { .. }) => Err(RunError::TooLarge),
+    }
 }
 
 /// Tries each of `pickers` in turn on `platform`: the first that runs says what was chosen or
@@ -259,6 +234,7 @@ pub fn pick(start: Option<&Path>) -> Picked {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn programs(pickers: &[Invocation]) -> Vec<&str> {
         pickers.iter().map(|p| p.program.as_str()).collect()

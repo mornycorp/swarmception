@@ -8,6 +8,7 @@ publish.workspace = true
 
 [dependencies]
 swarmception-engine = { workspace = true }
+swarmception-source = { workspace = true }
 # The line reader, the token and the loopback bind; its protocol types carry the widget's errors,
 # so this crate's are its own.
 timeline-automation = { workspace = true }

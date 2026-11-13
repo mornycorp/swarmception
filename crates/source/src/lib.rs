@@ -6,14 +6,20 @@
 //! nothing reaches git's command line unchecked: the paths it reads are the branch's own,
 //! checked as instance ids. Beside the branch, the repository's GitHub issues ([`github`], #17):
 //! its `origin` as `owner/name`, `gh api` with a deadline, and a versioned cache per repository.
+//!
+//! **The layer that touches the outside** (#164, swarm-core's contract › Layers: its `backends`):
+//! the one atomic file writer ([`files`]) and the one place a program starts ([`process`]) are
+//! here, and every crate above writes and runs through them (`cargo xtask writes`).
 
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![warn(clippy::cognitive_complexity, clippy::too_many_lines)]
 #![cfg_attr(test, allow(clippy::cognitive_complexity, clippy::too_many_lines))]
 
+pub mod files;
 mod git;
 pub mod github;
+pub mod process;
 
 use std::fmt;
 use std::path::{Path, PathBuf};

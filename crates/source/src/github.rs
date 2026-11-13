@@ -429,16 +429,7 @@ pub fn load_cache(dir: &Path, slug: &Slug) -> Result<Option<IssueCache>, GithubE
 /// [`GithubError::Cache`] when the directory or the file can't be written.
 pub fn save_cache(dir: &Path, slug: &Slug, cache: &IssueCache) -> Result<PathBuf, GithubError> {
     let path = cache_path(dir, slug);
-    let failed = |e: std::io::Error| GithubError::Cache { path: path.clone(), message: e.to_string() };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(failed)?;
-    }
-    let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&temporary, cache.write()).map_err(failed)?;
-    std::fs::rename(&temporary, &path).map_err(|e| {
-        let _ = std::fs::remove_file(&temporary);
-        failed(e)
-    })?;
+    crate::files::write_atomic(&path, cache.write().as_bytes()).map_err(|e| GithubError::Cache { path: path.clone(), message: e.to_string() })?;
     Ok(path)
 }
 

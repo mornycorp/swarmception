@@ -349,16 +349,9 @@ struct RecentSections {
 /// What a note adds when the file is left alone.
 const LEFT_ALONE: &str = "the file is left as it is: this run's state isn't saved over it";
 
-/// Writes `text` to `file`, whole or not at all: a temporary file beside it renamed over it.
+/// Writes `text` to `file`, whole or not at all, through the one file writer below the UI (#164).
 fn write_whole(file: &Path, text: &str) -> std::io::Result<()> {
-    if let Some(parent) = file.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let temporary = file.with_extension(format!("json.{}.tmp", std::process::id()));
-    std::fs::write(&temporary, format!("{text}\n"))?;
-    std::fs::rename(&temporary, file).inspect_err(|_| {
-        let _ = std::fs::remove_file(&temporary);
-    })
+    swarmception_source::files::write_atomic(file, format!("{text}\n").as_bytes())
 }
 
 /// A saved state's sections, each read on its own so one that doesn't read loses only itself.

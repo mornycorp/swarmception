@@ -3174,6 +3174,7 @@ dependencies = [
  "swarmception-domain",
  "swarmception-engine",
  "swarmception-model",
+ "swarmception-source",
  "swarmception-ui",
 ]
 
@@ -3186,6 +3187,7 @@ dependencies = [
  "serde_json",
  "swarmception-domain",
  "swarmception-engine",
+ "swarmception-source",
  "timeline-automation",
  "timeline-engine",
 ]
@@ -3254,6 +3256,7 @@ dependencies = [
  "swarmception-domain",
  "swarmception-engine",
  "swarmception-model",
+ "swarmception-source",
  "timeline-core",
  "timeline-egui",
  "timeline-engine",

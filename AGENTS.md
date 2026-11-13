@@ -42,7 +42,7 @@ The crates and their layers, generated from the layers table in `xtask/` (`Hooks
  L4   swarmception-ui          the UI shell: menus, toolbar, panes (the timeline), UI state as data
  L4   swarmception-automation  the control protocol (JSON lines, loopback, a token), the headless server, MCP
  L3   swarmception-engine      the session and the typed command registry: every action is a command
- L2   swarmception-source      reads a repo's tracking branch through git, with deadlines
+ L2   swarmception-source      touches the outside: git with deadlines, the one file writer, the one process runner
  L1   swarmception-domain      the swarm's activity from its events, and the timeline's rows from it
  L0   swarmception-model       the tracking format's events, parsed from hostile JSON lines
 ```
