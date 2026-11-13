@@ -131,7 +131,7 @@ pub fn paint_chip(painter: &egui::Painter, rect: Rect, chip: &Chip<'_>) {
     let (body, stroke, text) = match chip.look {
         Look::Hollow => (chip.ground, Stroke::new(border.max(1.5), fill), fill),
         Look::Phase(phase) => (fill, Stroke::new(border, phase), ink(fill)),
-        Look::Plain => (fill, Stroke::new(1.0, fill.lerp_to_gamma(Color32::BLACK, 0.3)), ink(fill)),
+        Look::Plain => (fill, Stroke::new(1.0, crate::theme::border(fill)), ink(fill)),
     };
     let kind = if chip.look == Look::Plain { StrokeKind::Inside } else { StrokeKind::Outside };
     painter.rect(rect, radius, body, stroke, kind);

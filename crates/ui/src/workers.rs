@@ -24,6 +24,7 @@ use swarmception_engine::stats_cmds::{At, GetParams};
 use swarmception_engine::workers_cmds::Compare;
 use swarmception_model::Timestamp;
 
+use crate::catalog;
 use crate::icons;
 use crate::part::Part;
 use crate::timeline::Hover;
@@ -160,31 +161,16 @@ pub struct WorkersPane {
 
 /// Each column: what it is, its header, its width and how it is computed.
 const COLUMNS: [(Column, &str, f32, &str); 10] = [
-    (Column::Name, "Model × effort  ·  worker", 210.0, "Sort as workers.compare lists them: by model, then effort, most first; each worker by its start."),
-    (Column::Claimed, "Claimed", 62.0, "The tickets it claimed in the window (its own claim, not a gate's)."),
-    (Column::Landed, "Landed", 62.0, "The tickets merged in the window that it held last."),
-    (
-        Column::Rate,
-        "Landed / active h",
-        140.0,
-        "Landed ÷ its active hours. Active: on shift, less the swarm's quiet gaps (15 min with no event of anyone's) and its own idle time (15 min without a word while it held no ticket). n: the tickets landed. More is better.",
-    ),
-    (
-        Column::ClaimToMerge,
-        "Claim → merge",
-        158.0,
-        "The median, over its landed tickets, of its first claim or work of each to its merge. n: the tickets. Shorter is quicker.",
-    ),
-    (Column::Working, "Working", 158.0, "The median time each landed ticket was working by it, summed over its stretches. n: the tickets. Shorter is quicker."),
-    (
-        Column::Sendbacks,
-        "Send backs / landed",
-        132.0,
-        "The gate's send backs of tickets it held, ÷ the tickets it landed. n: the tickets landed. Fewer is better; the causes on hover.",
-    ),
-    (Column::Ready, "Ready pass", 120.0, "Its own ready checks before it submits: passed ÷ (passed + failed). n: the checks with a result. More is better."),
-    (Column::Abandoned, "Abandoned", 76.0, "The tickets its session's end cut off while it held them (#28), whether or not another took them up."),
-    (Column::Active, "Active / on shift", 124.0, "Its active hours (as Landed / active h has them), and its time on shift: its sessions less their pauses."),
+    (Column::Name, catalog::MODEL_EFFORT_WORKER, 210.0, catalog::SORT_AS_WORKERS_COMPARE_LISTS_THEM),
+    (Column::Claimed, catalog::CLAIMED_2, 62.0, catalog::THE_TICKETS_IT_CLAIMED_IN_THE),
+    (Column::Landed, catalog::LANDED, 62.0, catalog::THE_TICKETS_MERGED_IN_THE_WINDOW),
+    (Column::Rate, catalog::LANDED_ACTIVE_H_2, 140.0, catalog::LANDED_ITS_ACTIVE_HOURS_ACTIVE_ON),
+    (Column::ClaimToMerge, catalog::CLAIM_MERGE_2, 158.0, catalog::THE_MEDIAN_OVER_ITS_LANDED_TICKETS),
+    (Column::Working, catalog::WORKING_2, 158.0, catalog::THE_MEDIAN_TIME_EACH_LANDED_TICKET),
+    (Column::Sendbacks, catalog::SEND_BACKS_LANDED, 132.0, catalog::THE_GATE_S_SEND_BACKS_OF),
+    (Column::Ready, catalog::READY_PASS, 120.0, catalog::ITS_OWN_READY_CHECKS_BEFORE_IT),
+    (Column::Abandoned, catalog::ABANDONED, 76.0, catalog::THE_TICKETS_ITS_SESSION_S_END),
+    (Column::Active, catalog::ACTIVE_ON_SHIFT, 124.0, catalog::ITS_ACTIVE_HOURS_AS_LANDED_ACTIVE),
 ];
 const HEADER: f32 = 30.0;
 const GROUP_ROW: f32 = 25.0;
@@ -208,9 +194,9 @@ pub fn compact(seconds: f64) -> String {
     let s = seconds.round().max(0.0) as i64;
     match s {
         0..60 => format!("{s} s"),
-        60..600 => format!("{} min {:02} s", s / 60, s % 60),
-        600..3_600 => format!("{} min", (s + 30) / 60),
-        _ => format!("{} h {:02} min", s / 3_600, (s % 3_600) / 60),
+        60..600 => catalog::min_s(&(s / 60), &(s % 60)),
+        600..3_600 => catalog::min(&((s + 30) / 60)),
+        _ => catalog::h_min(&(s / 3_600), &((s % 3_600) / 60)),
     }
 }
 
@@ -290,34 +276,32 @@ pub fn cells(figures: &Figures) -> Vec<String> {
 /// How a cell's figure was made, for its tooltip.
 fn how(figures: &Figures, column: Column) -> String {
     let samples = |m: Measure| {
-        let thin = if m.thin { format!(": thin, under {} samples", swarmception_domain::workers::THIN) } else { String::new() };
-        format!("{} samples{thin}", m.samples)
+        let thin = if m.thin { catalog::thin_under_samples(&swarmception_domain::workers::THIN) } else { String::new() };
+        catalog::samples(&m.samples, &thin)
     };
     match column {
         Column::Name | Column::Claimed | Column::Landed | Column::Abandoned => String::new(),
-        Column::Rate => format!(
-            "{} landed in {} active ({} on shift) · {}",
-            figures.landed,
-            hours(figures.active_seconds),
-            hours(figures.on_shift_seconds),
-            samples(figures.landed_per_active_hour)
+        Column::Rate => catalog::landed_in_active_on_shift(
+            &figures.landed,
+            &(hours(figures.active_seconds)),
+            &(hours(figures.on_shift_seconds)),
+            &(samples(figures.landed_per_active_hour)),
         ),
-        Column::ClaimToMerge => format!("median claim → merge · {}", samples(figures.claim_to_merge_seconds)),
-        Column::Working => format!("median working time per landed ticket · {}", samples(figures.working_seconds)),
+        Column::ClaimToMerge => catalog::median_claim_merge(&(samples(figures.claim_to_merge_seconds))),
+        Column::Working => catalog::median_working_time_per_landed(&(samples(figures.working_seconds))),
         Column::Sendbacks => {
             let causes: Vec<String> = figures.sendback_causes.iter().map(|c| format!("{} {}", c.cause, c.count)).collect();
-            let causes = if causes.is_empty() { String::new() } else { format!("\nby cause: {}", causes.join(", ")) };
-            format!("{} send backs over {} landed · {}{causes}", figures.sendbacks, figures.landed, samples(figures.sendbacks_per_landed))
+            let causes = if causes.is_empty() { String::new() } else { catalog::by_cause(&(causes.join(", "))) };
+            catalog::send_backs_over_landed(&figures.sendbacks, &figures.landed, &(samples(figures.sendbacks_per_landed)), &causes)
         }
-        Column::Ready => format!(
-            "{} ready checks: {} passed, {} failed, {} with no result · {}",
-            figures.ready_runs,
-            figures.ready_passed,
-            figures.ready_failed,
-            figures.ready_runs.saturating_sub(figures.ready_passed + figures.ready_failed),
-            samples(figures.ready_pass_rate)
+        Column::Ready => catalog::ready_checks_passed_failed_with(
+            &figures.ready_runs,
+            &figures.ready_passed,
+            &figures.ready_failed,
+            &(figures.ready_runs.saturating_sub(figures.ready_passed + figures.ready_failed)),
+            &(samples(figures.ready_pass_rate)),
         ),
-        Column::Active => format!("active {} of {} on shift", hours(figures.active_seconds), hours(figures.on_shift_seconds)),
+        Column::Active => catalog::active_of_on_shift(&(hours(figures.active_seconds)), &(hours(figures.on_shift_seconds))),
     }
 }
 
@@ -418,7 +402,7 @@ impl WorkersPane {
         // sight, where a hovered worker's tickets light up.
         let default = pos2(screen.left() + ((screen.width() - width).max(32.0) / 2.0), screen.bottom() - 36.0);
         let id = Part::WorkersWindow.id();
-        let window = egui::Window::new(format!("{}  Workers: model × effort", icons::WORKERS))
+        let window = egui::Window::new(catalog::workers_model_effort(&icons::WORKERS))
             .id(id)
             .open(open)
             .resizable(true)
@@ -468,18 +452,18 @@ impl WorkersPane {
         let Some(compared) = self.compared.clone() else {
             match &self.error {
                 Some(error) => ui.colored_label(ui.visuals().warn_fg_color, format!("{}  {error}", icons::WARNING)),
-                None => ui.weak("No workers to compare yet."),
+                None => ui.weak(catalog::NO_WORKERS_TO_COMPARE_YET),
             };
             return;
         };
         self.drawn.window = Some((compared.start, compared.end));
         if compared.groups.is_empty() {
-            ui.weak("No worker was on shift in this window.");
+            ui.weak(catalog::NO_WORKER_WAS_ON_SHIFT_IN);
             return;
         }
         egui::ScrollArea::both().auto_shrink([false, true]).show(ui, |ui| self.table(ui, &compared, *view, selected));
         ui.add_space(4.0);
-        let caveat = "Tickets differ in size and kind, and a worker's tickets aren't drawn at random: read a gap between models as a hint, the more samples (n) the firmer.";
+        let caveat = catalog::TICKETS_DIFFER_IN_SIZE_AND_KIND;
         ui.weak(egui::RichText::new(caveat).small());
     }
 
@@ -494,7 +478,7 @@ impl WorkersPane {
             let mut tickets: Vec<u64> = group.workers.iter().flat_map(|w| w.tickets.iter().copied()).collect();
             tickets.sort_unstable();
             tickets.dedup();
-            let aside = format!("{} worker{}", group.figures.workers, if group.figures.workers == 1 { "" } else { "s" });
+            let aside = catalog::worker(&group.figures.workers, &(if group.figures.workers == 1 { "" } else { "s" }));
             let row = Row {
                 key: &group.label,
                 kind: RowKind::Group,
@@ -514,7 +498,7 @@ impl WorkersPane {
                     key: &worker.instance,
                     kind: RowKind::Worker,
                     name: &worker.name,
-                    aside: format!("{}{}", day_clock(worker.start), if worker.open { " · open" } else { "" }),
+                    aside: format!("{}{}", day_clock(worker.start), if worker.open { catalog::OPEN_2 } else { "" }),
                     figures: &worker.figures,
                     colour,
                     tip: Some(worker_tip(worker, &group.label)),
@@ -526,10 +510,10 @@ impl WorkersPane {
             }
         }
         let all = Row {
-            key: "all",
+            key: catalog::ALL,
             kind: RowKind::All,
-            name: "All workers",
-            aside: format!("{} sessions", compared.all.workers),
+            name: catalog::ALL_WORKERS,
+            aside: catalog::sessions(&compared.all.workers),
             figures: &compared.all,
             colour: ui.visuals().weak_text_color(),
             tip: None,
@@ -545,25 +529,17 @@ impl WorkersPane {
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
             if windowed {
-                ui.selectable_value(&mut view.whole_run, false, "Timeline's window").on_hover_text("Compare over the timeline's visible window, following it");
-                ui.selectable_value(&mut view.whole_run, true, "Whole run").on_hover_text("Compare over the whole run: the first event to the last");
+                ui.selectable_value(&mut view.whole_run, false, catalog::TIMELINE_S_WINDOW).on_hover_text(catalog::COMPARE_OVER_THE_TIMELINE_S_VISIBLE);
+                ui.selectable_value(&mut view.whole_run, true, catalog::WHOLE_RUN).on_hover_text(catalog::COMPARE_OVER_THE_WHOLE_RUN_THE);
             } else {
-                ui.weak("Whole run");
+                ui.weak(catalog::WHOLE_RUN);
             }
             if let Some(compared) = &self.compared {
-                ui.weak(
-                    egui::RichText::new(format!("{} → {} UTC · {}", day_clock(compared.start), day_clock(compared.end), hours(compared.span_seconds))).small(),
-                )
-                .on_hover_text(format!("{} → {}", compared.start, compared.end));
+                ui.weak(egui::RichText::new(catalog::utc_4(&(day_clock(compared.start)), &(day_clock(compared.end)), &(hours(compared.span_seconds)))).small())
+                    .on_hover_text(format!("{} → {}", compared.start, compared.end));
             }
             ui.separator();
-            ui.weak(
-                egui::RichText::new(format!(
-                    "n: the samples a figure rests on · ~ thin: under {} samples, its bar outlined",
-                    swarmception_domain::workers::THIN
-                ))
-                .small(),
-            );
+            ui.weak(egui::RichText::new(catalog::n_the_samples_a_figure(&swarmception_domain::workers::THIN)).small());
         });
         ui.add_space(4.0);
     }
@@ -684,16 +660,18 @@ impl Look {
 
 /// A worker's tooltip: who, when, its tickets, and what a click does.
 fn worker_tip(worker: &Worker, group: &str) -> String {
-    let end = if worker.open { "(going on)".to_owned() } else { day_clock(worker.end) };
-    let open = if worker.open { "\nopen: no session.stop logged, so on shift to the last event" } else { "" };
+    let end = if worker.open { catalog::GOING_ON.to_owned() } else { day_clock(worker.end) };
+    let open = if worker.open { catalog::OPEN_NO_SESSION_STOP_LOGGED_SO } else { "" };
     let tickets: Vec<String> = worker.tickets.iter().map(|n| format!("#{n}")).collect();
-    format!(
-        "{} · {} · {group}\n{} → {end} UTC{open}\n{} tickets: {}\nclick: its session's story in Details",
-        worker.name,
-        worker.instance,
-        day_clock(worker.start),
-        tickets.len(),
-        tickets.join(" ")
+    catalog::utc_tickets_click_its_session(
+        &worker.name,
+        &worker.instance,
+        &(day_clock(worker.start)),
+        &(tickets.len()),
+        &(tickets.join(" ")),
+        &group,
+        &end,
+        &open,
     )
 }
 
