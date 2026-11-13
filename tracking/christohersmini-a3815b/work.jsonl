@@ -51,3 +51,4 @@
 {"event":"claim","issue":160,"mr":169,"t":"2026-11-13T18:32:37Z"}
 {"event":"work","issue":160,"t":"2026-11-13T18:32:40Z"}
 {"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-14efd2e","t":"2026-11-13T18:41:04Z"}
+{"event":"sub.stop","note":"rc=0","sub":"ready-14efd2e","t":"2026-11-13T18:41:15Z"}
