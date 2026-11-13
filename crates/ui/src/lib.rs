@@ -312,7 +312,8 @@ impl Shell {
         })
     }
 
-    /// Writes the state now (on quit); the file it went to, none when the shell keeps none.
+    /// Writes the state now (on quit); the file it went to, none when the shell keeps none or the
+    /// file is left alone (#165).
     ///
     /// # Errors
     ///
@@ -320,7 +321,7 @@ impl Shell {
     pub fn save_state(&mut self) -> Result<Option<std::path::PathBuf>, String> {
         self.sync();
         let Some(state) = self.app_state() else { return Ok(None) };
-        self.keeper.as_mut().map(|keeper| keeper.write_now(state)).transpose()
+        self.keeper.as_mut().map(|keeper| keeper.write_now(state)).transpose().map(Option::flatten)
     }
 
     /// Where the state is kept, read from and what was said of it (`ui.inspect`'s `saved`).

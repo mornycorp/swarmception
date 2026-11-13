@@ -3,9 +3,13 @@
 //! timeline's view with the widget's own `state.save`), kept under the platform's app-data
 //! directory ([`platform_dir`]), keyed by the repository's canonical path ([`repo_key`]).
 //!
-//! [`StateStore::load`] never fails: a missing file is a fresh start, and a corrupt one, another
-//! repository's, or an older or newer build's is read where it can be, section by section, the
-//! rest left at its defaults, with a [`Loaded::note`] saying what was left out. [`Keeper`] writes
+//! [`StateStore::load`] never fails: a missing file is a fresh start; an older build's is
+//! migrated (each earlier version's shape read as this one's, `read`); and a file this build can't
+//! wholly read is **the person's, left alone** (#165, docs/app-architecture.md › State on disk): a
+//! newer build's, a corrupt one or another repository's is refused (the window starts from the
+//! defaults), and one with a section that doesn't read keeps what does. Either way
+//! [`Loaded::left_alone`] holds the [`Keeper`] from writing over it this run, and a [`Loaded::note`]
+//! says so. Otherwise the [`Keeper`] writes
 //! the state when it changes, once it has held still for [`QUIET`] seconds (at most every
 //! [`MOST`] seconds while it keeps changing), and the app writes it once more on quit; each write
 //! is whole or not at all (a temporary file renamed over the old).
@@ -21,8 +25,8 @@ use swarmception_domain::RowsSpec;
 use crate::timeline::TimelineView;
 use crate::{DetailsView, FactoryView, PaneSizes, Panes, UI_STATE_VERSION, UiState, WorkersView};
 
-/// [`AppState`]'s shape. A file of another version still reads: an older one has fewer
-/// sections, a newer one's sections this build doesn't know are skipped. 2: the rows' collapse
+/// [`AppState`]'s shape. An older file is migrated (fewer sections, each read as this version's);
+/// a newer one is refused and left alone (#165). 2: the rows' collapse
 /// a mode's name (`off`, `empty`, `window`, #74), where 1 wrote `true` or `false`, which still
 /// read as `empty` and `off`.
 pub const APP_STATE_VERSION: u32 = 2;
@@ -214,6 +218,9 @@ pub struct Loaded {
     pub state: Option<AppState>,
     /// What was left out and why, for the status bar to say once; none when it all read.
     pub note: Option<String>,
+    /// The file is there but this build didn't wholly read it (a newer build's, corrupt, another
+    /// repository's, or a section that doesn't read): it is never written over this run (#165).
+    pub left_alone: bool,
 }
 
 impl StateStore {
@@ -235,9 +242,9 @@ impl StateStore {
     #[must_use]
     pub fn load(&self, repo: &Path) -> Loaded {
         let file = self.file(repo);
-        let ignored = |why: String| Some(format!("The saved state {why}: starting afresh"));
+        let ignored = |why: String| Some(format!("The saved state {why}: starting afresh, and {LEFT_ALONE}"));
         let text = match std::fs::metadata(&file) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Loaded { file, state: None, note: None },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Loaded { file, state: None, note: None, left_alone: false },
             Err(e) => Err(e.to_string()),
             Ok(meta) if meta.len() > MAX_FILE => Err(format!("is over {MAX_FILE} bytes")),
             Ok(_) => std::fs::read_to_string(&file).map_err(|e| e.to_string()),
@@ -246,7 +253,9 @@ impl StateStore {
             Ok(text) => read(&text, repo).map_or_else(|why| (None, ignored(why)), |(state, note)| (Some(state), note)),
             Err(why) => (None, ignored(format!("didn't read ({why})"))),
         };
-        Loaded { file, state, note }
+        // Wholly read, or the person's to fix: a note means something in it didn't read.
+        let left_alone = note.is_some();
+        Loaded { file, state, note, left_alone }
     }
 
     /// Writes `state` to its repository's file, whole or not at all.
@@ -269,26 +278,46 @@ impl StateStore {
     }
 
     /// The repositories opened last, newest first, as File ▸ Open Recent lists them; none when
-    /// there is no file, or it doesn't read (a corrupt one is written afresh on the next open).
-    /// Another version's reads as long as its `repos` is a list of paths.
+    /// there is no file, or it isn't one this build reads (#165: corrupt, or a newer build's, and
+    /// then never written over, [`Self::save_recent`]). An older version's reads its list.
     #[must_use]
     pub fn load_recent(&self) -> Vec<PathBuf> {
-        let file = self.recent_file();
-        let text = match std::fs::metadata(&file) {
-            Ok(meta) if meta.len() <= MAX_FILE => std::fs::read_to_string(&file).unwrap_or_default(),
-            _ => return Vec::new(),
+        let repos = match self.read_recent() {
+            Ok(Some(recent)) => recent.repos.unwrap_or_default(),
+            Ok(None) | Err(_) => Vec::new(),
         };
-        let repos = serde_json::from_str::<RecentSections>(&text).ok().and_then(|s| s.repos).unwrap_or_default();
         repos.into_iter().filter(|r| !r.is_empty()).take(swarmception_engine::repo_cmds::MAX_RECENT).map(PathBuf::from).collect()
     }
 
-    /// Writes the repositories opened last, whole or not at all.
+    /// The recent file's list as this build reads it: none when there is no file; why not when it
+    /// is there but not this build's to read (and so not its to write over).
+    fn read_recent(&self) -> Result<Option<RecentSections>, String> {
+        let file = self.recent_file();
+        let text = match std::fs::metadata(&file) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(e.to_string()),
+            Ok(meta) if meta.len() > MAX_FILE => return Err(format!("it is over {MAX_FILE} bytes")),
+            Ok(_) => std::fs::read_to_string(&file).map_err(|e| e.to_string())?,
+        };
+        let recent: RecentSections = serde_json::from_str(&text).map_err(|e| format!("it is corrupt ({e})"))?;
+        match recent.version.unwrap_or(0) {
+            newer if newer > RECENT_VERSION => Err(format!("it is a newer Swarmception's (version {newer}; this one reads {RECENT_VERSION})")),
+            _ if recent.repos.is_none() => Err("it has no list of repositories".to_owned()),
+            _ => Ok(Some(recent)),
+        }
+    }
+
+    /// Writes the repositories opened last, whole or not at all; never over a file this build
+    /// doesn't read (#165).
     ///
     /// # Errors
     ///
-    /// Why it couldn't be written, as text to show.
+    /// Why it couldn't be written, as text to show; or why the file there is left alone.
     pub fn save_recent(&self, repos: &[String]) -> Result<PathBuf, String> {
         let file = self.recent_file();
+        if let Err(why) = self.read_recent() {
+            return Err(format!("left the recent repositories' file alone ({why}): {}", file.display()));
+        }
         let recent = RecentFile { version: RECENT_VERSION, repos: repos.to_vec() };
         let text = serde_json::to_string_pretty(&recent).map_err(|e| format!("can't save the recent repositories: {e}"))?;
         write_whole(&file, &text).map_err(|e| format!("can't save the recent repositories to {}: {e}", file.display()))?;
@@ -308,12 +337,17 @@ pub struct RecentFile {
     pub repos: Vec<String>,
 }
 
-/// [`RecentFile`] as any version reads: its list, the rest skipped.
+/// [`RecentFile`] as this and any older version reads: its version and its list, the rest skipped.
 #[derive(Deserialize)]
 struct RecentSections {
     #[serde(default)]
+    version: Option<u32>,
+    #[serde(default)]
     repos: Option<Vec<String>>,
 }
+
+/// What a note adds when the file is left alone.
+const LEFT_ALONE: &str = "the file is left as it is: this run's state isn't saved over it";
 
 /// Writes `text` to `file`, whole or not at all: a temporary file beside it renamed over it.
 fn write_whole(file: &Path, text: &str) -> std::io::Result<()> {
@@ -397,12 +431,19 @@ fn without_gates(mut section: serde_json::Value) -> serde_json::Value {
 }
 
 /// The state in `text`, saved for `repo`, and a note on what was left out; an error saying why
-/// none of it reads.
+/// none of it is read: corrupt, another repository's, or a newer build's (#165: refused, not read
+/// in part). An older version is migrated: each section read as this version's, the shapes it
+/// had read as what they became (version 1's collapse a bool, the shell's state's factory time up
+/// to its version 8, its gates pane up to 11).
 fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
     let sections: Sections = serde_json::from_str(text).map_err(|e| format!("is corrupt ({e})"))?;
     let key = repo.display().to_string();
     if let Some(theirs) = sections.repo.as_ref().filter(|theirs| **theirs != key) {
         return Err(format!("is another repository's ({theirs})"));
+    }
+    let version = sections.version.unwrap_or(0);
+    if version > APP_STATE_VERSION {
+        return Err(format!("is a newer Swarmception's (version {version}; this one reads {APP_STATE_VERSION})"));
     }
     let mut skipped = Vec::new();
     let ui: Option<UiSections> = section(sections.ui, "ui", &mut skipped);
@@ -425,16 +466,7 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         timeline: section(sections.timeline, "timeline", &mut skipped),
         live: section(sections.live, "live", &mut skipped),
     };
-    let version = sections.version.unwrap_or(0);
-    let newer =
-        (version > APP_STATE_VERSION).then(|| format!("The saved state is a newer Swarmception's (version {version}; this one reads {APP_STATE_VERSION})"));
-    let left = (!skipped.is_empty()).then(|| skipped.join(", "));
-    let note = match (newer, left) {
-        (Some(newer), Some(left)) => Some(format!("{newer}: kept what this one reads, left out {left}")),
-        (Some(newer), None) => Some(format!("{newer}: kept what this one reads")),
-        (None, Some(left)) => Some(format!("The saved state's {left} didn't read: left at the defaults")),
-        (None, None) => None,
-    };
+    let note = (!skipped.is_empty()).then(|| format!("The saved state's {} didn't read: left at the defaults, and {LEFT_ALONE}", skipped.join(", ")));
     Ok((state, note))
 }
 
@@ -450,6 +482,9 @@ pub enum Keeping {
     Fresh,
     /// Read at the start, written as it goes.
     Kept,
+    /// The file there isn't this build's to write over (#165: a newer build's, corrupt, another
+    /// repository's, or a section that didn't read): read where it could be, never written.
+    LeftAlone,
 }
 
 /// Where the state is kept, as `ui.inspect` reports it.
@@ -491,7 +526,11 @@ impl Keeper {
         Self {
             store,
             repo: repo.to_path_buf(),
-            keeping: if loaded.is_some() { Keeping::Kept } else { Keeping::Fresh },
+            keeping: match loaded {
+                Some(loaded) if loaded.left_alone => Keeping::LeftAlone,
+                Some(_) => Keeping::Kept,
+                None => Keeping::Fresh,
+            },
             loaded_from: loaded.filter(|l| l.state.is_some()).map(|l| l.file.clone()),
             written: loaded.and_then(|l| l.state.clone()),
             pending: None,
@@ -527,7 +566,7 @@ impl Keeper {
     /// seconds, or been changing for [`MOST`]. How long until it should be looked at again, when
     /// a write waits.
     pub fn observe(&mut self, state: AppState, now: f64) -> Option<Duration> {
-        if self.written.as_ref() == Some(&state) {
+        if self.keeping == Keeping::LeftAlone || self.written.as_ref() == Some(&state) {
             self.pending = None;
             return None;
         }
@@ -543,16 +582,20 @@ impl Keeper {
         Some(Duration::from_secs_f64((QUIET - (now - changed)).clamp(0.05, QUIET)))
     }
 
-    /// Writes `state` now (on quit), whether or not it changed.
+    /// Writes `state` now (on quit), whether or not it changed; the file it went to, none when
+    /// the file is left alone (#165).
     ///
     /// # Errors
     ///
     /// Why it couldn't be written.
-    pub fn write_now(&mut self, state: AppState) -> Result<PathBuf, String> {
+    pub fn write_now(&mut self, state: AppState) -> Result<Option<PathBuf>, String> {
         self.pending = None;
+        if self.keeping == Keeping::LeftAlone {
+            return Ok(None);
+        }
         let written = self.store.save(&state);
         self.landed(state, written.as_ref().err().cloned());
-        written
+        written.map(Some)
     }
 
     fn write(&mut self, state: AppState) {
@@ -600,7 +643,7 @@ mod tests {
         let dir = scratch("roundtrip");
         let store = StateStore::new(dir.clone());
         let repo = Path::new("/Volumes/Data/dev/mc-engine");
-        assert_eq!(store.load(repo), Loaded { file: store.file(repo), state: None, note: None }, "no file: a fresh start, nothing said");
+        assert_eq!(store.load(repo), Loaded { file: store.file(repo), state: None, note: None, left_alone: false }, "no file: a fresh start, nothing said");
         let mut state = AppState::new(repo);
         state.ui.panes.factory = false;
         state.rows.grouping = swarmception_domain::Grouping::Workers;
@@ -608,7 +651,7 @@ mod tests {
         let file = store.save(&state).unwrap();
         assert_eq!(file, store.file(repo));
         assert!(file.starts_with(dir.join("state")) && file.file_name().unwrap().to_string_lossy().starts_with("mc-engine-"), "{}", file.display());
-        assert_eq!(store.load(repo), Loaded { file: file.clone(), state: Some(state), note: None });
+        assert_eq!(store.load(repo), Loaded { file: file.clone(), state: Some(state), note: None, left_alone: false });
         assert_eq!(std::fs::read_dir(dir.join("state")).unwrap().count(), 1, "no temporary file left");
         // Another repository has its own file.
         assert_ne!(store.file(Path::new("/Volumes/Data/dev/swarmception")), file);
@@ -627,14 +670,20 @@ mod tests {
         assert_eq!(file, dir.join("recent.json"));
         assert_eq!(store.load_recent(), [PathBuf::from("/r/one"), PathBuf::from("/r/two")]);
         let read: RecentFile = serde_json::from_str(&std::fs::read_to_string(&file).unwrap()).unwrap();
-        assert_eq!((read.version, read.repos), (RECENT_VERSION, repos));
-        // A newer build's file reads its list; a corrupt one reads as none.
-        std::fs::write(&file, r#"{"version": 4, "repos": ["/r/three", ""], "pinned": ["/r/one"]}"#).unwrap();
+        assert_eq!((read.version, read.repos), (RECENT_VERSION, repos.clone()));
+        // An older build's (no version) reads its list.
+        std::fs::write(&file, r#"{"repos": ["/r/three", ""]}"#).unwrap();
         assert_eq!(store.load_recent(), [PathBuf::from("/r/three")]);
-        for corrupt in ["", "{", r#"{"repos": "/r/one"}"#, "[1]"] {
-            std::fs::write(&file, corrupt).unwrap();
-            assert!(store.load_recent().is_empty(), "{corrupt:?}");
+        // #165: a newer build's or a corrupt one reads as none, and is never written over.
+        let newer = r#"{"version": 4, "repos": ["/r/three"], "pinned": ["/r/one"]}"#;
+        for kept in [newer, "", "{", r#"{"repos": "/r/one"}"#, r#"{"version": 1}"#, "[1]"] {
+            std::fs::write(&file, kept).unwrap();
+            assert!(store.load_recent().is_empty(), "{kept:?}");
+            let refused = store.save_recent(&repos).unwrap_err();
+            assert!(refused.starts_with("left the recent repositories' file alone"), "{kept:?}: {refused}");
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), kept, "untouched");
         }
+        std::fs::remove_file(&file).unwrap();
         // At most ten.
         let many: Vec<String> = (0..30).map(|n| format!("/r/{n}")).collect();
         store.save_recent(&many).unwrap();
@@ -642,8 +691,11 @@ mod tests {
         std::fs::remove_dir_all(dir).ok();
     }
 
+    /// #165: an older build's file is migrated, each earlier version read as this one's; a file
+    /// this build can't wholly read is left alone (a newer, corrupt or foreign one refused, one
+    /// with a section that doesn't read kept in part), and says so.
     #[test]
-    fn corrupt_foreign_older_and_newer_files_read_where_they_can() {
+    fn older_files_migrate_and_any_other_is_left_alone() {
         let dir = scratch("odd");
         let store = StateStore::new(dir.clone());
         let repo = Path::new("/r/swarm");
@@ -655,19 +707,24 @@ mod tests {
         };
         for corrupt in ["", "{", "[1, 2]", "null", "\u{0}\u{1}garbage"] {
             let loaded = load(corrupt);
-            assert_eq!(loaded.state, None, "{corrupt:?}");
-            assert!(loaded.note.as_deref().is_some_and(|n| n.contains("is corrupt") && n.contains("starting afresh")), "{corrupt:?}: {:?}", loaded.note);
+            assert_eq!((loaded.state.as_ref(), loaded.left_alone), (None, true), "{corrupt:?}");
+            assert!(
+                loaded.note.as_deref().is_some_and(|n| n.contains("is corrupt") && n.contains("starting afresh") && n.contains("left as it is")),
+                "{corrupt:?}: {:?}",
+                loaded.note
+            );
         }
         let foreign = load(r#"{"version": 1, "repo": "/r/other"}"#);
-        assert!(foreign.state.is_none() && foreign.note.unwrap().contains("another repository's"));
+        assert!(foreign.state.is_none() && foreign.left_alone && foreign.note.unwrap().contains("another repository's"));
 
         // An older file (no sizes, no window, no timeline) reads with their defaults, silently.
         let older = load(r#"{"version": 0, "repo": "/r/swarm", "ui": {"version": 3, "panes": {"factory": false}}, "rows": {"collapse": true}}"#);
         let state = older.state.unwrap();
         assert_eq!((state.ui.panes.factory, state.ui.panes.timeline, state.rows.collapse), (false, true, swarmception_domain::Collapse::Empty));
+        assert!(!older.left_alone, "migrated: written as this version from now on");
         // Version 1's collapse was a bool (#74): it keeps the choice it was.
         let one = load(r#"{"version": 1, "repo": "/r/swarm", "rows": {"grouping": "workers", "collapse": false}}"#);
-        assert_eq!((one.state.unwrap().rows.collapse, one.note), (swarmception_domain::Collapse::Off, None));
+        assert_eq!((one.state.unwrap().rows.collapse, one.note, one.left_alone), (swarmception_domain::Collapse::Off, None, false));
         let two = load(r#"{"version": 2, "repo": "/r/swarm", "rows": {"collapse": "window"}}"#);
         assert_eq!(two.state.unwrap().rows.collapse, swarmception_domain::Collapse::Window);
         assert_eq!((state.ui.sizes, state.window, older.note), (PaneSizes::default(), None, None));
@@ -686,17 +743,21 @@ mod tests {
         let ui = eleven.state.unwrap().ui;
         assert_eq!((ui.panes.details, ui.sizes.factory, ui.folded.factory, eleven.note), (false, Some(300), Some(true), None));
 
-        // A newer one: its new sections skipped, a section that changed shape left out, the rest kept.
+        // A newer one: refused whole, not read in part, and left alone.
         let newer = load(
             r#"{"version": 9, "repo": "/r/swarm", "ui": {"panes": {"details": false}, "factory": {"speed": "fortnight"}, "lighting": 3},
                 "rows": {"grouping": "workers"}, "window": "maximised", "plugins": [1, 2]}"#,
         );
-        let state = newer.state.unwrap();
-        assert!(!state.ui.panes.details);
-        assert_eq!(state.ui.factory, FactoryView::default(), "a speed it doesn't know: the section's defaults");
-        assert_eq!((state.rows.grouping, state.window), (swarmception_domain::Grouping::Workers, None));
+        assert_eq!((newer.state.as_ref(), newer.left_alone), (None, true));
         let note = newer.note.unwrap();
-        assert!(note.contains("newer Swarmception's (version 9") && note.contains("left out factory, window"), "{note}");
+        assert!(note.contains("is a newer Swarmception's (version 9; this one reads 2)") && note.contains("starting afresh"), "{note}");
+        // This version's, a section that doesn't read: the rest kept, the file left alone.
+        let part = load(r#"{"version": 2, "repo": "/r/swarm", "ui": {"panes": {"details": false}, "factory": {"speed": "fortnight"}}, "window": "maximised"}"#);
+        let state = part.state.unwrap();
+        assert!(!state.ui.panes.details && part.left_alone);
+        assert_eq!((state.ui.factory, state.window), (FactoryView::default(), None));
+        let note = part.note.unwrap();
+        assert!(note.contains("factory, window didn't read") && note.contains("left as it is"), "{note}");
         // Too big to be one.
         let big = load(&" ".repeat(usize::try_from(MAX_FILE).unwrap() + 1));
         assert!(big.state.is_none() && big.note.unwrap().contains("over"));
@@ -738,7 +799,18 @@ mod tests {
         assert!(note.starts_with("can't save the state"), "{note}");
         keeper.dismiss();
         assert!(keeper.observe(state.clone(), 3.0).is_none() && keeper.note().is_none(), "the same state isn't tried again");
-        assert!(keeper.write_now(state).is_err());
+        assert!(keeper.write_now(state.clone()).is_err());
+
+        // #165: a file left alone is never written, as it changes or on quit.
+        let file = store.file(repo);
+        std::fs::write(&file, r#"{"version": 99, "repo": "/r/keeper"}"#).unwrap();
+        let loaded = store.load(repo);
+        let mut keeper = Keeper::new(store.clone(), repo, Some(&loaded));
+        assert_eq!(keeper.inspect().keeping, Keeping::LeftAlone);
+        state.ui.panes.timeline = false;
+        assert!(keeper.observe(state.clone(), 0.0).is_none() && keeper.observe(state.clone(), 9.0).is_none());
+        assert_eq!(keeper.write_now(state), Ok(None));
+        assert_eq!((keeper.inspect().writes, std::fs::read_to_string(&file).unwrap().as_str()), (0, r#"{"version": 99, "repo": "/r/keeper"}"#));
         std::fs::remove_dir_all(dir).ok();
     }
 

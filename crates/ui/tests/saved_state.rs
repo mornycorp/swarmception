@@ -1,7 +1,7 @@
 //! The state survives a restart (#53), across the real boundary: a headless shell over a real
 //! repository writes its state to a file, a second shell started over the same file reads it back
 //! and shows what the first did; a swarm that moved on since keeps a view that followed its end;
-//! and a corrupt or a newer build's file is read where it can be, said once, never a crash.
+//! and a corrupt, foreign or newer build's file is left alone (#165), said once, never a crash.
 
 use std::path::{Path, PathBuf};
 
@@ -267,15 +267,16 @@ fn move_on_again(dir: &Path) {
 }
 
 #[test]
-fn corrupt_and_newer_files_are_read_where_they_can_be_and_said_once() {
+fn corrupt_foreign_and_newer_files_are_left_alone_and_said_once() {
     let (dir, home) = (repo(), scratch("home"));
     let store = StateStore::new(home.clone());
     let key = saved::repo_key(&dir);
     let file = store.file(&key);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
 
-    // Corrupt: a fresh start, the status bar saying why.
-    std::fs::write(&file, "{\"version\": 1, \"ui\": {").unwrap();
+    // Corrupt: a fresh start, the status bar saying why, and the file left as it is (#165).
+    let corrupt = "{\"version\": 1, \"ui\": {";
+    std::fs::write(&file, corrupt).unwrap();
     let (ctx, mut shell) = started(&dir, &store);
     let inspect = shell.inspect();
     assert_eq!(inspect.state.panes, swarmception_ui::Panes::default());
@@ -284,12 +285,14 @@ fn corrupt_and_newer_files_are_read_where_they_can_be_and_said_once() {
     assert!(note.contains("is corrupt") && note.contains("starting afresh"), "{note}");
     let drawn = frame(&mut shell, &ctx, 0.0);
     assert!(drawn.iter().any(|t| t.contains("is corrupt")), "the status bar says so: {drawn:?}");
-    // Written again, it reads.
-    shell.save_state().unwrap();
-    assert_eq!(store.load(&key).note, None);
+    assert_eq!(inspect.saved.keeping, Keeping::LeftAlone);
+    shell.run_menu(&ctx, MenuAction::Grouping(Grouping::Workers));
+    frame(&mut shell, &ctx, 5.0);
+    assert_eq!(shell.save_state(), Ok(None), "nothing written on quit");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), corrupt, "the person's file, untouched");
     drop(shell);
 
-    // A newer build's file: what this one reads is kept, the rest left out, and it says so.
+    // A newer build's file: refused whole, the defaults shown, and left alone.
     let newer = serde_json::json!({
         "version": 99,
         "repo": key.display().to_string(),
@@ -300,13 +303,15 @@ fn corrupt_and_newer_files_are_read_where_they_can_be_and_said_once() {
     std::fs::write(&file, newer.to_string()).unwrap();
     let (ctx, mut shell) = started(&dir, &store);
     let inspect = shell.inspect();
-    assert!(!inspect.state.panes.factory);
-    assert_eq!(shell.menu_state().grouping, Grouping::Workers);
+    assert!(inspect.state.panes.factory, "not read in part: the defaults");
+    assert_eq!(shell.menu_state().grouping, Grouping::Flat);
     let note = inspect.saved.note.expect("a note");
-    assert!(note.contains("newer Swarmception's (version 99") && note.ends_with("left out factory"), "{note}");
-    assert_eq!(inspect.saved.loaded_from.as_deref(), Some(file.display().to_string().as_str()));
+    assert!(note.contains("is a newer Swarmception's (version 99") && note.contains("left as it is"), "{note}");
+    assert_eq!((inspect.saved.loaded_from, inspect.saved.keeping), (None, Keeping::LeftAlone));
     let drawn = frame(&mut shell, &ctx, 0.0);
     assert!(drawn.iter().any(|t| t.contains("newer Swarmception")), "{drawn:?}");
+    shell.save_state().unwrap();
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), newer.to_string(), "never written over");
     drop(shell);
 
     // A file of another repository's (a path that hashed alike) is left alone.
@@ -314,6 +319,7 @@ fn corrupt_and_newer_files_are_read_where_they_can_be_and_said_once() {
     let (_ctx, shell) = started(&dir, &store);
     assert!(shell.ui_state().panes.factory);
     assert!(shell.saved().note.unwrap().contains("another repository's"));
+    assert_eq!(shell.saved().keeping, Keeping::LeftAlone);
     std::fs::remove_dir_all(dir).ok();
     std::fs::remove_dir_all(home).ok();
 }
