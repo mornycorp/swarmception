@@ -1,9 +1,9 @@
 //! The ticket chip (#18, the owner's review): one shape for a ticket's whole life, at every
 //! station. Its **fill** is always its ticket's own colour (the domain's `ticket_colour`, from its
 //! id, as on the timeline); its **border** is its phase, the same colours everywhere: the
-//! timeline's from the domain's `colours` (claimed yellow, waiting blue, sent back red, stopped
-//! grey), and the factory's own two (working a warm white, in the gate magenta: #42, away from
-//! every ticket's colour and every phase's). Up next, not started, it is a hollow
+//! timeline's from the domain's `colours`, the theme's tokens (#152: claimed `warning`, waiting
+//! `accent`, sent back `error`, stopped `muted`, working `strong`, in the gate `gate`), each drawn
+//! in the look egui draws in ([`drawn`], #154). Up next, not started, it is a hollow
 //! outline in its colour; merged, a plain brick with no border. Only its size changes, with how
 //! much it says: [`Size::Large`] at a bench, [`Size::Medium`] in the queues, [`Size::Small`] on the
 //! shelf and in main's wall.
@@ -14,20 +14,35 @@
 use std::collections::{HashMap, HashSet};
 
 use egui::{Align2, Color32, FontId, Rect, Stroke, StrokeKind, vec2};
-use swarmception_domain::colours;
+use swarmception_domain::colours::{self, Paint};
 use swarmception_domain::factory::CrateState;
+use swarmception_domain::theme;
 
-pub const CLAIMED: Color32 = rgb(colours::CLAIMED);
-pub const WAITING: Color32 = rgb(colours::WAITING);
-pub const SENT_BACK: Color32 = rgb(colours::SENT_BACK);
-pub const STOPPED: Color32 = rgb(colours::STOPPED);
+pub const CLAIMED: Paint = colours::CLAIMED;
+pub const WAITING: Paint = colours::WAITING;
+pub const SENT_BACK: Paint = colours::SENT_BACK;
+pub const STOPPED: Paint = colours::STOPPED;
 /// Main's green: a merge onto it, a gate passed.
-pub const PASSED: Color32 = rgb(colours::MAIN_MERGE);
+pub const PASSED: Paint = colours::MAIN_MERGE;
 /// The factory's own: a working border (its fill is the ticket's colour), a run going on: the
 /// theme's `strong` (#152).
-pub const WORKING: Color32 = rgb(colours::WORKING);
+pub const WORKING: Paint = colours::WORKING;
 /// The factory's own: in a gate run, the theme's `gate` (#152).
-pub const GATING: Color32 = rgb(colours::GATING);
+pub const GATING: Paint = colours::GATING;
+/// An idle bench: the theme's `idle` (#152).
+pub const IDLE: Paint = colours::IDLE;
+
+/// The theme's look for egui's `visuals` (#154): its dark or light.
+#[must_use]
+pub const fn shade(visuals: &egui::Visuals) -> theme::Look {
+    if visuals.dark_mode { theme::Look::Dark } else { theme::Look::Light }
+}
+
+/// One of the swarm's colours in the look egui draws in (#154): its light value on a light look.
+#[must_use]
+pub fn drawn(paint: Paint, visuals: &egui::Visuals) -> Color32 {
+    rgb(paint.of(shade(visuals)))
+}
 
 const GLIDE: f64 = 0.7;
 /// A brick's key in [`Motion`], beside its ticket's chip's.
@@ -64,19 +79,20 @@ pub enum Look {
     Plain,
 }
 
-/// The look of a ticket in `state`.
+/// The look of a ticket in `state`, its phase's border in `shade`.
 #[must_use]
-pub const fn look(state: CrateState) -> Look {
-    match state {
-        CrateState::Upcoming => Look::Hollow,
-        CrateState::Claimed => Look::Phase(CLAIMED),
-        CrateState::Working => Look::Phase(WORKING),
-        CrateState::Waiting => Look::Phase(WAITING),
-        CrateState::Gating => Look::Phase(GATING),
-        CrateState::SentBack => Look::Phase(SENT_BACK),
-        CrateState::Stopped | CrateState::Shelved => Look::Phase(STOPPED),
-        CrateState::Merged | CrateState::Done => Look::Plain,
-    }
+pub const fn look(state: CrateState, shade: theme::Look) -> Look {
+    let phase = match state {
+        CrateState::Upcoming => return Look::Hollow,
+        CrateState::Merged | CrateState::Done => return Look::Plain,
+        CrateState::Claimed => CLAIMED,
+        CrateState::Working => WORKING,
+        CrateState::Waiting => WAITING,
+        CrateState::Gating => GATING,
+        CrateState::SentBack => SENT_BACK,
+        CrateState::Stopped | CrateState::Shelved => STOPPED,
+    };
+    Look::Phase(rgb(phase.of(shade)))
 }
 
 #[must_use]
@@ -92,7 +108,8 @@ pub fn ink(fill: Color32) -> Color32 {
 
 /// What a chip shows besides its colour.
 pub struct Chip<'a> {
-    pub colour: [u8; 3],
+    /// Its ticket's colour, in the look drawn in.
+    pub colour: Color32,
     pub look: Look,
     pub label: &'a str,
     /// The background a hollow chip shows through.
@@ -105,7 +122,7 @@ pub struct Chip<'a> {
 
 /// Draws `chip` in `rect`; the label shrinks with the chip and is left out when it can't fit.
 pub fn paint_chip(painter: &egui::Painter, rect: Rect, chip: &Chip<'_>) {
-    let fill = rgb(chip.colour);
+    let fill = chip.colour;
     let radius = (rect.height() * 0.28).clamp(1.5, 7.0);
     let border = (rect.height() / 9.0).clamp(1.5, 2.5);
     if let (Look::Phase(phase), true) = (chip.look, chip.glow > 0.0) {
@@ -222,20 +239,30 @@ mod tests {
     /// #152: the factory's own borders are the theme's tokens, and read on the dark floor.
     #[test]
     fn the_factorys_own_borders_are_the_themes_tokens() {
-        for own in [colours::WORKING, colours::GATING] {
-            assert!(colours::contrast(own, [0x1b, 0x1b, 0x1b]) >= 4.5, "{own:02x?} reads on the dark floor");
+        for own in [WORKING, GATING] {
+            for visuals in [egui::Visuals::dark(), egui::Visuals::light()] {
+                let floor = visuals.panel_fill;
+                let border = drawn(own, &visuals);
+                assert!(colours::contrast([border.r(), border.g(), border.b()], [floor.r(), floor.g(), floor.b()]) >= 4.5, "{own:02x?} reads on the floor");
+            }
         }
-        assert_eq!((rgb(colours::WORKING), rgb(colours::GATING)), (WORKING, GATING));
+        assert_eq!(
+            (drawn(WORKING, &egui::Visuals::light()), drawn(GATING, &egui::Visuals::light())),
+            (rgb(colours::WORKING.light), rgb(colours::GATING.light))
+        );
     }
 
     #[test]
     fn the_fill_is_the_tickets_and_only_the_border_says_the_phase() {
-        assert_eq!(look(CrateState::Upcoming), Look::Hollow);
-        assert_eq!(look(CrateState::Merged), Look::Plain);
-        assert_eq!(look(CrateState::Done), Look::Plain);
+        let dark = theme::Look::Dark;
+        assert_eq!(look(CrateState::Upcoming, dark), Look::Hollow);
+        assert_eq!(look(CrateState::Merged, dark), Look::Plain);
+        assert_eq!(look(CrateState::Done, dark), Look::Plain);
         let phases = [CrateState::Claimed, CrateState::Working, CrateState::Waiting, CrateState::Gating, CrateState::SentBack, CrateState::Stopped];
-        let borders: Vec<Look> = phases.iter().map(|s| look(*s)).collect();
-        assert_eq!(borders, [CLAIMED, WORKING, WAITING, GATING, SENT_BACK, STOPPED].map(Look::Phase));
+        for shade in [theme::Look::Dark, theme::Look::Light] {
+            let borders: Vec<Look> = phases.iter().map(|s| look(*s, shade)).collect();
+            assert_eq!(borders, [CLAIMED, WORKING, WAITING, GATING, SENT_BACK, STOPPED].map(|p| Look::Phase(rgb(p.of(shade)))));
+        }
     }
 
     #[test]

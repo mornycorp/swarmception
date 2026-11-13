@@ -1,14 +1,17 @@
 //! The factory's tooltips in colour (#31, the owner's review): the scene's lines as they are,
-//! each phrase that names a phase in that phase's colour (claimed yellow, working warm white,
-//! waiting for merge blue, in the gate magenta, sent back red, stopped grey, merged green), what
-//! passed green, what failed red and what has no result grey (a gate run that never finished,
-//! #42), durations emphasised and clock times quiet. The first line, what the
+//! each phrase that names a phase in that phase's colour (the theme's tokens, #152, in the look
+//! drawn in, #154: claimed `warning`, working `strong`, waiting for merge `accent`, in the gate
+//! `gate`, sent back `error`, stopped `muted`, merged `success`), what passed `success`, what
+//! failed `error` and what has no result `muted` (a gate run that never finished, #42), durations
+//! emphasised and clock times quiet. The first line, what the
 //! tooltip is of, is strong. The words are the scene's: only how they are drawn is decided here.
 
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, FontId};
 
-use crate::factory_chip::{CLAIMED, GATING, PASSED, SENT_BACK, STOPPED, WAITING, WORKING};
+use swarmception_domain::colours::Paint;
+
+use crate::factory_chip::{CLAIMED, GATING, PASSED, SENT_BACK, STOPPED, WAITING, WORKING, drawn};
 use crate::icons;
 
 /// How a piece of a line is drawn.
@@ -16,7 +19,7 @@ use crate::icons;
 pub enum Tone {
     Plain,
     /// A phase, a pass or a failure, in its colour.
-    Colour(Color32),
+    Colour(Paint),
     /// A duration: `19m`, `3 min 20 s`, `1h05`.
     Duration,
     /// A clock time: `2026-10-31T03:01:00Z`.
@@ -24,7 +27,7 @@ pub enum Tone {
 }
 
 /// The phrases drawn in a colour, longest first where one starts another.
-const PHRASES: &[(&str, Color32)] = &[
+const PHRASES: &[(&str, Paint)] = &[
     ("waiting for merge", WAITING),
     ("done without a merge", STOPPED),
     ("no stop logged", SENT_BACK),
@@ -146,11 +149,6 @@ pub fn tones(line: &str) -> Vec<(&str, Tone)> {
     out
 }
 
-/// A phase's colour, darkened on a light theme so it reads on a light tooltip.
-pub(crate) fn legible(colour: Color32, visuals: &egui::Visuals) -> Color32 {
-    if visuals.dark_mode { colour } else { colour.lerp_to_gamma(Color32::BLACK, 0.35) }
-}
-
 /// The tooltip's `lines` as one coloured text, in `font`.
 #[must_use]
 pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId) -> LayoutJob {
@@ -168,7 +166,7 @@ pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId) -> LayoutJo
             let color = match tone {
                 Tone::Plain => visuals.text_color(),
                 Tone::Duration => visuals.strong_text_color(),
-                Tone::Colour(colour) => legible(colour, visuals),
+                Tone::Colour(colour) => drawn(colour, visuals),
                 Tone::Time => visuals.weak_text_color(),
             };
             let mut format = format(color);
@@ -248,9 +246,12 @@ mod tests {
         let job = job(&lines, &visuals, &FontId::proportional(13.0));
         assert_eq!(job.text, "#7 · PR #8\nin the gate for 2m");
         assert_eq!(job.sections[0].format.color, visuals.strong_text_color());
-        assert!(job.sections.iter().any(|s| s.format.color == GATING && job.text.get(s.byte_range.start.0..s.byte_range.end.0) == Some("in the gate")));
+        let gating = |job: &LayoutJob, colour| {
+            job.sections.iter().any(|s| s.format.color == colour && job.text.get(s.byte_range.start.0..s.byte_range.end.0) == Some("in the gate"))
+        };
+        assert!(gating(&job, crate::factory_chip::rgb(GATING.dark)));
         let light = egui::Visuals::light();
         let job = super::job(&lines, &light, &FontId::proportional(13.0));
-        assert!(job.sections.iter().any(|s| s.format.color == legible(GATING, &light) && s.format.color != GATING), "darker on a light theme");
+        assert!(gating(&job, crate::factory_chip::rgb(GATING.light)), "the theme's light gate on a light look (#154)");
     }
 }

@@ -25,8 +25,10 @@ use swarmception_domain::factory::{Bench, BenchStatus, Block, Crate, FactoryScen
 use swarmception_domain::gates::Lane;
 use swarmception_domain::timeline::Link;
 
-use crate::factory_chip::{CLAIMED, Chip, GATING, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb};
+use crate::factory_chip::{CLAIMED, Chip, GATING, IDLE, Look, Motion, PASSED, SENT_BACK, STOPPED, Size, WAITING, WORKING, ink, look, paint_chip, rgb, shade};
 use crate::{factory_tip, icons};
+use swarmception_domain::colours::Paint;
+use swarmception_domain::theme;
 
 /// What each station drew: the crates by issue, the benches by key, the runs by sub.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -250,14 +252,14 @@ fn wall_layout(blocks: &[Block], labels: &[f32], room: Vec2) -> Wall {
 
 /// A sent-back brick's mark at `rect`'s top right corner: a red corner, larger with the count in
 /// it from two; nothing for a ticket never sent back.
-fn sent_back_corner(painter: &egui::Painter, rect: Rect, times: usize) {
+fn sent_back_corner(painter: &egui::Painter, rect: Rect, times: usize, red: Color32) {
     if times == 0 {
         return;
     }
     let corner = if times > 1 { (rect.height() * 0.72).clamp(11.0, 17.0) } else { (rect.height() * 0.55).clamp(8.0, 13.0) };
     let tr = rect.right_top();
     let triangle = vec![tr, tr + vec2(0.0, corner), tr - vec2(corner, 0.0)];
-    painter.add(egui::Shape::convex_polygon(triangle, SENT_BACK, Stroke::new(1.0, SENT_BACK.lerp_to_gamma(Color32::BLACK, 0.3))));
+    painter.add(egui::Shape::convex_polygon(triangle, red, Stroke::new(1.0, red.lerp_to_gamma(Color32::BLACK, 0.3))));
     if times > 1 {
         let at = tr + vec2(-corner * 0.31, corner * 0.33);
         painter.text(at, Align2::CENTER_CENTER, times.to_string(), FontId::proportional(corner * 0.62), Color32::BLACK);
@@ -281,9 +283,6 @@ fn pack(widths: &[f32], width: f32) -> Vec<Place> {
         })
         .collect()
 }
-
-/// An idle bench: the theme's `idle`, a quiet sea green (#152).
-const IDLE: Color32 = crate::factory_chip::rgb(swarmception_domain::colours::IDLE);
 
 /// The gate's list (#95): its runs and the workers' `ready` checks together, those going on first
 /// (the last begun first), then those ended (the last ended first).
@@ -315,7 +314,7 @@ struct KeyItem {
     row: usize,
     x: f32,
     width: f32,
-    swatch: Option<([u8; 3], Look)>,
+    swatch: Option<(Color32, Look)>,
     label: &'static str,
 }
 
@@ -391,7 +390,7 @@ fn pieces(painter: &egui::Painter, pos: Pos2, anchor: Align2, parts: &[(String, 
     rect
 }
 
-const fn bench_colour(status: BenchStatus) -> Color32 {
+const fn bench_colour(status: BenchStatus) -> Paint {
     match status {
         BenchStatus::Working => WORKING,
         BenchStatus::Claimed => CLAIMED,
@@ -412,7 +411,7 @@ const fn outcome_mark(outcome: Outcome) -> &'static str {
     }
 }
 
-const fn outcome_colour(outcome: Outcome) -> Color32 {
+const fn outcome_colour(outcome: Outcome) -> Paint {
     match outcome {
         Outcome::Running => WORKING,
         Outcome::Passed => PASSED,
@@ -430,9 +429,16 @@ struct Palette {
     cell: Color32,
     /// What is selected (#85): the theme's selection stroke.
     selected: Color32,
+    /// The look the swarm's colours are drawn in (#154).
+    shade: theme::Look,
 }
 
 impl Palette {
+    /// One of the swarm's colours in the look drawn in (#154).
+    const fn paint(&self, paint: Paint) -> Color32 {
+        rgb(paint.of(self.shade))
+    }
+
     fn of(visuals: &egui::Visuals) -> Self {
         Self {
             text: visuals.text_color(),
@@ -441,6 +447,7 @@ impl Palette {
             edge: visuals.widgets.noninteractive.bg_stroke.color,
             cell: visuals.extreme_bg_color,
             selected: visuals.selection.stroke.color,
+            shade: shade(visuals),
         }
     }
 }
@@ -587,10 +594,10 @@ impl<'a> Floor<'a> {
     /// Hovering or clicking it is noted in [`Drawn`].
     fn chip(&mut self, c: &Crate, centre: Pos2, size: Size) -> Rect {
         let rect = self.motion.place(c.issue, Rect::from_center_size(centre, size.dims()));
-        let look = look(c.state);
+        let look = look(c.state, self.pal.shade);
         let glow = if look == Look::Hollow { 0.0 } else { self.fresh(c.age) };
         let highlight = self.marks.hovered.filter(|h| *h == c.issue).map(|_| self.ring());
-        paint_chip(&self.painter, rect, &Chip { colour: c.colour, look, label: &c.label, ground: self.pal.card, highlight, glow });
+        paint_chip(&self.painter, rect, &Chip { colour: self.pal.paint(c.colour), look, label: &c.label, ground: self.pal.card, highlight, glow });
         if self.selected_ticket() == Some(c.issue) {
             let place = format!("{} {}", self.station_of(c.issue), c.label);
             self.mark_selected(&self.painter.clone(), rect, place);
@@ -735,7 +742,7 @@ impl<'a> Floor<'a> {
             cell.left_center() + vec2(6.0, 0.0),
             Align2::LEFT_CENTER,
             &idle.label,
-            (Self::font(11.5), bench_colour(BenchStatus::Idle)),
+            (Self::font(11.5), self.pal.paint(bench_colour(BenchStatus::Idle))),
             (cell.width() - 12.0).max(0.0),
         );
         let response = self.ui.interact(cell, self.ui.scope_id().with("idle-benches"), egui::Sense::hover());
@@ -850,7 +857,7 @@ impl<'a> Floor<'a> {
     /// A bench's strip: the worker, its name, model and helper on one line and its status under
     /// it (all on one line when the strip is too short for two), its tickets at the right.
     fn bench(&mut self, cell: Rect, bench: &Bench) {
-        let status = bench_colour(bench.status);
+        let status = self.pal.paint(bench_colour(bench.status));
         let lit = bench.status == BenchStatus::Working;
         let edge = if lit { Stroke::new(1.5, status) } else { Stroke::new(1.0, self.pal.edge) };
         self.painter.rect(cell, 5.0, self.pal.cell, edge, StrokeKind::Inside);
@@ -873,7 +880,7 @@ impl<'a> Floor<'a> {
     fn bench_text(&self, room: Rect, bench: &Bench, compact: bool) -> Rect {
         let width = room.width().max(10.0);
         let line = status_line(bench);
-        let status = (Self::font(11.5), bench_colour(bench.status));
+        let status = (Self::font(11.5), self.pal.paint(bench_colour(bench.status)));
         let name_font = FontId::proportional(13.0);
         if compact {
             let name = fit(&self.painter, room.left_center(), Align2::LEFT_CENTER, &bench.actor.name, (name_font, self.pal.text), width * 0.45);
@@ -908,7 +915,7 @@ impl<'a> Floor<'a> {
             let rect = Rect::from_center_size(pos2(x - size.dims().x / 2.0, y), size.dims());
             let drawn_at = self.chip(c, rect.center(), size);
             if barred {
-                self.progress(drawn_at, c.age, look(c.state));
+                self.progress(drawn_at, c.age, look(c.state, self.pal.shade));
             }
             drawn.push(c.issue);
             x = rect.left() - 8.0;
@@ -920,18 +927,18 @@ impl<'a> Floor<'a> {
     /// The worker: a disc in its shift's colour with its initial, a lamp for its status, and
     /// gears turning with *t* while it works.
     fn actor(&self, at: Pos2, radius: f32, bench: &Bench) {
-        let status = bench_colour(bench.status);
+        let status = self.pal.paint(bench_colour(bench.status));
         let disc = match bench.actor.shift {
             Shift::On => status.lerp_to_gamma(self.pal.cell, 0.25),
-            Shift::Paused => CLAIMED.lerp_to_gamma(self.pal.cell, 0.4),
-            Shift::Off => STOPPED.lerp_to_gamma(self.pal.cell, 0.6),
+            Shift::Paused => self.pal.paint(CLAIMED).lerp_to_gamma(self.pal.cell, 0.4),
+            Shift::Off => self.pal.paint(STOPPED).lerp_to_gamma(self.pal.cell, 0.6),
         };
         if bench.status == BenchStatus::Working {
             let turn = (self.scene.t.0.rem_euclid(3_600) as f32) / 60.0;
             for tooth in 0..8 {
                 let angle = turn + tooth as f32 * std::f32::consts::TAU / 8.0;
                 let p = at + vec2(angle.cos(), angle.sin()) * (radius + 2.5);
-                self.painter.circle_filled(p, 2.2, WORKING);
+                self.painter.circle_filled(p, 2.2, self.pal.paint(WORKING));
             }
         }
         self.painter.circle(at, radius, disc, Stroke::new(1.0, status));
@@ -944,7 +951,7 @@ impl<'a> Floor<'a> {
     /// The helper's lamp, beside the worker's name: a check running, or just passed or failed.
     fn helper(&self, bench: &Bench, name: Rect, right: f32) {
         let Some(helper) = &bench.helper else { return };
-        let colour = outcome_colour(helper.outcome);
+        let colour = self.pal.paint(outcome_colour(helper.outcome));
         let mark = match helper.outcome {
             Outcome::Running => icons::FLASK,
             Outcome::Passed => icons::CHECK,
@@ -984,7 +991,7 @@ impl<'a> Floor<'a> {
             let who = c.worker.as_deref().unwrap_or("");
             let width = room.right() - rect.right() - 4.0;
             let text = rect.right_center() + vec2(5.0, 0.0);
-            fit(&self.painter, text, Align2::LEFT_BOTTOM, &short(c.age), (Self::font(11.0), WAITING), width);
+            fit(&self.painter, text, Align2::LEFT_BOTTOM, &short(c.age), (Self::font(11.0), self.pal.paint(WAITING)), width);
             fit(&self.painter, text, Align2::LEFT_TOP, who, (Self::font(9.5), self.pal.weak), width);
             self.drawn.dock.push(c.issue);
         }
@@ -998,15 +1005,15 @@ impl<'a> Floor<'a> {
         let gate = &self.scene.gate;
         let room = self.card(column, "GATE", "");
         let counts = [
-            (format!("{} {}", icons::CHECK, gate.passed), PASSED),
+            (format!("{} {}", icons::CHECK, gate.passed), self.pal.paint(PASSED)),
             ("   ".to_owned(), self.pal.text),
-            (format!("{} {}", icons::CROSS, gate.failed), if gate.failed > 0 { SENT_BACK } else { self.pal.weak }),
-            (if gate.no_result > 0 { format!("   ? {}", gate.no_result) } else { String::new() }, STOPPED),
+            (format!("{} {}", icons::CROSS, gate.failed), if gate.failed > 0 { self.pal.paint(SENT_BACK) } else { self.pal.weak }),
+            (if gate.no_result > 0 { format!("   ? {}", gate.no_result) } else { String::new() }, self.pal.paint(STOPPED)),
         ];
         pieces(&self.painter, pos2(column.right() - 8.0, column.top() + 6.0), Align2::RIGHT_TOP, &counts, Self::font(11.0), room.width() * 0.6);
         let mut y = room.top();
         let status = match (gate.running.first(), gate.recent.first()) {
-            (Some(run), _) => (format!("running {} · {}", run.sub, short(run.age)), WORKING),
+            (Some(run), _) => (format!("running {} · {}", run.sub, short(run.age)), self.pal.paint(WORKING)),
             (None, Some(last)) => (format!("idle · last {} {} ago", outcome_word(last.outcome), short(last.age)), self.pal.weak),
             (None, None) => ("idle · no runs yet".to_owned(), self.pal.weak),
         };
@@ -1088,7 +1095,7 @@ impl<'a> Floor<'a> {
         }
         if let Some(cause) = &run.cause {
             let red = matches!(run.outcome, Outcome::Failed);
-            what.push((format!("  {cause}"), if red { SENT_BACK } else { self.pal.weak }));
+            what.push((format!("  {cause}"), if red { self.pal.paint(SENT_BACK) } else { self.pal.weak }));
         }
         what
     }
@@ -1110,7 +1117,7 @@ impl<'a> Floor<'a> {
     /// (red when it failed) and its age; a glow while it is fresh, the selection's look when it is
     /// selected.
     fn run_line(&mut self, line: Rect, run: &GateRun, n: usize) {
-        let colour = outcome_colour(run.outcome);
+        let colour = self.pal.paint(outcome_colour(run.outcome));
         let fresh = if run.outcome == Outcome::Running { 1.0 } else { self.fresh(run.age) };
         if self.marks.selected.as_ref().is_some_and(|s| s.is_run(run)) {
             self.selected_line(line, &run.sub);
@@ -1141,7 +1148,7 @@ impl<'a> Floor<'a> {
         let mut top = room.top();
         if let Some(last) = ship.blocks.last() {
             let text = format!("last: {} · {} ago", last.label, short(last.age));
-            fit(&self.painter, pos2(room.left(), top), Align2::LEFT_TOP, &text, (Self::font(11.0), PASSED), room.width());
+            fit(&self.painter, pos2(room.left(), top), Align2::LEFT_TOP, &text, (Self::font(11.0), self.pal.paint(PASSED)), room.width());
             top += 16.0;
         }
         let site = Rect::from_min_max(pos2(room.left(), top), pos2(room.right(), room.bottom() - done_height));
@@ -1164,7 +1171,7 @@ impl<'a> Floor<'a> {
     fn building(&mut self, site: Rect) {
         let blocks = &self.scene.shipping.blocks;
         let ground = Rect::from_min_max(pos2(site.left(), site.bottom() - 4.0), site.right_bottom());
-        self.painter.rect_filled(ground, 1.0, PASSED.gamma_multiply(0.7));
+        self.painter.rect_filled(ground, 1.0, self.pal.paint(PASSED).gamma_multiply(0.7));
         let area = site.with_max_y(ground.top() - 2.0).with_max_x(site.right() - SCROLLBAR);
         let labels: Vec<f32> =
             blocks.iter().map(|b| self.painter.layout_no_wrap(b.mark.clone(), FontId::proportional(10.0), Color32::WHITE).size().x).collect();
@@ -1228,10 +1235,10 @@ impl<'a> Floor<'a> {
         let (painter, clip) = if flying { (&floor, floor.clip_rect()) } else { (wall, clip) };
         let fresh = self.fresh(block.age);
         if fresh > 0.0 {
-            painter.rect_filled(rect.expand(2.0 + 3.0 * fresh), 4.0, PASSED.gamma_multiply(0.5 * fresh));
+            painter.rect_filled(rect.expand(2.0 + 3.0 * fresh), 4.0, self.pal.paint(PASSED).gamma_multiply(0.5 * fresh));
         }
         self.brick_face(painter, rect, block);
-        sent_back_corner(painter, rect, block.sent_back);
+        sent_back_corner(painter, rect, block.sent_back, self.pal.paint(SENT_BACK));
         if let Some(ring) = block.issue.filter(|i| self.marks.hovered == Some(*i)).map(|_| self.ring()) {
             painter.rect_stroke(rect.expand(2.5), 5.0, Stroke::new(2.0, ring), StrokeKind::Outside);
         }
@@ -1260,7 +1267,7 @@ impl<'a> Floor<'a> {
 
     /// A brick's body in its ticket's colour, its number, and its life's strip along its foot.
     fn brick_face(&self, painter: &egui::Painter, rect: Rect, block: &Block) {
-        let fill = rgb(block.colour);
+        let fill = self.pal.paint(block.colour);
         painter.rect(rect, 3.0, fill, Stroke::new(1.0, fill.lerp_to_gamma(Color32::BLACK, 0.35)), StrokeKind::Inside);
         let strip_height = if block.segments.is_empty() { 0.0 } else { (rect.height() * 0.28).max(4.0) };
         let face = rect.with_max_y(rect.bottom() - strip_height);
@@ -1286,7 +1293,7 @@ impl<'a> Floor<'a> {
         let mut x = strip.left();
         for segment in &block.segments {
             let width = strip.width() * segment.seconds.max(0) as f32 / total as f32;
-            let colour = match look(segment.state) {
+            let colour = match look(segment.state, self.pal.shade) {
                 Look::Phase(colour) => colour,
                 Look::Hollow | Look::Plain => self.pal.weak,
             };
@@ -1299,8 +1306,8 @@ impl<'a> Floor<'a> {
     /// The key's pieces placed along the bottom: in one row when they fit in `width`, else in two
     /// of five each.
     fn legend_layout(&self, width: f32) -> Vec<KeyItem> {
-        let sample = [0x5c, 0x5f, 0x70];
-        let phase = |colour: Color32, label: &'static str| (Some((sample, Look::Phase(colour))), label);
+        let sample = Color32::from_rgb(0x5c, 0x5f, 0x70);
+        let phase = |colour: Paint, label: &'static str| (Some((sample, Look::Phase(self.pal.paint(colour)))), label);
         let items = [
             (None, "border = phase · fill = ticket"),
             (Some((sample, Look::Hollow)), "up next"),
@@ -1311,7 +1318,7 @@ impl<'a> Floor<'a> {
             phase(WAITING, "waiting for merge"),
             phase(GATING, "in the gate"),
             (Some((sample, Look::Plain)), "merged: a brick, as wide as it took"),
-            (Some((swarmception_domain::colours::NO_TICKET, Look::Plain)), "grey !13: a merge, no ticket"),
+            (Some((self.pal.paint(swarmception_domain::colours::NO_TICKET), Look::Plain)), "grey !13: a merge, no ticket"),
         ];
         let measured: Vec<f32> = items
             .iter()
@@ -1366,7 +1373,7 @@ impl<'a> Floor<'a> {
             .iter()
             .find(|b| b.issue == Some(journey.issue))
             .map_or_else(|| swarmception_domain::colours::ticket_colour(journey.issue), |b| b.colour);
-        let line = rgb(colour);
+        let line = self.pal.paint(colour);
         let mut stacked = [0usize; 5];
         let mut points: Vec<Pos2> = Vec::new();
         for leg in &journey.legs {
@@ -1467,7 +1474,7 @@ mod tests {
             commit: None,
             label: String::new(),
             mark: String::new(),
-            colour: [0, 0, 0],
+            colour: swarmception_domain::colours::Paint { dark: [0, 0, 0], light: [0, 0, 0] },
             age: 0,
             took,
             segments: Vec::new(),

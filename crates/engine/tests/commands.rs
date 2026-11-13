@@ -131,14 +131,35 @@ fn the_theme_is_data_a_command_returns() {
         ("success", colours::MAIN_MERGE),
         ("gate", colours::GATING),
     ] {
-        let dark = Rgb::parse(&token(name).dark).map(bytes);
-        assert_eq!(dark, Some(colour), "{name}");
-        assert!(Rgb::parse(&token(name).light).is_some() && !token(name).meaning.is_empty(), "{name}");
+        assert_eq!(Rgb::parse(&token(name).dark).map(bytes), Some(colour.dark), "{name}");
+        assert_eq!(Rgb::parse(&token(name).light).map(bytes), Some(colour.light), "{name}");
+        assert!(!token(name).meaning.is_empty(), "{name}");
     }
     let range32 = theme.ranges.iter().find(|r| r.name == "range32").unwrap();
     assert_eq!(range32.size, 32);
     let picked = RANGE_32.of(Look::Dark).index_of(169);
-    assert_eq!(Rgb::parse(&range32.entries[picked].dark).map(bytes), Some(colours::ticket_colour(169)), "#169's colour is its pick");
+    assert_eq!(Rgb::parse(&range32.entries[picked].dark).map(bytes), Some(colours::ticket_colour(169).dark), "#169's colour is its pick");
+    assert_eq!(Rgb::parse(&range32.entries[picked].light).map(bytes), Some(colours::ticket_colour(169).light), "and its light");
+}
+
+/// #154: `theme.set` is the look the timeline is built in: a change builds it again (its
+/// generation moves on), the same look changes nothing, and a look that isn't one is refused.
+#[test]
+fn theme_set_builds_the_timeline_again_in_the_new_look() {
+    use swarmception_engine::theme_cmds::LookParams;
+    let dir = repo();
+    let mut session = Session::new();
+    let path = serde_json::to_string(&dir.display().to_string()).unwrap();
+    let _: StatusResult = call(&mut session, "repo.open", &format!("{{\"path\":{path}}}"));
+    let before = session.revision().0;
+    let set: LookParams = call(&mut session, "theme.set", r#"{"look":"light"}"#);
+    assert_eq!(serde_json::to_string(&set).unwrap(), r#"{"look":"light"}"#);
+    let built = session.revision().0;
+    assert_ne!(built, before, "built again in the light look");
+    let _: LookParams = call(&mut session, "theme.set", r#"{"look":"light"}"#);
+    assert_eq!(session.revision().0, built, "the same look changes nothing");
+    assert_eq!(session.execute("theme.set", r#"{"look":"sepia"}"#).unwrap_err().code(), "bad_params");
+    assert!(session.widget_timeline().unwrap().is_some());
 }
 
 #[test]

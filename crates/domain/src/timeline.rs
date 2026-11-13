@@ -26,8 +26,9 @@ use timeline_core::strip::Segment;
 
 use swarmception_model::Timestamp;
 
-use crate::colours::Rgb;
+use crate::colours::Paint;
 use crate::rows::{Bar, MarkKind, Node};
+use crate::theme::Look;
 use crate::tooltip::TipLine;
 
 /// The time scale's name.
@@ -36,9 +37,10 @@ pub const TIME: &str = "Time";
 const LAST_ITEM_SECONDS: i64 = 60;
 const NANOS: i64 = 1_000_000_000;
 
-/// A bar's colour as the widget's.
+/// A bar's colour as the widget's, in `look` (#154).
 #[must_use]
-pub const fn colour([r, g, b]: Rgb) -> Colour {
+pub const fn colour(paint: Paint, look: Look) -> Colour {
+    let [r, g, b] = paint.of(look);
     Colour::rgb(r, g, b)
 }
 
@@ -51,6 +53,8 @@ pub struct SwarmData {
     /// Each bar's tooltip lines, styled (#35).
     range_tips: BTreeMap<(TrackId, usize), Vec<TipLine>>,
     range_links: BTreeMap<(TrackId, usize), Vec<Link>>,
+    /// The look its colours are drawn in (#154).
+    look: Look,
 }
 
 /// A page on GitHub a bar's context menu opens (#17): its ticket's issue, or a pull request (its
@@ -98,11 +102,12 @@ impl Link {
     }
 }
 
-/// A tooltip line as the widget's: each run in its colour (the theme's text colour with none),
-/// strong or not.
+/// A tooltip line as the widget's: each run in its colour in `look` (the theme's text colour with
+/// none), strong or not.
 #[must_use]
-pub fn tooltip_line(line: &TipLine) -> TooltipLine {
-    TooltipLine { spans: line.spans.iter().map(|span| TooltipSpan { text: span.text.clone(), colour: span.colour.map(colour), strong: span.strong }).collect() }
+pub fn tooltip_line(line: &TipLine, look: Look) -> TooltipLine {
+    let spans = line.spans.iter().map(|span| TooltipSpan { text: span.text.clone(), colour: span.colour.map(|c| colour(c, look)), strong: span.strong });
+    TooltipLine { spans: spans.collect() }
 }
 
 /// What [`build`] makes: the data, its time scale and where its positions count from.
@@ -126,12 +131,13 @@ impl Built {
     }
 }
 
-/// The widget's data for `rows`; `show_empty` shows rows with nothing in them too.
+/// The widget's data for `rows`, its colours in `look` (#154); `show_empty` shows rows with
+/// nothing in them too.
 ///
 /// # Errors
 ///
 /// Core's refusal of the data, which these rows never cause.
-pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
+pub fn build(rows: &[Node], show_empty: bool, look: Look) -> Result<Built, DataError> {
     let mut times: Vec<Timestamp> = Vec::new();
     let mut points: Vec<Timestamp> = Vec::new();
     for leaf in rows.iter().flat_map(Node::leaves) {
@@ -151,7 +157,7 @@ pub fn build(rows: &[Node], show_empty: bool) -> Result<Built, DataError> {
     // starts), then the one spanning on to the next time.
     let times: Vec<Timestamp> = times.into_iter().flat_map(|t| std::iter::repeat_n(t, if points.binary_search(&t).is_ok() { 2 } else { 1 })).collect();
     let origin = Timestamp(times.first().map_or(0, |t| t.0.div_euclid(3_600) * 3_600));
-    let mut built = SwarmData { clock_epoch: Some(origin.0.saturating_mul(NANOS)), ..SwarmData::default() };
+    let mut built = SwarmData { clock_epoch: Some(origin.0.saturating_mul(NANOS)), look, ..SwarmData::default() };
     let category = built.data.add_category(Colour::rgb(0x80, 0x80, 0x80))?;
     for _ in &times {
         built.data.push_item(Item { category, importance: Importance::default(), selectable: true })?;
@@ -238,7 +244,7 @@ impl Adder<'_> {
         let range = Range {
             name: bar.label.clone(),
             extent: RangeExtent::Items { first, last },
-            colour: Some(colour(bar.colour)),
+            colour: Some(colour(bar.colour, self.built.look)),
             lane: None,
             importance: Importance::new(bar.importance).unwrap_or(Importance::MAXIMUM),
         };
@@ -248,7 +254,7 @@ impl Adder<'_> {
         }
         self.strip(track, place, bar, (first, last))?;
         if let Some(corner) = &bar.corner {
-            let mut drawn = Corner::new(colour(corner.colour));
+            let mut drawn = Corner::new(colour(corner.colour, self.built.look));
             drawn.label.clone_from(&corner.label);
             self.built.data.set_range_corner(track, place, Some(drawn))?;
         }
@@ -259,9 +265,9 @@ impl Adder<'_> {
                 MarkKind::GivenUp => (Glyph::Dot, MarkEdge::Middle, crate::colours::HIGH),
             };
             let importance = Importance::new(importance).unwrap_or(Importance::MAXIMUM);
-            self.built
-                .data
-                .add_mark(Mark::dot(track, at, colour(mark.colour), mark.name.clone()).with_glyph(glyph).with_edge(edge).with_importance(importance))?;
+            self.built.data.add_mark(
+                Mark::dot(track, at, colour(mark.colour, self.built.look), mark.name.clone()).with_glyph(glyph).with_edge(edge).with_importance(importance),
+            )?;
         }
         self.built.range_tips.insert((track, place), bar.tooltip_lines.clone());
         let links = Link::of(bar);
@@ -288,7 +294,9 @@ impl Adder<'_> {
             let importance = Importance::new(stage.importance).unwrap_or(Importance::MAXIMUM);
             // The widget's tooltip line adds its duration on the `Time` scale.
             segments.push(
-                Segment::new(RangeExtent::Items { first: start, last: end }, colour(stage.colour)).with_label(stage.stage.name()).with_importance(importance),
+                Segment::new(RangeExtent::Items { first: start, last: end }, colour(stage.colour, self.built.look))
+                    .with_label(stage.stage.name())
+                    .with_importance(importance),
             );
             next = end + 1;
         }
@@ -330,7 +338,9 @@ impl TimelineData for SwarmData {
     }
 
     fn range_tooltip_lines(&self, track: TrackId, place: usize) -> Vec<TooltipLine> {
-        self.range_tips.get(&(track, place)).map_or_else(|| self.data.range_tooltip_lines(track, place), |lines| lines.iter().map(tooltip_line).collect())
+        self.range_tips
+            .get(&(track, place))
+            .map_or_else(|| self.data.range_tooltip_lines(track, place), |lines| lines.iter().map(|line| tooltip_line(line, self.look)).collect())
     }
 
     fn instant_tooltip(&self, track: TrackId, place: usize) -> Vec<String> {
@@ -377,7 +387,7 @@ mod tests {
     fn every_row_is_a_track_and_every_time_an_item() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let built = build(&rows, true).unwrap();
+        let built = build(&rows, true, Look::Dark).unwrap();
         assert_eq!(built.data.tracks().len(), 2 + 2, "the two merges rows (#117: no gate rows), and the tickets' two");
         assert_eq!(built.times.len() as u64, built.data.item_count());
         assert_eq!(built.origin.to_string(), "2026-10-31T03:00:00Z");
@@ -389,7 +399,7 @@ mod tests {
     fn a_bar_ends_at_its_end() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec { merge_marks: true, ..RowsSpec::default() });
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let scale = built.scales[0].scale().unwrap().clone();
         let tree = built.data.tracks();
         let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
@@ -409,12 +419,12 @@ mod tests {
         let stages: Vec<(Option<&str>, (String, String))> = strip.iter().map(|s| (s.label.as_deref(), time(s.extent))).collect();
         assert_eq!(stages[1], (Some("working"), ("2026-10-31T03:53:25Z".to_owned(), "2026-10-31T04:06:43Z".to_owned())));
         assert_eq!(stages.iter().map(|(label, _)| label.unwrap_or_default()).collect::<Vec<_>>(), ["claimed", "working", "waiting for merge", "in the gate"]);
-        assert_eq!(strip[1].colour, colour(crate::colours::WORKING));
+        assert_eq!(strip[1].colour, colour(crate::colours::WORKING, Look::Dark));
         assert!(timeline_core::strip::in_order(strip));
         // Its merge, a green dot at its end, asked for (#127).
         let marks: Vec<_> = built.data.marks().iter().filter(|m| m.track == ticket).collect();
         assert_eq!(marks.len(), 1);
-        assert_eq!((marks[0].drawn_as(), marks[0].colour), (timeline_core::marks::Glyph::Dot, colour(crate::tooltip::PASSED)));
+        assert_eq!((marks[0].drawn_as(), marks[0].colour), (timeline_core::marks::Glyph::Dot, colour(crate::tooltip::PASSED, Look::Dark)));
         let timeline_core::marks::MarkShape::Dot(InstantAt::Item(at)) = marks[0].shape else { panic!() };
         assert_eq!(built.time_at(scale.span(at).unwrap().start()).to_string(), "2026-10-31T04:28:58Z");
     }
@@ -423,7 +433,7 @@ mod tests {
     fn a_bars_tooltip_reaches_the_widget_in_its_colours() {
         let activity = Activity::of(&sample());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let tree = built.data.tracks();
         let ticket = tree.ids().find(|&id| tree.get(id).unwrap().key() == "tickets/2").unwrap();
         let lines = built.data.range_tooltip_lines(ticket, 0);
@@ -432,7 +442,7 @@ mod tests {
         assert!(lines[0].spans[0].strong, "the title strong");
         // #117: each stage in its strip's colour, as the strip's segment for it.
         let working = &lines[2].spans[0];
-        assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::WORKING))));
+        assert_eq!((working.text.as_str(), working.colour), ("working", Some(colour(crate::colours::WORKING, Look::Dark))));
         let strip = built.data.range_segments(ticket, 0);
         for segment in strip {
             let label = segment.label.as_deref().unwrap_or_default();
@@ -440,7 +450,39 @@ mod tests {
             assert!(!named.is_empty() && named.iter().all(|c| *c == Some(segment.colour)), "{label}: {named:?} and its segment's {:?}", segment.colour);
         }
         assert!(lines[2].spans.iter().any(|s| s.strong && s.text == "13 min 18 s"));
-        assert!(lines.iter().any(|l| l.spans.first().is_some_and(|s| s.text == "merged" && s.colour == Some(colour(crate::tooltip::PASSED)))));
+        assert!(lines.iter().any(|l| l.spans.first().is_some_and(|s| s.text == "merged" && s.colour == Some(colour(crate::tooltip::PASSED, Look::Dark)))));
+    }
+
+    /// #154: built in the light look, every range, strip segment and tooltip run is in its
+    /// colour's light value: the theme's, not the dark one darkened.
+    #[test]
+    fn built_in_the_light_look_every_colour_is_its_light_value() {
+        let activity = Activity::of(&sample());
+        let rows = rows(&activity, &[], RowsSpec::default());
+        let built = build(&rows, false, Look::Light).unwrap();
+        let tree = built.data.tracks();
+        let mut seen = 0;
+        for leaf in rows.iter().flat_map(Node::leaves) {
+            let Node::Ranges { key, bars, .. } = leaf else { continue };
+            let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
+            let ranges = built.data.ranges(track).unwrap();
+            assert_eq!(
+                ranges.iter().map(|r| r.colour).collect::<Vec<_>>(),
+                bars.iter().map(|b| Some(colour(b.colour, Look::Light))).collect::<Vec<_>>(),
+                "{key}"
+            );
+            for (place, bar) in bars.iter().enumerate() {
+                let strip = built.data.range_segments(track, place);
+                assert_eq!(strip.iter().map(|s| s.colour).collect::<Vec<_>>(), bar.segments.iter().map(|s| colour(s.colour, Look::Light)).collect::<Vec<_>>());
+                let tips = built.data.range_tooltip_lines(track, place);
+                let want: Vec<Option<timeline_core::data::Colour>> =
+                    bar.tooltip_lines.iter().flat_map(|l| &l.spans).map(|s| s.colour.map(|c| colour(c, Look::Light))).collect();
+                assert_eq!(tips.iter().flat_map(|l| &l.spans).map(|s| s.colour).collect::<Vec<_>>(), want);
+                seen += 1;
+            }
+        }
+        assert!(seen > 0);
+        assert_ne!(colour(crate::colours::WORKING, Look::Light), colour(crate::colours::WORKING, Look::Dark), "working is black on light, white on dark");
     }
 
     #[test]
@@ -449,14 +491,18 @@ mod tests {
         let activity = Activity::of(&sample());
         let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
         let rows = rows(&activity, &merges, RowsSpec::default());
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let scale = built.scales[0].scale().unwrap().clone();
         let tree = built.data.tracks();
         for leaf in rows.iter().flat_map(Node::leaves) {
             let Node::Ranges { key, bars, .. } = leaf else { continue };
             let track = tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
             let ranges = built.data.ranges(track).unwrap();
-            assert_eq!(ranges.iter().map(|r| r.colour).collect::<Vec<_>>(), bars.iter().map(|b| Some(colour(b.colour))).collect::<Vec<_>>(), "{key}");
+            assert_eq!(
+                ranges.iter().map(|r| r.colour).collect::<Vec<_>>(),
+                bars.iter().map(|b| Some(colour(b.colour, Look::Dark))).collect::<Vec<_>>(),
+                "{key}"
+            );
             if key == "main" || key == "merged" {
                 // #115: one item, of no width on the `Time` scale, at the merge's time.
                 let RangeExtent::Items { first, last } = ranges[0].extent else { panic!() };
@@ -475,7 +521,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
         let rows = rows(&activity, &merges, RowsSpec { merge_marks: true, ..RowsSpec::default() });
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         (rows, built)
     }
 
@@ -541,7 +587,7 @@ mod tests {
             let bar = drawn[0];
             assert!(bar.packed && bar.width >= 3.0, "{key}: packed, at least 3 px: {bar:?}");
             assert!((bar.x + bar.width / 2.0 - 500.0).abs() <= 1.5, "{key}: centred on its time: {bar:?}");
-            assert_eq!(bar.colour, Some(colour(bars[0].colour)), "{key}: in its colour");
+            assert_eq!(bar.colour, Some(colour(bars[0].colour, Look::Dark)), "{key}: in its colour");
             for x in [499.0, 500.0, 501.0] {
                 let picked = pick_range(&built.data, track, scale, &index, &map, LanePoint { lane: 0, x }).unwrap();
                 assert_eq!(picked, Some(RangePick::Run { first: 0, count: 1 }), "{key}: hovered at {x}");
@@ -559,7 +605,7 @@ mod tests {
         let activity = Activity::of(&sample());
         let merges: Vec<MainMerge> = parse_merge("be043bc0\u{1f}1793420113\u{1f}Merge pull request #173 from mornycorp/170-spec").into_iter().collect();
         let rows = rows(&activity, &merges, RowsSpec::default());
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let tree = built.data.tracks();
         let track = |key: &str| tree.ids().find(|&id| tree.get(id).unwrap().key() == key).unwrap();
         let items = built.data.menu_items(Some(track("tickets/2")), Some(0), None);
@@ -617,7 +663,7 @@ mod tests {
         use crate::colours::{HIGH, LOW, MERGE};
         let activity = Activity::of(&sixty_tickets());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let tree = built.data.tracks();
         let mut levels = std::collections::BTreeSet::new();
         for leaf in rows.iter().flat_map(Node::leaves) {
@@ -644,7 +690,7 @@ mod tests {
 
         let activity = Activity::of(&sixty_tickets());
         let rows = rows(&activity, &[], RowsSpec::default());
-        let built = build(&rows, false).unwrap();
+        let built = build(&rows, false, Look::Dark).unwrap();
         let count = built.data.item_count();
         let scale = Scale::unit(count).unwrap();
         let end = i64::try_from(count).unwrap();
@@ -661,13 +707,13 @@ mod tests {
         assert_ne!(column.range, column.shown, "not its column's first");
         // #127: its corner, the factory's red one, on its range; no other range has one.
         let corner = built.data.range_corner(track, sent[0]).expect("the send back's corner");
-        assert_eq!((corner.colour, corner.label.as_deref()), (colour(SENT_BACK), None));
+        assert_eq!((corner.colour, corner.label.as_deref()), (colour(SENT_BACK, Look::Dark), None));
         assert_eq!((0..ranges.len()).filter(|&i| built.data.range_corner(track, i).is_some()).count(), 1);
     }
 
     #[test]
     fn no_rows_no_items() {
-        let built = build(&[], false).unwrap();
+        let built = build(&[], false, Look::Dark).unwrap();
         assert_eq!(built.data.item_count(), 0);
     }
 }

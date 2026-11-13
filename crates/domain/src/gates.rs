@@ -47,7 +47,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{Kind, MainMerge, Timestamp};
 
 use crate::activity::{Activity, Agent, Sub};
-use crate::colours::{self, Rgb};
+use crate::colours::{self, Paint};
 use crate::details::Subject;
 use crate::factory::{GateRun, NEVER_FINISHED, Outcome, gate_runs};
 use crate::rows::duration;
@@ -56,9 +56,9 @@ use crate::tickets::{Phase, Ticket};
 use crate::tooltip::{FAILED, PASSED, TipLine};
 
 /// What a running run is drawn in: waiting's blue, as the tickets it holds wait.
-pub const RUNNING: Rgb = colours::WAITING;
+pub const RUNNING: Paint = colours::WAITING;
 /// What a run with no result is drawn in: stopped's grey.
-pub const NO_RESULT: Rgb = colours::STOPPED;
+pub const NO_RESULT: Paint = colours::STOPPED;
 const HOUR: i64 = 3_600;
 
 /// Whose gate a run is.
@@ -98,7 +98,7 @@ impl GateResult {
 
     /// Its colour: passed green, failed red, no result grey, running blue.
     #[must_use]
-    pub const fn colour(self) -> Rgb {
+    pub const fn colour(self) -> Paint {
         match self {
             Self::Passed => PASSED,
             Self::Failed => FAILED,
@@ -153,7 +153,7 @@ pub struct Run {
     /// Read from its merges and send backs: it logged no `sub.start`.
     pub inferred: bool,
     /// Its result's colour.
-    pub colour: Rgb,
+    pub colour: Paint,
     /// What the details pane tells of it, when it is chosen: the gate run itself; for a `ready`,
     /// the ticket it checked, else its worker's session.
     pub subject: Subject,

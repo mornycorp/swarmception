@@ -24,7 +24,6 @@ use swarmception_engine::stats_cmds::{At, GetParams};
 use swarmception_engine::workers_cmds::Compare;
 use swarmception_model::Timestamp;
 
-use crate::factory_chip::rgb;
 use crate::icons;
 use crate::timeline::Hover;
 
@@ -195,8 +194,8 @@ const SAMPLES: f32 = 34.0;
 
 /// A model × effort's colour: its place in `workers.compare`'s order, the theme's range8 by number
 /// (#152).
-fn group_colour(index: usize) -> Color32 {
-    rgb(series_colour(u64::try_from(index).unwrap_or(u64::MAX)))
+fn group_colour(index: usize, visuals: &egui::Visuals) -> Color32 {
+    crate::factory_chip::drawn(series_colour(u64::try_from(index).unwrap_or(u64::MAX)), visuals)
 }
 
 /// Seconds, as a person reads a duration in a table: `42 s`, `4 min 36 s`, `25 min`, `1 h 05 min`.
@@ -490,7 +489,7 @@ impl WorkersPane {
         let scales = scales(compared);
         for (index, workers) in sorted(&compared.groups, view) {
             let Some(group) = compared.groups.get(index) else { continue };
-            let colour = group_colour(index);
+            let colour = group_colour(index, ui.visuals());
             let mut tickets: Vec<u64> = group.workers.iter().flat_map(|w| w.tickets.iter().copied()).collect();
             tickets.sort_unstable();
             tickets.dedup();

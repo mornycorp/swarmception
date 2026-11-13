@@ -14,7 +14,7 @@ use egui::text::LayoutJob;
 use egui::{Color32, FontId, RichText, Sense, TextFormat, vec2};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use swarmception_domain::colours::{Rgb, ink};
+use swarmception_domain::colours::{Paint, ink};
 use swarmception_domain::details::{Details, Entry, OnTimeline, PageKind, Subject};
 use swarmception_domain::timeline::Link;
 use swarmception_domain::tooltip::TipLine;
@@ -22,8 +22,7 @@ use swarmception_engine::Session;
 use swarmception_engine::details_cmds::{DetailsParams, Get};
 use swarmception_engine::stats_cmds::At as When;
 
-use crate::factory_chip::rgb;
-use crate::factory_tip::legible;
+use crate::factory_chip::{drawn, rgb, shade};
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
 
@@ -198,7 +197,8 @@ impl DetailsPane {
             ui.add_space(6.0);
             ui.horizontal_wrapped(|ui| {
                 for fact in &d.facts {
-                    fact_pill(ui, &fact.label, &fact.value, fact.colour.map(rgb));
+                    let colour = fact.colour.map(|c| drawn(c, ui.visuals()));
+                    fact_pill(ui, &fact.label, &fact.value, colour);
                     self.drawn.facts.push(format!("{} {}", fact.label, fact.value));
                 }
             });
@@ -270,13 +270,13 @@ impl DetailsPane {
     /// One line of the story: its time, a dot in its colour, what happened, the rest of its line,
     /// who and how long; its notes under it. Clicking it goes to what it names.
     fn entry(&mut self, ui: &mut egui::Ui, entry: &Entry) {
-        let colour = legible(rgb(entry.colour), ui.visuals());
+        let colour = drawn(entry.colour, ui.visuals());
         let row = ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
             let clock = entry.t.to_string();
             ui.label(RichText::new(clock.get(11..19).unwrap_or(&clock)).monospace().small().weak());
             let (dot, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
-            ui.painter().circle_filled(dot.center(), 4.5, rgb(entry.colour));
+            ui.painter().circle_filled(dot.center(), 4.5, colour);
             if entry.end.is_some() {
                 ui.painter().circle_stroke(dot.center(), 4.5, egui::Stroke::new(1.0, ui.visuals().strong_text_color().gamma_multiply(0.5)));
             }
@@ -329,13 +329,13 @@ fn described(subject: &Subject) -> String {
     }
 }
 
-/// `line` as one text: each run in its colour (made legible on the theme), strong or not; runs
+/// `line` as one text: each run in its colour in the look drawn in (#154), strong or not; runs
 /// with none in `plain`, else the theme's text colour.
 pub(crate) fn line_job(line: &TipLine, visuals: &egui::Visuals, font: &FontId, plain: Option<Color32>) -> LayoutJob {
     let mut job = LayoutJob::default();
     for span in &line.spans {
         let color = match (span.colour, span.strong) {
-            (Some(colour), _) => legible(rgb(colour), visuals),
+            (Some(colour), _) => drawn(colour, visuals),
             (None, true) => visuals.strong_text_color(),
             (None, false) => plain.unwrap_or_else(|| visuals.text_color()),
         };
@@ -346,8 +346,9 @@ pub(crate) fn line_job(line: &TipLine, visuals: &egui::Visuals, font: &FontId, p
 
 /// A chip in `fill` with `mark` on it in a legible ink: the subject's, as on the timeline and in
 /// the factory. Clickable.
-fn chip(ui: &mut egui::Ui, mark: &str, colour: Rgb, size: f32) -> egui::Response {
-    let (fill, ink) = (rgb(colour), rgb(ink(colour)));
+fn chip(ui: &mut egui::Ui, mark: &str, colour: Paint, size: f32) -> egui::Response {
+    let fill = colour.of(shade(ui.visuals()));
+    let (fill, ink) = (rgb(fill), rgb(ink(fill)));
     let font = FontId::monospace(size * 0.8);
     let galley = ui.painter().layout_no_wrap(mark.to_owned(), font, ink);
     let pad = vec2(size * 0.45, size * 0.25);
@@ -360,7 +361,7 @@ fn chip(ui: &mut egui::Ui, mark: &str, colour: Rgb, size: f32) -> egui::Response
 /// A figure: its label quiet, its value strong (in its colour when it has one).
 pub(crate) fn fact_pill(ui: &mut egui::Ui, label: &str, value: &str, colour: Option<Color32>) {
     let visuals = ui.visuals().clone();
-    let value_colour = colour.map_or_else(|| visuals.strong_text_color(), |c| legible(c, &visuals));
+    let value_colour = colour.unwrap_or_else(|| visuals.strong_text_color());
     let mut job = LayoutJob::default();
     let small = TextFormat { font_id: FontId::proportional(10.5), color: visuals.weak_text_color(), valign: egui::Align::Center, ..TextFormat::default() };
     job.append(label, 0.0, small);

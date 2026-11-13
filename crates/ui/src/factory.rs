@@ -672,7 +672,7 @@ fn fixed(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) -> egui
 /// A step's landing in the header: its ticket's colour, what happened, and in its tooltip
 /// every moment at that second with its note, and its place among them all.
 fn moment_label(ui: &mut egui::Ui, step: &Step) {
-    let colour = step.moments.first().map(|m| crate::factory_chip::rgb(m.colour));
+    let colour = step.moments.first().map(|m| crate::factory_chip::drawn(m.colour, ui.visuals()));
     if let Some(colour) = colour {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
         ui.painter().rect_filled(rect, 2.0, colour);

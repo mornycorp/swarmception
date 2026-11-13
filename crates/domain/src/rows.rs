@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_model::{IssueState, Issues, MainMerge, Timestamp};
 
 use crate::activity::Activity;
-use crate::colours::{self, Rgb, style_colour};
+use crate::colours::{self, Paint, style_colour};
 use crate::gates::{Lane, Run, runs};
 use crate::tickets::{Abandoned, Phase, Stretch, Ticket, tickets};
 use crate::titles;
@@ -164,7 +164,7 @@ impl Stage {
     /// source of a stage's colour (#117): the strip's segments, the widget's segment line (its ■
     /// swatch), the tooltip's lines and the details' story all take it from here.
     #[must_use]
-    pub const fn colour(self) -> Rgb {
+    pub const fn colour(self) -> Paint {
         match self {
             Self::Claimed => colours::CLAIMED,
             Self::Working => colours::WORKING,
@@ -212,7 +212,7 @@ pub struct BarSegment {
     pub stage: Stage,
     pub start: Timestamp,
     pub end: Timestamp,
-    pub colour: Rgb,
+    pub colour: Paint,
     pub importance: u8,
 }
 
@@ -232,7 +232,7 @@ pub enum MarkKind {
 /// corner, labelled with how many times when more than once.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct BarCorner {
-    pub colour: Rgb,
+    pub colour: Paint,
     /// The count, when more than one.
     pub label: Option<String>,
     /// `#170 sent back 2 times`.
@@ -244,7 +244,7 @@ pub struct BarCorner {
 pub struct BarMark {
     pub kind: MarkKind,
     pub t: Timestamp,
-    pub colour: Rgb,
+    pub colour: Paint,
     pub name: String,
 }
 
@@ -273,7 +273,7 @@ pub struct Bar {
     pub pr: Option<u64>,
     pub style: Style,
     /// What it is drawn in: [`style_colour`] of its style and ticket.
-    pub colour: Rgb,
+    pub colour: Paint,
     /// How important it is, 0 to 15 (#108): [`colours::importance`] of its style. A packed column of the timeline takes its most important bar's colour.
     #[serde(default)]
     pub importance: u8,
@@ -634,7 +634,7 @@ fn between(start: Timestamp, end: Timestamp) -> String {
 /// waiting's, done stopped's; merged green), the spans between them strong.
 fn milestones(ticket: &Ticket) -> Vec<TipLine> {
     let mut lines = Vec::new();
-    let mut line = |what: &str, colour: Rgb, t: Option<Timestamp>| {
+    let mut line = |what: &str, colour: Paint, t: Option<Timestamp>| {
         if let Some(t) = t {
             let padded = format!("{what:<9}");
             lines.push(TipLine::coloured(what, colour).then(format!("{} {t}", padded.get(what.len()..).unwrap_or_default())));
@@ -938,7 +938,7 @@ mod tests {
             "in its own colour, labelled once"
         );
         assert_eq!((bar.start.to_string(), bar.end.to_string()), ("2026-10-31T03:53:22Z".to_owned(), "2026-10-31T04:28:58Z".to_owned()), "claim to merge");
-        let stages: Vec<(Stage, String, String, Rgb)> = bar.segments.iter().map(|s| (s.stage, s.start.to_string(), s.end.to_string(), s.colour)).collect();
+        let stages: Vec<(Stage, String, String, Paint)> = bar.segments.iter().map(|s| (s.stage, s.start.to_string(), s.end.to_string(), s.colour)).collect();
         assert_eq!(
             stages,
             [
@@ -1300,7 +1300,7 @@ mod tests {
                     saw_stop = true;
                 }
                 for segment in &bar.segments {
-                    let named: Vec<Rgb> = bar.tooltip_lines.iter().filter_map(|l| l.colour_of(segment.stage.name())).collect();
+                    let named: Vec<Paint> = bar.tooltip_lines.iter().filter_map(|l| l.colour_of(segment.stage.name())).collect();
                     assert!(!named.is_empty(), "{}: {:?} named in its tooltip: {:?}", bar.label, segment.stage, bar.tooltip);
                     assert!(named.iter().all(|c| *c == segment.colour), "{}: {:?} in {named:?}, its segment in {:?}", bar.label, segment.stage, segment.colour);
                     assert_eq!(segment.colour, segment.stage.colour());
@@ -1376,7 +1376,7 @@ mod tests {
         assert!(gone.marks.is_empty(), "{:?}", gone.marks);
         // Abandoned for good: a red dot at its bar's end.
         let left = every_bar(&rows).into_iter().find(|b| b.ticket == Some(45) && b.style == Style::Ticket).unwrap();
-        let given: Vec<(MarkKind, Timestamp, Rgb, &str)> = left.marks.iter().map(|m| (m.kind, m.t, m.colour, m.name.as_str())).collect();
+        let given: Vec<(MarkKind, Timestamp, Paint, &str)> = left.marks.iter().map(|m| (m.kind, m.t, m.colour, m.name.as_str())).collect();
         assert_eq!(given, [(MarkKind::GivenUp, left.end, FAILED, "#45 abandoned: m-6's session ended 2026-10-31T01:30:00Z")]);
     }
 
