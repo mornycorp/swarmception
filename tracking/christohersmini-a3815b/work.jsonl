@@ -62,3 +62,4 @@
 {"event":"sub.stop","note":"rc=0","sub":"ready-aec5926","t":"2026-11-13T18:47:55Z"}
 {"event":"submit","issue":164,"mr":170,"t":"2026-11-13T18:48:02Z"}
 {"event":"sub.start","name":"gate","note":"#170; capacity=3 free=10.0; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-170","t":"2026-11-13T18:48:11Z"}
+{"event":"merge","issue":164,"mr":170,"sub":"gate-170","t":"2026-11-13T18:48:33Z"}
