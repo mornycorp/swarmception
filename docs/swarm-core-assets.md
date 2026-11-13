@@ -9,6 +9,8 @@ them in Swarm Core, then `cargo xtask swarm-core bump` and `sync-assets`. The ga
 - `.claude/skills/NOTICE`
 - `.claude/skills/README.md`
 - `.claude/skills/THIRD_PARTY_NOTICES.md`
+- `.claude/skills/add-command/SKILL.md`
+- `.claude/skills/add-command/agents/openai.yaml`
 - `.claude/skills/complexity-analyzer/.gitattributes`
 - `.claude/skills/complexity-analyzer/.gitignore`
 - `.claude/skills/complexity-analyzer/SKILL.md`
@@ -92,6 +94,7 @@ them in Swarm Core, then `cargo xtask swarm-core bump` and `sync-assets`. The ga
 - `.github/ISSUE_TEMPLATE/bug.md`
 - `.github/ISSUE_TEMPLATE/task.md`
 - `.github/pull_request_template.md`
+- `docs/app-architecture.md`
 - `docs/lessons.md`
 - `docs/progress-docs.md`
 - `docs/swarm-protocol.md`
