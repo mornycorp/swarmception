@@ -14,6 +14,7 @@ timeline-engine = { workspace = true }
 swarmception-engine = { workspace = true }
 swarmception-domain = { workspace = true }
 swarmception-model = { workspace = true }
+swarmception-source = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }

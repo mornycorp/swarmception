@@ -2,7 +2,7 @@
      own now. Keep the heading the shared protocol links to: How many builds at once. -->
 # Development
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-06 · **Change:** minor (idle tile and X row constraint, #147; tests' fakes run by `sh`, the `fakes` step, #113) · **Target:** M1
+> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-11-13 · **Change:** minor (the `writes` step, #164; idle tile and X row constraint, #147; tests' fakes run by `sh`, the `fakes` step, #113) · **Target:** M1
 
 How to build, test and run Swarmception, and how many builds a machine takes.
 
@@ -58,6 +58,7 @@ docs/ci-contract.md, says which forms Swarm Core's gate calls and what it reads 
 | `build` | `cargo build --workspace --exclude xtask` | `--smoke` |
 | `layers` | `cargo xtask layers` | every form |
 | `fakes` | `cargo xtask fakes`: no Rust source writes a `#!` script or makes a file executable ([Fakes in tests](#fakes-in-tests)) | every form |
+| `writes` | `cargo xtask writes`: only `crates/source`'s `files` (the one atomic writer) and `process` (the one place a program starts) write a file or start a program, outside tests (#164) | every form |
 | `assets` | `cargo xtask swarm-core sync-assets --check` | every form |
 
 `ci` records its checkout in the target dir (`swarm_core::checkout::claim`) and refuses one

@@ -2,7 +2,7 @@
 //! crate, already in the lock through egui's text rasterizer), a binary PPM otherwise. What
 //! `--screenshot` and `ui.screenshot` write.
 
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 use std::path::Path;
 
 use egui::ColorImage;
@@ -27,17 +27,19 @@ impl Format {
     }
 }
 
-/// Saves `image` to `path`, as PNG when the path ends in `.png` and as a binary PPM otherwise.
+/// Saves `image` to `path`, as PNG when the path ends in `.png` and as a binary PPM otherwise:
+/// encoded here, written whole by the one file writer below the UI (#164).
 ///
 /// # Errors
 ///
 /// The file's I/O error, or the encoder's.
 pub fn save(path: &Path, image: &ColorImage) -> io::Result<()> {
-    let out = BufWriter::new(std::fs::File::create(path)?);
+    let mut bytes = Vec::new();
     match Format::of(path) {
-        Some(Format::Png) => write_png(out, image),
-        Some(Format::Ppm) | None => write_ppm(out, image),
+        Some(Format::Png) => write_png(&mut bytes, image)?,
+        Some(Format::Ppm) | None => write_ppm(&mut bytes, image)?,
     }
+    swarmception_source::files::write_atomic(path, &bytes)
 }
 
 /// `image`'s pixels as RGB bytes, row by row: the window is opaque.

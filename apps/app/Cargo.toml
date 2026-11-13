@@ -13,6 +13,7 @@ swarmception-engine = { workspace = true }
 swarmception-domain = { workspace = true }
 swarmception-model = { workspace = true }
 swarmception-automation = { workspace = true }
+swarmception-source = { workspace = true }
 serde_json = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]

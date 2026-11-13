@@ -16,6 +16,7 @@ use swarm_core::project::{Branches, GitHub, Labels, Limits, Proof, ReadyWatch};
 use swarm_core::{Hooks, Project};
 
 mod fakes;
+mod writes;
 
 /// What this swarm is.
 pub const PROJECT: Project = Project {
@@ -92,7 +93,7 @@ const LAYERS: &[swarm_core::layers::Entry] = &[
         package: "swarmception-source",
         layer: Some(2),
         kind: "L2",
-        summary: "reads a repo's tracking branch through git, with deadlines",
+        summary: "touches the outside: git with deadlines, the one file writer, the one process runner",
     },
     swarm_core::layers::Entry {
         package: "swarmception-domain",
@@ -141,6 +142,7 @@ fn main() -> ExitCode {
         Some((&"ci", rest)) => ci(&root, rest),
         Some((&"layers", rest)) => swarm_core::layers::run(&Ours, &root, rest),
         Some((&"fakes", rest)) => fakes::run(&root, rest),
+        Some((&"writes", rest)) => writes::run(&root, rest),
         // The swarm's commands: claim, event, gate, stack, land, prwatch, swarm-core, …
         Some((command, rest)) if swarm_core::serves(command) => swarm_core::run(&PROJECT, &Ours, &root, command, rest),
         _ => {
@@ -149,6 +151,7 @@ fn main() -> ExitCode {
             );
             println!("{}", swarm_core::layers::USAGE);
             println!("{}", fakes::USAGE);
+            println!("{}", writes::USAGE);
             for (_, usage) in swarm_core::COMMANDS {
                 println!("{usage}");
             }
@@ -290,6 +293,7 @@ fn steps(c: &Ci, scope: &[String]) -> Vec<(String, Vec<String>)> {
     }
     gate.push(("layers".into(), args(&["xtask", "layers"])));
     gate.push(("fakes".into(), args(&["xtask", "fakes"])));
+    gate.push(("writes".into(), args(&["xtask", "writes"])));
     gate.push(("assets".into(), args(&["xtask", "swarm-core", "sync-assets", "--check"])));
     let mut out: Vec<(String, Vec<String>)> = c.alone.iter().map(|t| (format!("alone {}", t.spec()), t.nextest_args())).collect();
     if c.doctests {
