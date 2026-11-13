@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 19: G33 done, the swarm's colours in both looks; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 20: G33 takes swarm-core's shared palette (#158); G34 opened, swarm-core's UI contract, six issues) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| 1 | [G34 The UI as swarm-core's contract has it](#g34-the-ui-as-swarm-cores-contract-has-it) | open | #165, #161, #160, #164, #162, #163 | 14–28 h |
 | — | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | done | #152, #154 | |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
 | — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
@@ -432,13 +433,43 @@ marked **Human:** with what is needed.
 - **Done** (#154, PR #156): both looks. A colour is a `Paint`, the theme's dark and light pair; the
   UI draws egui's look's (`factory_chip::drawn`, the tooltips' darkening gone), and `theme.set`
   builds the timeline in the window's look, which the shell sends when it changes.
-- **Measured:** 417 tests, `cargo nextest run --workspace` (2026-11-13); checked by eye on
-  mc-engine with `--light` and `--dark` (`docs/screenshots/light-look-*.png`).
+- **Done** (#158, PR #159; batch 20): swarm-core d4df5a2 (swarm-core#100), its theme the palette the
+  swarm's tools share: 22 tokens (gate and idle nudged to 4.5:1 on the new backgrounds), the
+  series and markers in place of range8, range32 with 11 entries nudged, `darker` edges, and
+  `ui::theme::apply` styling egui's visuals in the tokens, so the window, the Factory and the
+  timeline's background are the shared palette's. Waiting for merge is `link` (the new `accent`
+  carries no text); the Workers groups the series. Left to swarm-timeline: its scroller thumb and
+  ticks take the body text's colour, a white or black bar (swarm-timeline#254).
+- **Measured:** 417 tests, `cargo nextest run --workspace` (2026-11-13); 373 in `ci --changed` for
+  #159 (2026-11-13); checked by eye on mc-engine with `--light` and `--dark`
+  (`docs/screenshots/light-look-*.png`, `shared-palette-*.png`).
 - **Evidence:** `theme::tests`, `colours::tests::a_tickets_colour_is_range32s_pick_of_its_number`,
   `colours::tests::the_stages_are_the_tokens_named_for_what_they_mean`, engine
   `the_theme_is_data_a_command_returns`, `theme_set_builds_the_timeline_again_in_the_new_look`,
   `timeline::tests::built_in_the_light_look_every_colour_is_its_light_value`,
   `factory_pane::the_timeline_follows_the_windows_look`; `docs/screenshots/theme-colours-*.png`.
+
+## G34 The UI as swarm-core's contract has it
+
+- **Why:** a review against swarm-core's docs/app-architecture.md › The UI is a client and State on
+  disk (the owner's ask, 2026-11-13): the window's size and layout are the app's choice and differ
+  freely, but six of the contract's rules aren't met.
+- **Left**, in rank order:
+  1. **#165** A saved state from a newer version is refused, never read and written over
+     (`ui/src/saved.rs` reads it and skips what it doesn't know); a migration per earlier
+     version. 2–4 h.
+  2. **#161** The UI calls commands on workers: the Factory, Details and stats call the engine on
+     the UI thread and wait (`factory.rs`, `details.rs`, `factory_stats.rs`). 4–8 h.
+  3. **#160** Menus and shortcuts from the registry, greyed with the `enabled` check's reason: the
+     File and View menus (egui and macOS) are hand-coded `MenuAction`s. 3–6 h.
+  4. **#164** One atomic writer and the process module in the lowest layer that touches the
+     outside; the UI crate writes no file (`saved.rs`), and a check holds the rest to it. 2–4 h.
+  5. **#162** Words from a catalog, and no colour made in drawing code (the legend's `#5C5F70`,
+     black, white), with a check whose allow-lists only shrink. 3–5 h.
+  6. **#163** egui ids are typed salts (an enum's variant), not strings. 1 h.
+- **Evidence:** swarm-core d4df5a2's skeleton (`apps/{{app}}/src/window.rs`, `ui_state.rs`,
+  `crates/ui/src/draw.rs`, `shell.rs`, `jobs.rs`) beside Swarmception's `crates/ui` and `apps/app`.
+- **Estimate:** 14–28 agent-hours, in the six issues.
 
 ## G1 The ruler reads clock time
 
@@ -591,6 +622,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Batch 20: G33 gains the shared palette (#158); G34 opened (#160–#165) |
 | 2026-11-13 | minor | Batch 19: G33 done (#154); no gaps open |
 | 2026-11-13 | minor | Batch 18: G33 partial (#152; #154 open); swarm-core at 57fb6a2 (#150) |
 | 2026-11-06 | minor | Batch 17: G32 done (#147, swarm-timeline#233); no gaps open |
