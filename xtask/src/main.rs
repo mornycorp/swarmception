@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use swarm_core::changed::{self, Plan};
 use swarm_core::gate::rerun::Test;
-use swarm_core::project::{Branches, GitHub, Labels, Limits, ReadyWatch};
+use swarm_core::project::{Branches, GitHub, Labels, Limits, Proof, ReadyWatch};
 use swarm_core::{Hooks, Project};
 
 mod fakes;
@@ -36,6 +36,7 @@ pub const PROJECT: Project = Project {
     ready_watch: ReadyWatch::Stream,
     gate_tag: "",
     golden_binary: "swarmception-engine::golden",
+    proof: Proof::Ready,
 };
 
 /// The values of the pinned assets' own placeholders (`swarm-core sync-assets`) and the templates'

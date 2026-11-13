@@ -3,7 +3,7 @@
      `sync-assets --check` fails on a copy that differs. -->
 # The swarm protocol
 
-> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-04 · **Change:** minor (gating the same stack again after a failure is its rerun; `claim --take-over` takes over a stale claim and keeps its PR; `land` retargets a stacked PR onto `main` before merging its base) · **Target:** M1
+> **Last reviewed:** 2026-10-28 · **Last updated:** 2026-11-13 · **Change:** minor (corrections and a trim: a link, the earlier tracker's issue numbers, any number of swarms; dated notes and old history rows removed) · **Target:** M1
 
 How a swarm of agents builds Swarmception: the roles, the claim, the tracking timeline, the
 gates, the coordinator's loop and the periodic full gate. Every swarm that shares Swarm Core
@@ -13,7 +13,9 @@ repo's `cargo xtask`. This repo's own parts (what each machine needs, its capabi
 kinds, what its CI runs) are in [swarm.md](swarm.md), and the rules every agent follows in
 [`AGENTS.md`](../AGENTS.md).
 
-Issue numbers name their project: `sc#n` is mornycorp/swarm-core's issue n. This repo's own issues are
+Issue numbers name their project: `sc#n` is mornycorp/swarm-core's issue n; a number up to 20
+(`sc#3` to `sc#20`) is its earlier tracker's, from before 2026-10-30, and names no GitHub issue.
+This repo's own issues are
 [mornycorp/swarmception](https://github.com/mornycorp/swarmception/issues).
 
 ## Roles
@@ -37,15 +39,50 @@ not by talking to each other:
   log while it works. A failure queues the event in the clone's git directory, and the next send
   (or `cargo xtask event flush`) sends it.
 
+## Standing rules
+
+The owner's directions and the swarms' lessons that hold for every agent, coordinator or worker
+(swarm-core#29):
+
+- **Product first; tooling when it hurts twice**. Swarm tooling or process
+  work only after the same problem has cost twice, or when it blocks product work. Otherwise the
+  swarm's time goes to the product.
+- **"Wind down" means finish**. Finish the unfinished work of every issue you
+  hold, through submit and merge, and claim nothing new. Never park a claimed issue.
+- **Decide, don't ask**. A call with precedent, in the product
+  the project follows or in this protocol, is the coordinator's: it decides, records the decision
+  on the issue and reports it afterwards. So is topping workers up with issues it filed. A new
+  kind of `unsafe`, FFI or hook still goes to the owner.
+- **A heavy job run by hand waits for an idle gate**. A measurement or sweep
+  that takes much of the machine's memory or GPU starts only while no gate runs (`cargo xtask
+  lock show`: the machine gate lock is free), samples rather than sweeps, fits a 15-minute budget
+  (longer is the coordinator's call) and frees what it took at once. A 104-minute sweep holding
+  19.5 GB failed a gate with os error 1450.
+- **A quiet gate log is not a dead gate** (2026-11-03). A gate whose log stops mid-step runs until
+  its process ends (its task's notification, its `.rc`): never restack or touch the gate's
+  worktree under it.
+- **Stopping a background shell on Windows leaves its children** (2026-10-29). Claude Code's
+  TaskStop ends the shell, not the cargo, xtask, nextest or watcher scripts it started: kill the
+  tree by PID (`taskkill /T /F /PID <pid>`) and check that nothing is left.
+- **Long runs go to a log, not under a monitor** (2026-11-04). A Claude Code Monitor stops its
+  command at its timeout, 30 minutes at most: a claim that runs the periodic full gate, `ready`
+  and `ci` run in the background with their output in a log you read as it grows (Claude Code's
+  `run_in_background`, which wakes you when it ends). A watch that never ends (`prwatch`) may run
+  under a monitor, armed again when the monitor ends.
+- **Squash onto the merge base** ([lessons.md](lessons.md), lesson 15):
+  `git reset --soft $(git merge-base HEAD origin/main)`, or reset to `origin/main` only right
+  after rebasing onto that same `origin/main`. A squash onto a `main` the branch wasn't rebased
+  on reverts what `main` gained since.
+
 ## Starting a worker
 
 **How many** (owner, 2026-10-19; measured in
 [development.md › How many builds at once](development.md#how-many-builds-at-once)): at most
 **three workers per swarm** on the owner's desktop (32 GB; it runs two builds well and fails at
 four), plus other machines' own. The coordinator starts a new worker only while
-`cargo xtask capacity` shows room for another build, its own gate counted. The two swarms share
-that desktop: `capacity` counts every `cargo` and `rustc` on the machine, either swarm's, so it
-arbitrates between them.
+`cargo xtask capacity` shows room for another build, its own gate counted. Swarms that
+share a machine share its room: `capacity` counts every `cargo` and `rustc` on the machine,
+any swarm's, so it arbitrates between them.
 
 Each worker is a fresh agent session in its **own working copy** (an extra clone, or a
 `git worktree` where the project keeps them, such as `git worktree add ../swarmception-<name> main`;
@@ -73,16 +110,22 @@ worktree of its own to the branch). On a machine that runs the full gate (docs/s
 Capabilities, full-gate), the claim then runs the periodic full gate of main when it is due,
 with your issue already held: let it finish. If main fails it for the change's cause, it files a
 main-red issue and claims it for you, and releases your task's claim: work on that instead. Run
-the claim in the foreground, or in the background with a monitor on its output, never piped
-through tail or head, so you see its lines as it prints them.
+the claim in the foreground, or in the background with its output in a log you read, never under a
+monitor that stops it at a timeout and never piped through tail or head, so you see its lines as it
+prints them.
 When it prints `fullgate: <sub> won the race for <commit>`, tell the owner at once: "My turn for
 the periodic full gate of main (`<commit>`): the whole `ci`, about <n> min." When it ends, tell
 them "Full gate done: passed." or "Full gate done: failed (`<cause>`), filed `main-red` #<n>;
 working on that instead." Do the work with tests. Your
 gate is `cargo xtask ci --changed` (it becomes the full `cargo xtask ci` when its plan says the
-change reaches everything). Before each run that builds, run `cargo xtask capacity`: when it
+change reaches everything). Under the project's batch proof ([What proves a
+change](#what-proves-a-change)), `ready` runs it without the tests the coordinator's full gate
+runs for the batch: run those of what you are building yourself, once. Before each run that
+builds, run `cargo xtask capacity`: when it
 suggests 0 more builds, iterate with `cargo test -p <crate>` or wait a few minutes and check
-again, rather than start another build. Run `cargo xtask ci --changed`, check UI changes with the
+again, rather than start another build. On a machine where the coordinator gates, cap every
+build's jobs: `CARGO_BUILD_JOBS=<n>`, `<n>` from capacity's `worker builds:` line
+(docs/swarm-protocol.md › Parallel agents). Run `cargo xtask ci --changed`, check UI changes with the
 snapshot example, fill in the PR description's Progress section, then submit with
 `cargo xtask ready <m> --agent <your instance id>`: it refuses a PR whose branch
 holds no work, with no commits beyond its base, only its claim commit or an empty diff (
@@ -96,19 +139,26 @@ when it moved during the gate, it rebases again and pushes without a second gate
 diff is unchanged, gates again if it changed, and stops before pushing on a conflict, naming the
 files (resolve them and run ready again). Then it pushes, marks the PR ready for review (its
 checks start) and logs `submit`. Do not merge.
+Keep your PR a draft until then: `ready` is what marks it ready, never `gh pr ready` or the button.
 From your first submit on, watch your PRs with `cargo xtask prwatch --agent <your instance id>`
 (under your harness's monitor, so each line it prints reaches you; else as a background
 process), and run it with `--once` whenever you wake. Act on what it says at once: a merged base
 means rebasing what is stacked on it; a conflict, failed checks or a new comment means you have
 work (docs/swarm-protocol.md › Watching your PRs).
-Then keep going (owner, 2026-10-23):
+Then keep going:
 1. Pick the next open, unclaimed issue (docs/swarm-protocol.md › Picking work › The next
    issue). Skip `status::blocked`, `needs::human`, the capabilities this machine lacks and any
    label the project holds back (docs/swarm.md). Take them in the project's order: `sync`
    issues first.
-2. Claim it. If `claim` refuses because someone holds it, pick another.
-3. Work it and submit it as above.
-4. Repeat until no open, unclaimed issue is left. Then, once your last PR has merged and before
+2. If it is a different task from the one you just finished (another area of the code, not a
+   follow-on that builds on your last change), don't claim it: end your turn with
+   `next: #<n>, a different task: a fresh context` and wait. The coordinator clears your
+   context and sends you its brief, or starts a fresh worker for it.
+   A follow-on in the same code you take in this session: your harness compacts the history as
+   it grows, so a long context is no reason to stop.
+3. Claim it. If `claim` refuses because someone holds it, pick another.
+4. Work it and submit it as above.
+5. Repeat until no open, unclaimed issue is left. Then, once your last PR has merged and before
    you remove your last worktree, end the session with `cargo xtask finish --agent <your
    instance id> --note "no unclaimed issues left"` and stop (docs/swarm-protocol.md › Ending a
    session).
@@ -117,6 +167,22 @@ Then keep going (owner, 2026-10-23):
 **Workers that keep going don't need starting**. A coordinator's harness may let it start
 sessions only in turns its owner begins, so the coordinator starts a worker only to fill an empty
 slot, and redirects running workers by message. `claim` settles races between workers.
+
+**A fresh context for a different task** (swarm-core#29). A worker's history
+helps a follow-on in the same code and hinders a different task: it costs every turn, and what it
+remembers of the last area misleads it in the next (one worker went through four unrelated
+areas in one session; another reached about 2,200 messages). So, at a task boundary and never
+mid-task:
+- **The worker notices it:** its next issue is a different task, so it stops and names it (step 2
+  of the instruction above). It can't clear its own context.
+- **The coordinator clears it:** it clears the worker's session (the Claude Desktop app's
+  `clear_session`, which works in turns the coordinator didn't start, where starting a session
+  doesn't) and sends the instruction above with the issue's brief; where its harness can't clear
+  one, the worker runs `finish` and the coordinator starts a fresh worker in its slot.
+- **A similar follow-on keeps its session:** its history helps, and the harness's
+  auto-compaction keeps it in bounds. There is no compaction to call.
+- **Nothing lives only in a worker's history:** whatever a task needs is in its issue, its brief
+  or the shared notes.
 
 A worker's `finish` removes its worktrees and their `target/agent-*` when it is done. How many
 run at once is the rule above: at most three on the owner's desktop, and only while
@@ -141,7 +207,7 @@ owner what you skip for want of a capability, with its fix, rather than pass the
 2026-10-28 a session skipped every issue that needed a tool the owner set up in ten minutes once
 asked.
 
-**The next issue** (owner, 2026-10-23), for a worker that keeps going: the order is the
+**The next issue**, for a worker that keeps going: the order is the
 project's, and its [swarm.md](swarm.md) gives it when it differs. Every project takes `sync`
 issues first. Then a project may take the oldest, skipping `code-health` while the owner's
 pause stands, or the highest-ranked.
@@ -170,8 +236,8 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
      issue is held while it runs (below). It prints the branch and PR, and switches the worktree
      it ran in to the branch when that worktree is clean and isn't the primary checkout (`--no-switch` to stay; otherwise it says how). `--slug` names the branch; run it again to
      finish a claim that failed half way. It notes the open needs of the issue it claims
-     ([Watching your PRs](#watching-your-mrs)).
-   - **Then the periodic full gate** (owner, 2026-10-22): on a machine with the
+     ([Watching your PRs](#watching-your-prs)).
+   - **Then the periodic full gate**: on a machine with the
      `full-gate` capability ([swarm.md › Capabilities](swarm.md#capabilities)), once it holds the
      issue, it runs the full gate of `main` when it is due (`main` moved since the last
      passed one, and that pass is over an hour old; one agent at a time): the whole
@@ -179,7 +245,7 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
      `main-red` issue and claims it for you, and releases your task's claim (its draft PR closed,
      the label off, `release --reason main-red`): work on that instead. `cargo xtask fullgate
      --check` says whether one is due ([The periodic full gate](#the-periodic-full-gate)).
-     - **Tell the owner** (owner, 2026-10-22): it takes a whole `ci`'s time (10 to 15
+     - **Tell the owner**: it takes a whole `ci`'s time (10 to 15
        minutes, say; [swarm.md](swarm.md) gives the project's own) and holds the
        machine gate lock, so don't go quiet. When the claim prints `fullgate: <sub> won
        the race for <commit>`, say at once **"My turn for the periodic full gate of main
@@ -187,8 +253,9 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
        passed."** or **"Full gate done: failed (`<cause>`), filed `main-red` #<n>; working on
        that instead."**
      - **Run the claim where its output reaches you as it prints:** in the foreground, or in the
-       background with a monitor on its output. Never pipe it through `tail` or `head`, which
-       hold every line back until the claim ends.
+       background with its output in a log you read; never under a monitor, which stops it at
+       its timeout ([Standing rules](#standing-rules)). Never pipe it through `tail` or `head`,
+       which hold every line back until the claim ends.
    - Never claim from a listing you made earlier: four claims raced on 2026-10-18. If two still race, the earlier PR keeps it: the command checks again once its
      PR exists, and closes its own if it lost.
    - **Two claims on one branch** (every agent derives the same `<n>-<slug>`): a PR from that
@@ -208,13 +275,20 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
 3. **Taking over.** A claim is stale, and may be taken over, only when the coordinator says so
    or it has been idle for 24 hours. The coordinator's say-so is
    `cargo xtask event release --issue <n> --of <the holder's instance> --reason stale` (or a
-   `released: <name>, …` comment), with a comment naming who takes it over. Idle means no event of
-   its holder on the issue, no claim comment and no commit on its branch for 24 hours (step 6).
+   `released: <name>, …` comment), with a comment naming who takes it over. A holder that logged
+   `stop` on the issue after its last `claim` or `work` holds nothing: its claim is free at once.
+   Idle means no event of its holder on the issue, no claim comment and no commit on its branch
+   for 24 hours (step 6).
    - `cargo xtask claim <n> --agent <your instance id> --take-over` takes it and keeps its work:
      it adopts the issue's open PR and its branch, and checks out the branch's head in your
      worktree with the commits kept. It logs `release --of <the old instance>` (unless that holder
      is released already), comments `released: <old name>, taken over by …`, and makes the claim:
-     the label, `claimed: <your name>, PR #<m>`, `claim` and `work`. It runs no periodic full gate.
+     the label, `claimed: <your name>, PR #<m>`, `claim` and `work`. It runs no periodic full gate,
+     and a red `main` doesn't hold it: the work goes on on a branch that exists, and nothing new
+     starts from `main`.
+   - A local branch of that name with commits origin's lacks is refused, before anything is
+     posted: taking it over would push the old holder's unpushed work, or lose it. Push or drop
+     those commits, then take over again.
    - A `status::blocked` label comes off when every issue its hold waits on is closed: those the
      `Needs` line names, and the newest comment saying `Blocked on …` or `Waiting for …`.
      Otherwise it stays, and the takeover says why. A held issue is idle by design: an idle
@@ -229,6 +303,14 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
    person: `needs::human`. `cargo xtask ci --changed` warns when another agent holds your
    branch's issue (`cargo xtask claim --check`); the optional `scripts/hooks/pre-push` hook does
    it before each push.
+   - **Branch every PR from `main`** (swarm-core#29), as `claim` does. Stack
+     on another open PR (rebase your branch onto its branch, then `ready --onto <its branch>`)
+     only when your change needs that PR's code to build or work, and say in your PR's
+     description what code of the other it needs. PRs that merely touch the same files stay on
+     `main`: ordering ready PRs is the coordinator's job (`stack` composes each gate's batch),
+     and when `stack` stops on a textual conflict, the second PR's author rebases once after the
+     first lands. A chain makes each PR wait on every gate of the PRs below it
+     ([lessons.md](lessons.md), lesson 13).
 5. **Finish.** Run the checks in AGENTS.md §5, keep the technical docs the change touches
    current, then fill in the PR description's **Progress** section (template **Default**): what
    you measured, the gap it moves, what's still open, and anything the coordinator could miss
@@ -237,8 +319,8 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
    PR stacked on another's branch), stopping on a conflict for you to resolve, runs `cargo xtask
    ci --changed` on the rebased tree, checks `main` once more (a move during the gate: it rebases
    again, pushing without a second gate when the PR's diff is unchanged, and stopping before the
-   push on a conflict), pushes, marks the PR ready for review (which starts its checks:
-   the workflows run on `ready_for_review`) and logs `submit`. Its gate:
+   push on a conflict), pushes, marks the PR ready for review (no GitHub Actions run: CI is
+   local) and logs `submit`. Its gate:
    - **Its own sub-agent**: it logs each gate it runs as `ready-<the head's short
      sha>` (`sub.start --name ready`, then `sub.stop` with `rc=0`, or a failure's
      `rc=<n>; cause=<cause>; step=<step>`: the exit code, the cause read from the log as the gate
@@ -272,17 +354,26 @@ request. Always pass `--repo mornycorp/swarmception` to gh.
    Rebasing just before submitting puts conflicts with you, who know the change, rather
    than in the coordinator's stack, and makes your gate test what will be stacked. By hand: the
    same steps, then `gh pr ready <m> --repo mornycorp/swarmception`. **Workers do not
-   merge:** the coordinator rebases, runs the local gate (a smoke, `cargo xtask ci --smoke`, for a
-   change the docs and tooling gates don't take) and merges in dependency order; the
-   periodic full gate tests `main` after ([The coordinator's loop](#the-coordinators-loop)). So
-   your own `cargo xtask ci --changed` before ready is what proves your change before it merges
-   (owner, 2026-10-22): the whole gate for the packages your change affects, their
-   dependents and the packages that read a file it changed, doctests included; it becomes the
-   full `cargo xtask ci` when its plan says the change reaches everything. The merge closes the
+   merge:** the coordinator rebases, runs the local gate and merges in dependency order
+   ([The coordinator's loop](#the-coordinators-loop)). For a change the docs and tooling gates
+   don't take, that gate depends on the project's proof ([What proves a
+   change](#what-proves-a-change)):
+   - **The ready proof:** it is a smoke (`cargo xtask ci --smoke`), and the periodic full
+     gate tests `main` after. So your own `cargo xtask ci --changed` before ready is what proves
+     your change before it merges: the whole gate for the packages
+     your change affects, their dependents and the packages that read a file it changed,
+     doctests included. It becomes the full `cargo xtask ci` when its plan says the change
+     reaches everything.
+   - **The batch proof:** it is the full gate of the stack, which proves every PR in it (sc#53).
+     Your `ready` is the same `ci --changed` without the tests that gate keeps (the project's
+     `ready_env`): it shows that the change builds, lints and passes the rest. Run the left-out
+     tests of what you built yourself, once.
+
+   The merge closes the
    issue, and the coordinator removes its label (`cargo xtask tidy <n>`). From your first
    submit, watch your PRs with `cargo xtask prwatch --agent <id>` (`--once` on every wake) and act
    at once: a merged base means rebasing what is stacked on it
-   ([Watching your PRs](#watching-your-mrs)).
+   ([Watching your PRs](#watching-your-prs)).
 6. **Give up cleanly.** Comment what you learned, remove `status::in-progress`, close the draft
    PR. A claim with no activity for 24 hours (no events on the issue, no claim comment, no new
    commits) may be taken over (step 3).
@@ -337,6 +428,29 @@ section's rule holds.
   worktree, branch and target dir of its own; `cargo xtask capacity` says whether the machine
   takes another build and `--helper <name>` sets one up
   ([Helpers in worktrees](#helpers-in-worktrees)).
+- **A gate has priority** where the project turns it on (sc#41, `Hooks::gate_priority`; off by
+  default, when `capacity` counts no gate and `ready` never waits): while a gate holds the
+  machine-wide gate lock (from before it waits for room until its `ci` ends), `capacity`
+  reserves one build for it (a build's cores and memory) unless its build is counted already (a
+  busy target dir in its worktree), and says so (`gate:` lines). The gate's own check, from the
+  worktree its lock names, doesn't count itself. So build helpers, the periodic full gate's
+  claim and a project's own builds that ask `capacity` (`capacity::read_with`) yield to it, and
+  `ready` waits before each `ci`, before it takes its test-run slot, while a gate holds the lock
+  and there is no room, saying `a gate has priority` (every minute, at most 30, then it goes
+  ahead).
+- **Cap your builds' jobs where the coordinator gates** (sc#40): on a machine where the
+  coordinator gates, workers cap their builds' jobs, so a gate keeps memory for its own. A build
+  left alone takes every core and whatever memory it gets, and `gate` sizes its build from the
+  memory left: measured 2026-11-06, gates took 11 to 23 minutes with the machine mostly free and
+  28 to 44 beside two workers' full-width builds, one down to 3.3 GB free. So set
+  `CARGO_BUILD_JOBS=<n>` on every build, test and `ci` you run there, `<n>` the jobs per worker
+  build `cargo xtask capacity` suggests (its `worker builds:` line, 4 unless the machine sets
+  its own cost of a build): `CARGO_BUILD_JOBS=4 cargo test -p <crate>`. `ready` does it for its
+  own builds where the project turns it on (`Hooks::worker_build_jobs`, off by default), on a
+  machine with the `full-gate` capability ([swarm.md › Capabilities](swarm.md#capabilities)),
+  and says so; a `CARGO_BUILD_JOBS` you set always wins. Tooling can't cap a `cargo test` or
+  `cargo build` you run yourself: this rule does. The exception is a measurement window the
+  coordinator calls. `gate` keeps sizing its own build from free memory.
 - **Leave the owner's checkout alone.** On a machine the owner builds on, the primary checkout
   stays on `main` for the owner's incremental builds: never check out a branch, commit, rebase,
   reset or stash there, and never build in it with your target dir. Work in a worktree; read the
@@ -387,18 +501,18 @@ happens:
   another project is named in full, `group/repo#n` (`mornycorp/swarm-core#4`): a change
   here that waits on a Swarm Core PR says so, and `prwatch` and `claim` read that project's issue
   and PRs (two more calls a poll for each such project). A short name (`ns#381` from another project) is no need.
-- A Claude Code worker runs it under Monitor (each line wakes it); others as a background
-  process. Never pipe it through `tail` or `head`: they print nothing until the watch ends, and
+- A Claude Code worker runs it under Monitor (each line wakes it), armed again when the
+  Monitor ends at its timeout; others as a background process. Never pipe it through `tail` or `head`: they print nothing until the watch ends, and
   it doesn't (2026-10-25: a merge sat unseen for hours that way).
 
 What each line asks of you:
 
 | Line | Do |
 |---|---|
-| `#m merged: rebase what is stacked on it` | rebase the next PR of the stack onto `main` at once (`git rebase --onto origin/main <the old base's tip>`), gate, push (its checks run again) |
+| `#m merged: rebase what is stacked on it` | rebase the next PR of the stack onto `main` at once (`git rebase --onto origin/main <the old base's tip>`), gate, push |
 | `merge state: … -> dirty` | a conflict: rebase onto `main`, resolve, gate, push |
 | `merge state: … -> behind` | nothing: the coordinator brings it up to `main` at merge |
-| `checks: failure` | read the failed job's log (`gh run view --log-failed`); fix it if it is yours, else say whose it is on the PR (and file it) |
+| `checks: failure` | GitHub runs no workflows, so a check is something outside the swarm (an app, a hand-added workflow): say so on the PR and tell the owner |
 | `#m sent back (<when>): <why>; logged \`work …\`` | the coordinator sent it back: rework it (the `work` is logged), gate, push, and `ready` again |
 | `n new comments` | read them: a question (answer it), or a send-back's reasons (`prwatch` says `sent back` itself and logs its `work`; if it didn't, log `work --issue <n> --mr <m>` as you start) |
 | `#n closed (needed by #m): start what waited on it` | rebase `#m`'s branch onto `main` and build what waited on `#n` |
@@ -446,13 +560,13 @@ late fix) stops the landing, and the PR waits for the next gate.
 ## Helpers in worktrees
 
 A worker (or the coordinator) may hand a piece of its issue to a helper sub-agent working in a
-worktree of its own, where that speeds it up on its machine (owner, 2026-10-18).
+worktree of its own, where that speeds it up on its machine.
 
 - **When:** independent pieces only: gating one commit while working on the next; disjoint parts
   of one issue (the engine and the UI); research, measurement or snapshot sweeps. A second issue
   is not a helper's job: that is a worker, started with `--parent`, that claims it with
   `cargo xtask claim`.
-- **Two kinds** (owner, 2026-10-18):
+- **Two kinds**:
   - **Build helpers** (`--kind build`, the default) compile and test: a gate, the other half of an
     issue. Each is a build on the machine, so `cargo xtask capacity` must have room for it.
   - **Read helpers** (`--kind read`) build nothing: research, review, reading logs, another
@@ -468,7 +582,7 @@ worktree of its own, where that speeds it up on its machine (owner, 2026-10-18).
   about one per 8 free cores (a running build holds 8) and 5 GB of free memory, at most 3, and
   none with under 20 GB of disk free or a figure it couldn't read; each number is printed with
   its basis. A machine unlike the owner's desktop sets its own 8 and 5 with
-  `SWARM_CORES_PER_BUILD` and `SWARM_GB_PER_BUILD` (whole numbers, read by both swarms): on
+  `SWARM_CORES_PER_BUILD` and `SWARM_GB_PER_BUILD` (whole numbers, read by every swarm): on
   2026-10-30 a 12-core Mac took one build by the 8, and a gate waited 35 minutes behind a worker
   that was only editing between builds. The 5 GB is measured ([development.md › How many builds at once](development.md#how-many-builds-at-once)): on the
   owner's 32 GB desktop, two gates at once passed and four filled the memory and failed. It
@@ -577,8 +691,14 @@ On each finished pull request:
       tree with the stacked commit's. The same tree, on a base with nothing of `main` the gate
       didn't test, lands: `!N moved since stack (old → new) but its tree is the one gated
       (<how>): landing`, where `<how>` says whether it was restacked or the worker's own commit
-      is that tree already, and the stacked commit is pushed over the worker's. A move onto a newer `main`, or
-      to another tree (a new commit, a conflict), stops as before. An older record names
+      is that tree already, and the stacked commit is pushed over the worker's. A branch a worker
+      rebased onto a **newer `main`** lands without a re-gate when three things hold: its own
+      commits' patch-id is the stacked commit's, applied onto what the gate tested they are the
+      gated tree, and the newer `main` changes none of the PR's files. The stacked commit is then
+      pushed over it (`#N moved onto a newer main (old → new) but its patch is the one gated:
+      landing the gated commit`), and step 5's check holds what merges to the gated change. A
+      changed patch, a conflict, a newer `main` that touches the PR's files, or another tree (a
+      new commit) stops, saying which. An older record names
       no base to restack onto, so a moved branch in it stops. And the PR must be open: GitHub
       closes a PR whose base branch is deleted, so one stacked on the PR below it (its base that
       PR's head branch) was closed when that one merged, before `land` retargeted (on 2026-11-03
@@ -592,14 +712,17 @@ On each finished pull request:
       2026-10-19 a PR merged without its fix, whose push hadn't landed); a push that didn't
       land is tried again, three times in all;
    3. it notes the gate's `CI summary` on the PR (from that log; `--summary` to pass one),
-      and refuses a summary that isn't a pass; then it cancels the workflow runs of the PR's head
-      still queued or running, which the gate replaced. Then it retargets onto `main` every open
+      and refuses a summary that isn't a pass. Then it retargets onto `main` every open
       PR whose base is this PR's source branch (`gh pr edit <n> --base main`), the stack's later
       PRs first, so deleting that branch once it merged closes none of them; a retarget that fails
       stops it before the merge;
    4. it waits until the PR is mergeable; one `behind` `main` is rebased on the server, and a
       branch the server can't rebase (merge commits), or one `stack` merged its base into, gets
-      `main` merged in and pushed instead (semi-linear history needs `main`'s head);
+      `main` merged in and pushed instead (semi-linear history needs `main`'s head). It assumes
+      `main` doesn't require branches to be up to date (no required status checks), so a PR
+      stacked on one the server rebased merges as it was gated: git takes the base's two copies
+      as one change. A rule that requires up-to-date branches would make GitHub report `behind`
+      there, and the server's rebase of such a PR is untested (sc#38);
    5. it merges with a merge commit at the head it saw, asking again while GitHub refuses (three
       tries), with
       `[skip ci]` in the merge commit when every file the PR changes is Markdown. Before each
@@ -613,15 +736,20 @@ On each finished pull request:
       hadn't happened closed its PR).
 
    Then it closes the gate (`gate --stop`, which drops the lock). A rerun after a failure goes on
-   from the PR that stopped (an already pushed branch isn't pushed again). `main`'s own workflows
-   (Linux and the web build) run after each code merge and are watched.
-   - **A red gate**. Read the failure's cause (the gate prints it, and its `.rc`
+   from the PR that stopped (an already pushed branch isn't pushed again). Nothing runs on
+   GitHub after a merge: CI is local.
+   - **A red gate**. **Where the project turns it on** (`Hooks::gate_reruns`, sc#39; `--rerun`
+     for one run elsewhere), **the gate reruns once by itself**: in the same invocation, as
+     `gate-<n>-rerun`, a failure only at the tests that names its failed tests (each alone, as
+     `--rerun-failed` below does), else a transient failure (below) whole, both results printed;
+     a pass lands as `gate-<n>-rerun`, and `--no-rerun` turns it off for a run. When it still
+     fails, or the project doesn't turn it on, read the failure's cause (the gate prints it, and its `.rc`
      and `sub.stop` name it). A project's own causes (`Hooks::extra_causes`, read from the log
      before the shared ones) are `gpu`, the GPU or the desktop under load, and `python`, no Python
      for its oracle tests; a project without them never sees them.
      - **transient** (`memory`, `link`, `toolchain`, `git-temp`, and a project's `gpu`):
-       `--retry-transient` reruns the
-       whole gate once, as `gate-<n>-rerun`. `git-temp` includes git's `fatal:` about one of the
+       `--retry-transient` reruns the whole gate once, as `gate-<n>-rerun` (where the project
+       turns reruns on, the gate has done that itself). `git-temp` includes git's `fatal:` about one of the
        testkit's temporary repositories (`swarm-test-*`) inside a test: a fixture, not the
        change;
      - **the gate machine's setup** (a project's `python`): a rerun fails the same way, so none is
@@ -648,14 +776,14 @@ On each finished pull request:
        starts it as `rerun of gate-<n>: …` itself, so a flake it answers sends no PR back. A new
        push, another PR, a moved `main` or a gate of another stack between makes it a gate of
        its own; so does reusing gate-<n>'s own `--sub`.
-   - **Stop on red**. While `main`'s CI is red, nothing merges and
-     no work starts from `main`. GitHub CI runs once a day on `main`, not on pushes or PRs (owner,
-     2026-10-31; [swarm.md › What CI runs](swarm.md#what-ci-runs)), so the coordinator checks the
-     latest daily run each batch. On a red one it files a `main-red` issue at once (what broke, the
-     workflow run, the merges since the last green run), so every agent holds; fixes forward or reverts the batch that broke it,
-     through the same local gate; and closes the issue when `main` is green again. The periodic
-     full gate files one the same way when `main` fails it ([The periodic full
-     gate](#the-periodic-full-gate)). While one is open, `cargo xtask claim` refuses to start new work (it names the issue), but for the
+   - **Stop on red**. While `main` is red, nothing merges and
+     no work starts from `main`. CI is local, for the coordinator and every worker: GitHub runs
+     no workflows (owner, 2026-11-05; [swarm.md › What CI runs](swarm.md#what-ci-runs)). The
+     periodic full gate files a `main-red` issue when `main` fails it ([The periodic full
+     gate](#the-periodic-full-gate)), and the coordinator files one at once when a local gate
+     shows `main` itself broken (what broke, the gate's log, the merges since the last green
+     gate), so every agent holds; fixes forward or reverts the batch that broke it, through the
+     same local gate; and closes the issue when `main` is green again. While one is open, `cargo xtask claim` refuses to start new work (it names the issue), but for the
      coordinator's own `--no-pr` claims and a claim of the `main-red` issue itself, `cargo xtask
      land` refuses to merge but for the fix (the land step above), and `claim
      --check` (`ci --changed`, the pre-push hook) warns that a failure may not be the branch's own.
@@ -664,17 +792,19 @@ On each finished pull request:
      `.claude/worktrees/gate` inside it), never in the owner's checkout; after each merge the coordinator fast-forwards the
      owner's checkout when it is on `main` with no tracked changes ([Parallel
      agents](#parallel-agents)).
-   - **Four kinds of gate** (owner 2026-10-21; the smoke), and a fifth for a PR readied
+   - **Four kinds of gate** (the smoke), and a fifth for a PR readied
      without its run (changed): `cargo xtask gate` picks one from
      the stack's change against `origin/main` and `ci --changed`'s plan for it:
      The project's planner (`Hooks::gate_kind`; [swarm.md › The gate's kinds
-     here](swarm.md#the-gates-kinds-here)) decides docs, tooling or full; the coordinator runs
-     full as the smoke unless `--full` forces it. What each kind takes is the project's:
+     here](swarm.md#the-gates-kinds-here)) decides docs, tooling or full. Under the ready proof
+     the coordinator runs full as the smoke unless `--full` forces it; under the batch proof it
+     runs the full gate ([What proves a change](#what-proves-a-change)). What each kind takes is
+     the project's:
      - **docs:** only what the planner counts as docs (only Markdown, say; a project
        may take its templates and scripts too); runs `cargo xtask ci --changed --base origin/main`;
      - **tooling:** only what the planner counts as tooling, and the plan builds no
        crate but xtask (no product crate depends on it); runs `ci --changed --base origin/main` too;
-     - **smoke** (owner, 2026-10-22): anything else (a product crate,
+     - **smoke** (the ready proof's): anything else (a product crate,
        the workspace manifest, `.config/nextest.toml`, `clippy.toml`, a new
        top-level file; a planner may judge a `Cargo.lock` change by the crates it reaches), and
        whenever it is unsure (no plan, no change seen); runs `cargo xtask ci
@@ -687,8 +817,10 @@ On each finished pull request:
        it on purpose: a stale `#[expect]` exemption where two PRs meet is a stack's most common
        failure, and no test run catches it. The whole `ci` moved to [the periodic full
        gate](#the-periodic-full-gate) of `main`.
-     - **full:** `--full` forces it: the whole `cargo xtask ci`. **Only when the author's own
-       run can't speak for the gating machine** (owner, 2026-10-23): its
+     - **full:** the whole `cargo xtask ci`. **Under the batch proof** (sc#53), every stack
+       that needs it, or whose planner is unsure: its notes say `kind=full (batch proof;
+       <why>)`. **Under the ready proof**, `--full` forces it, **only when the author's own
+       run can't speak for the gating machine**: its
        `ci --changed` ran on another platform (a Mac or Linux worker: `cfg(windows)` code is then
        only linted, by `clippy-windows`, never tested), its plan left out tests the change
        reaches, or its tests fail there for reasons of their own. Otherwise, however large the
@@ -712,14 +844,12 @@ On each finished pull request:
      wait for the full gate). The kind goes in the gate's notes (`capacity=<n> free=<GB>; kind=<kind>
      (<why>)` in `sub.start`, `kind=<kind>` in a failure's and a pass's `sub.stop`) and its `.rc`.
      `--merge <branch>` (repeatable) gates branches merged onto `origin/main`
-     instead of the stack. `main`'s daily CI and the periodic full
-     gate stay the backstops.
-   - **Docs-only merges skip main's workflows** (owner 2026-10-16): a PR whose every file
-     is Markdown (the progress folds, docs fixes) is merged with `[skip ci]` in its merge commit.
+     instead of the stack. The periodic full gate stays the backstop.
+   - **Docs-only merges**: a PR whose every file
+     is Markdown (the progress folds, docs fixes) is merged with `[skip ci]` in its merge commit,
+     inert now that GitHub runs no workflows.
      Its gate must pass, and a doc a test reads tests its reader (in one project a
-     change to `gaps.md` or the scorecard runs xtask's tests). It matters only to a repo whose CI
-     still runs on pushes to `main` (the template's runs once a day): there each new run cancels
-     the one still running, so a docs merge would otherwise restart the wait for the code before it. Its `ci --changed` run is a gate too: `sub.start --sub gate-<n> --name gate
+     change to `gaps.md` or the scorecard runs xtask's tests). Its `ci --changed` run is a gate too: `sub.start --sub gate-<n> --name gate
      --note "docs gate: #<m>"`, the run, the merge logged with `--sub gate-<n>` (when it closes an
      issue), then `sub.stop`, so `swarm.lint` finds no merge outside a gate.
    - **Then the label goes**: GitHub closes the issue on the merge but leaves its labels,
@@ -746,7 +876,7 @@ On each finished pull request:
 7. **Claim its own work:** `cargo xtask claim <n> --agent <its instance> --no-pr` (the label, the
    comment `claimed: coordinator` and the claim event, refused when another agent holds it)
    before starting it, however small. **While it merges,** its claims add `--no-fullgate`.
-   **With nothing to merge,** it takes tasks like a worker (owner, 2026-10-22) and claims
+   **With nothing to merge,** it takes tasks like a worker and claims
    without it, so on a `full-gate` machine the periodic full gate of `main` runs when it is
    due, once the claim holds its issue.
 8. **Log to the timeline** with `--role coordinator`: the worker events for its own issues, and
@@ -765,9 +895,12 @@ On each finished pull request:
      with, then `rc=<n>; cause=<cause>` (`memory`, `link`, `toolchain`, `git-temp` and a
      project's `gpu`: transient, a rerun may pass; a project's `python`: the machine's setup;
      `test`, `build`, `other`). A failed gate keeps the lock, as the coordinator
-     still owns the worktree; `--retry-transient` reruns a transient failure once, as
-     `gate-<n>-rerun`, and `--rerun-failed gate-<n>` reruns only its failed tests, alone, and
-     the steps they skipped, as `gate-<n>-rerun` too (step 3, a red gate).
+     still owns the worktree. Where the project turns reruns on (`Hooks::gate_reruns`; `--rerun`
+     for one run), it reruns once by itself: a failure only at the tests, its failed tests alone
+     and the steps they skipped; else a transient failure, the whole gate; as `gate-<n>-rerun`
+     either way (`--no-rerun` turns it off for a run). Elsewhere `--retry-transient` reruns a
+     transient failure once, as `gate-<n>-rerun`, and `--rerun-failed gate-<n>` reruns only its
+     failed tests, alone, and the steps they skipped, as `gate-<n>-rerun` too (step 3, a red gate).
      A gate needn't log `work` on the issue it checks; if it does, the issue stays awaiting merge
      on the Board: a helper's claim, work or stop never moves an issue.
      **A gate stays open through the merges it allows:**
@@ -797,7 +930,7 @@ On each finished pull request:
    or `session.stop` (or naming the logger itself), `--reason duplicate` anywhere but `release` or
    `session.stop`, `--model` or `--effort` anywhere but `session.start` or `sub.start`, an
    `--effort` other than `low`, `medium`, `high`, `xhigh` or `max`, ids that aren't letters, digits, `-`, `_`, `.`, and a flag given twice.
-9. **Keep the two swarms in step** (owner, 2026-10-18; Swarm Core): the swarms
+9. **Keep the swarms in step** (Swarm Core): the swarms
    that share Swarm Core write one tracking format and share one process.
    - **What Swarm Core holds changes there once**: its commands, the tracking
      format (`docs/tracking-format.md`, the contract), this protocol and the other pinned assets
@@ -811,7 +944,7 @@ On each finished pull request:
      `[sync] …`, linking the original and saying what to port.
    - Each batch, list the open `sync` issues in both repos (`gh issue list --repo <repo> --label sync`)
      beside the progress fold, restock from ours, and port theirs.
-10. **Schedule an architecture review** (owner, 2026-10-23): after the
+10. **Schedule an architecture review**: after the
     first ~20 merges of a new product or a major area, then at each stage gate (alpha, beta,
     release candidate; `docs/roadmap.md`). One swarm's untyped command contract was found by a review
     only after about a week and 100+ commands, and fixing it took seven slices
@@ -830,6 +963,11 @@ On each finished pull request:
       - persisted data (settings, UI state, caches) without a version;
       - stringly-typed errors, classified by their message;
       - work on the UI thread that should be a job; shared state with no owner;
+      - the robustness traps (lessons.md 5–12): a child process started outside the one
+        process module, or with no deadline; a second lock taken in a statement that holds
+        one; a file read while drawing; defaults saved over state that couldn't be read;
+        memory changed before its save succeeded; a secret in a result, a log or an error; a
+        discarded `Result`; a test that touches the real config dir;
       - logic the spec or the architecture gives the core (layout, hit-testing, interaction
         state, a pixel-to-model mapping) built in a front end, because the core piece isn't
         there yet;
@@ -840,12 +978,117 @@ On each finished pull request:
       A trap it finds that isn't on the list goes on it, and into [lessons.md](lessons.md), with
       the issue that found it.
 
+## The gate daemon
+
+Steps 2 and 3 of [the coordinator's loop](#the-coordinators-loop) are mechanical, and run by hand
+they waited on the coordinator's wakes and slipped (sc#44): two ready PRs that
+conflicted with `main` sat unnoticed for about 8 hours (the ready watch reports only PRs newly
+ready), a gate stood idle or waiting for about 45 minutes in a day (restacks while it waited for
+room, and the coordinator's wake latency), and the coordinator stacked heads a worker was still
+pushing, ran git in the gate worktree mid-gate, killed gates mid-compile (their stale incremental
+state broke a later link) and hit stale rerere replays. `cargo xtask gate --daemon` runs them
+instead, the same way every time.
+
+**What it does,** each round (every `--interval` seconds, 60 by default):
+
+1. **Pauses** while its off switch is set, a `main-red` issue is open, or GitHub can't say,
+   saying so once per change; it goes on when they clear. CI is local, so there is no pipeline
+   of `main` to read: a red `main` reaches it as a `main-red` issue, or by its own check (step 7).
+2. **Lists the ready PRs** through GitHub: open, not drafts, into `main`, their Progress
+   filled in, not a progress fold's (`prwatch --ready`'s test). One GitHub reports as conflicting
+   with `main` (`dirty`) is looked at (`git merge-tree`): a conflict `stack` can't resolve gets a
+   note, once per head, and waits for its worker, so a stuck ready PR is always flagged; one in
+   the generated docs alone, which `stack` regenerates, is gated like any other.
+3. **Orders them:** a PR after every open PR whose commits its branch holds, then by the time
+   it was first seen ready. One that holds a draft's commits waits (they would land unchecked).
+4. **Stacks them** with `stack`'s code, rerere off (`GIT_CONFIG_PARAMETERS='rerere.enabled=false'`
+   for the daemon's whole process tree; plain `stack` is unchanged). A conflict drops that PR
+   and every PR stacked on it, and stacks the rest. When the PR conflicts with `main` itself
+   (`git merge-tree`, no checkout), its worker gets one note per head, "conflicts with main in
+   <files> (after #N landed): rebase onto main and run `cargo xtask ready`", and the daemon
+   logs `sendback … --note "cause=conflict: <files>"`; one that conflicts only with the PRs below
+   it waits for them to land. A PR `stack` refuses for another reason (no work, say) is held
+   at that head.
+5. **Folds, then gates.** While there is no room for the gate's build (the machine gate lock held
+   by another gate, or `capacity` says none), the stack waits, up to `--fold` seconds (120), and
+   a PR that becomes ready meanwhile is folded in by restacking, which is free. Then it runs
+   `cargo xtask gate --sub gate-<n> --wait --rerun` (numbered on from the gate logs and the
+   tracking branch, whichever is higher) as a child,
+   and the stack is frozen: **the daemon never kills a gate**, and runs no git in the worktree
+   while one runs. A gate that still waits for room after the fold waits itself.
+6. **Reads the pushes made during the gate** after it ends, by patch-id, not SHA: a branch whose
+   own change is the same patch (a rebase) lands as gated (`land` pushes the gated tree); a real
+   change waits, with every PR above it, for the next round, and the PRs below it land.
+7. **Lands a pass** (or a pass of the gate's own rerun of its failed tests) with `land`. A
+   failure the machine caused (a transient cause the rerun didn't clear, or the gate machine's
+   setup) drops nothing and is gated again next round; after three in a row the daemon sets its
+   off switch for you. Any other failure is attributed: a build, clippy or fmt error names files,
+   a failed test its package and test file, and the PR that changed them is dropped: put back to
+   draft (as `prwatch --ready` re-drafts) with the log's excerpt in a note, a `sendback --sub
+   gate-<n> --note "cause=<cause>: <evidence>"` logged, not gated again at that head, and the rest
+   gated again (`regate of gate-<n>: …`). When no PR or several match, it gates the
+   first half of the stack (`bisect of gate-<n>: …`); a stack of one that fails is that PR's.
+   The bisection keeps its suspects, the failed gate's PRs, across gates and rounds: a half that
+   passes lands, and the culprit is among the rest; one left is gated alone before it is sent
+   back, since the others passing proves nothing of it when the failure took two of them: it is
+   dropped as above when it fails alone, and when it passes too nobody is sent back (the failure
+   was theirs together, or a flake). Several are bisected next, never stacked again with newly
+   ready PRs. A suspect that moves or leaves ends the bisection. A
+   stack that failed never lands. A `land` that stops at the same PR head twice holds it for you.
+   **`main` red on the gating machine** (a GPU driver update, a change that landed by hand) looks
+   like the PRs' failure, and with no server CI nothing else says so. Where the project turns it
+   on (`Hooks::verify_main`, off by default; a project that runs the daemon should), a stack's first failure at its tests first runs those
+   tests alone on `main` (`verify main for gate-<n>`, `gate --test-alone`, no PR: a plain
+   gate of `main` is a docs gate of an empty diff, which tests nothing). When one fails there
+   too, the daemon sets its off switch with the failed tests, files a `main-red` issue (unless
+   one is open) and sends no PR back: fix `main` or the machine, close the issue, then `--resume`. When they pass, the failure is blamed
+   as above, and so is one whose tests it can't name plainly. A failed test `main` doesn't have
+   (no `fn <name>` there, or nextest's "no tests to run") is new in the stack, so its own: never
+   checked on `main` nor read as `main` failing. It costs a build and those tests per
+   failed stack. While paused, the daemon says why again every 30 minutes (`still paused: …`), so
+   a watch on its log sees it.
+
+Every decision (stacked, dropped, held, landed, paused) is printed with a time; those that change
+state are on the timeline: the gate's own `sub.start` and `sub.stop` (its note naming the step,
+`daemon gate:`, `regate of gate-<n>:` or `bisect of gate-<n>:`, and the PRs it gates), `land`'s
+merges, and a `sendback` for each PR it drops. A PR a failure only sets aside (stacked on the
+dropped one, or left out of a bisection's half) gets none: a gate that drops a PR it later lands
+in a regate or bisection is not a send-back ([tracking-format.md › Send-backs](https://github.com/mornycorp/swarm-core/blob/main/docs/tracking-format.md#send-backs)), and `prwatch` logs a worker's rework only for a PR a `sendback` names.
+
+**Running it.** On the gating machine, in the gate's worktree, with the gate's environment
+(its `CARGO_TARGET_DIR`, `SWARMCEPTION_AGENT` the coordinator's instance, and whatever else the
+project's gate needs: [swarm.md](swarm.md)), as a background process that outlives the
+coordinator's turns:
+
+```sh
+cargo xtask gate --daemon --dry-run      # one round: what it would stack and gate; no note, no event, no state saved (safe beside a live daemon)
+cargo xtask gate --daemon                # the loop; --once for one round
+cargo xtask gate --daemon --status       # the switch, the pause, the PRs it dropped or holds, its latest decisions (saved with each, so a gate shows while it runs)
+cargo xtask gate --daemon --stop --note "<why>"   # the off switch: it pauses at its next round
+cargo xtask gate --daemon --resume       # clears the switch and the PRs it held
+cargo xtask gate --daemon --retry <pr>   # forgets what it kept of one PR (dropped, held or noted), so it is gated again; restart the daemon after
+```
+
+`--stop` never interrupts a gate. The switch is read when a round starts, before each gate and
+before a pass lands: a gate running when it is set runs to its end, no regate or bisection
+starts after it, and a pass after it is closed without landing (its PRs are gated again once
+resumed). To end the process, set the switch, wait for `--status` to say `paused`, then stop it.
+Its state and switch are in `<target>/gate-daemon/`, with its process id: a second daemon in the
+same worktree is refused while the first runs (a `--dry-run` may run beside it). While it runs, the coordinator doesn't
+stack, gate or land by hand, and the ready watch and the merge-only scheduled task
+([Staying awake](#staying-awake)) stand down: set the switch first to gate by hand.
+
+**What stays with the coordinator:** `main-red` issues and their fixes (the daemon only
+pauses), judgment calls (a PR held or dropped twice, a conflict to resolve by hand, a `--full`
+gate, a `--while-red` landing), the batch's progress docs (step 4), and keeping the workers fed
+(steps 5 to 9). Read `--status` on each wake.
+
 ## Staying awake
 
 A coordinator session acts only when something wakes it: the owner's message, a background task
 of its own finishing, or a worker it started reporting. Paused, or after its session restarts
 (background tasks die with it), nothing polls, and ready PRs wait: three of one worker's sat
-overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
+overnight on 2026-10-18 for that reason. So:
 
 - **While active**, keep a ready-PR watch armed: `cargo xtask prwatch --ready` in the background
   lists the open PRs every 2 minutes (`--interval`) and wakes the coordinator when one is
@@ -859,8 +1102,14 @@ overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
 
   A PR whose
   branch holds no work (no commits of its own, only its claim commit or an empty diff) is
-  `ready but empty: #<m> …`, not `ready:`: `stack` and `land` refuse it, so close it or send it
-  back rather than gate it. Each line names the PR's head commit (`ready: #<m> <sha> <branch> ·
+  `ready but empty: #<m> …`, not `ready:`: `stack` and `land` refuse it. **The watch puts it
+  back to draft itself**, with a comment saying why and what to do, and says `redrafted: #<m> …`
+  (sc#42): a PR is ready only by `cargo xtask ready`, and one marked ready by hand (`gh pr
+  ready`, the button) with nothing in it would otherwise reach a gate. It does this once per
+  head: a PR marked ready again at the same head stays `ready but empty` and is the
+  coordinator's to close or send back; a push is a new head. A PR from a fork is only
+  reported, and `--no-redraft` only reports any. A re-drafted PR is no reason for `Exit` to
+  exit. Each line names the PR's head commit (`ready: #<m> <sha> <branch> ·
   <title>`), so a PR pushed again is a new line. Re-arm it after
   every merge and after a restart; `--once` lists the ready PRs and exits (with `Exit`, marking
   the new or pushed ones and leaving the record alone).
@@ -910,8 +1159,17 @@ overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
   - **Nor does a docs gate wait for build capacity**: it builds nothing worth
     room, so it is never refused for capacity or waits for it; its `sub.start` note still records
     the capacity it saw. One rule, `Kind::builds`, decides both the lock and the capacity. A
-    gate that builds checks capacity once, when it starts (again for a `--retry-transient`
-    rerun); with `--wait` it waits for room up to two hours, else it refuses.
+    gate that builds checks capacity once, when it starts (again for a rerun); without `--wait`
+    it refuses when there is no room.
+  - With `--wait` a gate waits for room up to two hours, looking every minute.
+  - **A gate has priority over workers' builds** where the project turns it on (sc#41,
+    `Hooks::gate_priority`, off by default): with `--wait` it waits for room at most
+    2 minutes, then goes ahead of the running builds, saying `going ahead with priority`; its
+    build jobs follow free memory (below). On 2026-11-07 a gate waited about 25 minutes behind
+    six workers' builds (one worker's helpers) with six PRs ready. Only a disk under the floor
+    (20 GB, or unread) keeps it waiting, up to two hours, then it refuses: a gate goes ahead of
+    builds, never of a full disk. Meanwhile `capacity` reserves a build for it for everyone else
+    ([Helpers in worktrees](#helpers-in-worktrees)).
   - The gate runs `ci` with `CARGO_BUILD_JOBS` set from free memory: one job per 1.5 GB, at
     least 2, at most the cores; half the cores when free memory can't be read. A
     `CARGO_BUILD_JOBS` the environment sets wins. A test binary's link took about 1.4 GB.
@@ -968,7 +1226,7 @@ overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
   watches `main`; it files nothing and starts no workers. To hold issues already filed, it labels
   them `status::blocked` with a comment saying why: `cargo xtask claim` refuses a held issue.
   The owner's word lifts the hold; the coordinator takes the label off.
-- **Pausing and resuming** (owner, 2026-10-19). When the owner pauses the coordinator, both
+- **Pausing and resuming**. When the owner pauses the coordinator, both
   timers go off: it stops its ready watch, **disables** the scheduled merge check, and logs
   `session.pause`. Ready PRs then wait, which is what a pause means. When the owner resumes it,
   its first act is to turn both back on: **re-enable** the scheduled check, **re-arm** the
@@ -976,17 +1234,50 @@ overnight on 2026-10-18 for that reason. So (owner, 2026-10-19):
   paused. After a session restart, whose background tasks died with it, the ready watch is
   re-armed the same way; the scheduled check survives a restart and stays as it was.
 
+## What proves a change
+
+A project picks what proves a change before it merges, in its `Project::proof` (sc#53; its
+swarm.md says which):
+
+- **The ready proof** (`Proof::Ready`): each PR proves itself. A worker's `ready` runs the whole
+  `ci --changed`, and the coordinator's gate of a stack that reaches product code is the smoke.
+  Right where every worker's machine runs what the gating machine runs: each PR pays for its own
+  tests, on its own machine.
+- **The batch proof** (`Proof::Batch { ready_env }`): the stack proves itself. `ready` runs `ci
+  --changed`, and the rerun of its failed tests, with `ready_env` set, which leaves out the
+  tests the project keeps for the coordinator's gate (the GPU tests, say). Its output and its
+  `sub.start` note say so (`ci --changed before submitting; batch proof: <NAME>=<value>`). The
+  coordinator's gate of a stack its planner calls full, or is unsure of, is the full gate, one
+  run for every PR in it. Right where the workers share the gating machine, or lack what its
+  tests need. Measured on 2026-10-29: a GPU desktop that hosted a coordinator and its workers
+  spent 26.7 hours on about 100 per-PR `ready` runs, while one full gate merged 4 to 9 PRs in
+  about 25 minutes.
+  - `ci --changed` already narrows a run to the packages a change reaches. The batch proof
+    narrows it another way: within those packages, it leaves a class of tests to the one run
+    that gates the stack.
+  - A worker still runs the left-out tests of what it is building, once, as it would while
+    iterating: the batch proof moves the regression run, not the author's own check.
+  - Let a few PRs queue before gating: a full gate per PR costs more than the ready proof did.
+  - A red full gate names its failing tests. `gate --rerun-failed` first when the cause may be
+    the machine's. A real failure's crate usually points at one PR: send it back and gate the
+    rest again; else split the stack.
+  - A full gate that lands whole verifies `main` ([The periodic full
+    gate](#the-periodic-full-gate)), so the periodic gate idles while batches land.
+  - A PR readied with `ready --no-ci` changes nothing here: its stack's gate is already the
+    full one.
+
 ## The periodic full gate
 
-The owner's direction, 2026-10-22, for both swarms: **unload the
+The owner's direction, 2026-10-22, for every swarm: **unload the
 coordinator.** It merges after the [smoke](#the-coordinators-loop) (step 3), and the whole
 `cargo xtask ci` moves to a periodic full gate of `main`, run by whichever agent with the
 [`full-gate` capability](swarm.md#capabilities) is about to claim a task when `main` has gone
 unverified too long. Workers keep testing their own branches, with `cargo xtask ci --changed`
 (AGENTS.md §5). `cargo xtask fullgate` (Swarm Core's `fullgate`):
 
-- **What counts as a pass** (sc#15): the periodic gate's own, and **a landed `--full` gate**.
-  When the coordinator's `gate --full` (the whole `ci` on the stacked tree) lands and `main` is
+- **What counts as a pass** (sc#15): the periodic gate's own, and **a landed full gate**.
+  When the coordinator's full gate (the whole `ci` on the stacked tree: `gate --full`, or any
+  gate the batch proof makes full, sc#53) lands and `main` is
   then exactly the tree it tested (every PR of its stack landed onto the `main` it was stacked
   on), `land` closes it with `main=<its commit>` in its stop note, and that commit of `main`
   counts as verified. A stack landed in part, or onto a `main` that moved meanwhile, counts for
@@ -1024,15 +1315,16 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
   fullgate --check` says whether one is due and
   why: `main`, the last passed full gate's commit and age, whether `main` moved since, any open
   or abandoned start. `cargo xtask fullgate` runs one when it is due.
-- **Tell the owner** (owner, 2026-10-22): a whole `ci` takes 10 to 15
+- **Tell the owner**: a whole `ci` takes 10 to 15
   minutes on a cold checkout, longer in a project whose gate runs GPU tests
   ([swarm.md](swarm.md) gives the project's), and holds the desktop's machine gate lock, so the agent whose claim
   runs it says so at once, when the claim prints `fullgate: <sub> won the race for <commit>`:
   **"My turn for the periodic full gate of main (`<commit>`): the whole `ci`, about <n> min."**
   When it ends: **"Full gate done: passed."**, or **"Full gate done: failed (`<cause>`), filed
   `main-red` #<n>; working on that instead."** The agent runs the claim where its output reaches
-  it as it prints (the foreground, or a monitor on a background run), never piped through `tail`
-  or `head`, which hold every line back until the claim ends.
+  it as it prints (the foreground, or a background run to a log it reads; never under a monitor,
+  which stops it at its timeout), never piped through `tail` or `head`, which hold every line back
+  until the claim ends.
 - **One at a time, across agents:** each agent writes its own tracking file, so pushes never
   conflict and the tracking branch gives no mutual exclusion. Two steps do:
   - **The race**: push the start event, read the tracking branch again, and the earliest
@@ -1056,7 +1348,12 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
   at the commit it recorded: the project's `Project::full_gate_worktree`, `.claude/worktrees/fullgate`,
   under the primary checkout (gitignored), shared by the clone's agents (who take turns in it), with its own `target/` so
   its builds stay incremental. The winner then waits for the machine-wide gate lock and
-  room for a build, as `gate --wait` does, so it never runs beside either swarm's gate; it sets
+  room for a build, as `gate --wait` does, so it never runs beside either swarm's gate. Holding
+  the lock, it **reads again** (sc#36): when another gate passed `main` while it waited (another
+  full gate, or a landed `--full` gate), it steps aside, `superseded: <who>'s <sub> verified main
+  (<commit>) while this gate waited for the machine`; when `main` moved, it stops,
+  `superseded: main moved to <commit> …: gating it instead`, and begins again for the new tip
+  (a few times at most); else it runs. It sets
   `CARGO_BUILD_JOBS` as `gate` does, and leaves its log, `.rc` and `.junit.xml` (its tests'
   times) in that checkout's `target/gate-logs/`.
 - **Whose code**: the claiming agent's xtask, which may predate `main`,
@@ -1093,6 +1390,19 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
     (the last passed full gate's) and the merges between them (`git log --first-parent`), the
     cause and the failing tests, and where the log is. The gater claims it and works on it
     instead of its task. An open `main-red` issue stops a second agent filing a duplicate.
+    - **A timeout repeated alone is proof** (swarm-core#29). A test a deadline
+      ended (nextest's `terminate-after`, a test's own timeout) in the run and again in its rerun
+      alone is slow, not loaded: the rerun alone already ruled load out. Don't run it again, whole
+      and with no limit, "to rule out load". Instead:
+      1. **Time one unit** of it (one event, one capture, one input), on this commit and on the
+         last green one, and compare.
+      2. **Bisect** the merges since the last run that verified it, timing that one unit.
+      3. **Fix it**, then measure the whole test once, on the fix.
+
+      A whole uncapped run is worth its time only when the rerun alone **passed**, which points
+      at load. On 2026-11-05 a swarm's uncapped run of such a test took 75 minutes, and kept
+      `main` red with merges held for about two hours, to show what its two timeouts had shown
+      ([lessons.md](lessons.md), lesson 14).
 - **The notes** are a convention within tracking format v3, no version bump
   ([tracking-format.md › Gates](https://github.com/mornycorp/swarm-core/blob/main/docs/tracking-format.md#gates)): a full gate is a helper sub-agent
   named `gate`, `sub` `gate-full-<short commit>` (numbered when the same agent gates the same
@@ -1100,7 +1410,8 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
   - `sub.start --name gate --note "full gate of main; capacity=<n> free=<GB>; kind=full;
     commit=<sha>"`;
   - `sub.stop --note "rc=<n>[; cause=<cause>]; kind=full; commit=<sha>"`; a gate that lost the
-    race, `superseded: <why>; kind=full; commit=<sha>`; one that stopped on an error before its
+    race, or found `main` verified or moved once it held the machine lock,
+    `superseded: <why>; kind=full; commit=<sha>`; one that stopped on an error before its
     result, `abandoned: <error>; kind=full; commit=<sha>`. Neither has an `rc`: neither ran.
 
   "The last passed full gate" is the newest `sub.stop` with `kind=full`, a `commit=` and `rc=0`,
@@ -1115,8 +1426,9 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
 
 - **Ready work** caps parallelism: the coordinator's most valuable job is splitting work so more
   of it is independent.
-- **CI capacity:** the runners' minutes are shared, so draft PRs get no workflow run (the
-  workflow skips drafts); workers rely on `cargo xtask ci --changed` locally.
+- **CI capacity:** CI is local: GitHub runs no workflows, so each machine's
+  cores and disk are the limit (`cargo xtask capacity`); workers rely on `cargo xtask ci
+  --changed`, the coordinator on its gate.
 - **Empty draft PRs:** GitHub refuses a pull request whose branch has no commits of its own.
   Push a first commit before opening it (`claim`'s claim commit).
 
@@ -1124,27 +1436,20 @@ unverified too long. Workers keep testing their own branches, with `cargo xtask 
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-11-04 | minor | Staying awake › Test runs share the machine (new): every `ci` run that builds and tests (a gate that builds, the periodic full gate's, `ready`'s) holds one of the machine's test-run slots, `SWARM_TEST_RUNS` or one per 16 GB; the order repo lock, machine lock, slot, capacity; `capacity` suggests none while every slot is taken or wired memory is half the total (sc#17) |
-| 2026-11-04 | minor | The coordinator's loop › A red gate: gating the same stack again (the same PRs at the same heads onto the same `main`) straight after a failure is its rerun, and `gate` notes it `rerun of <sub>:` itself, so a flake it answers sends nothing back (sc#20) |
-| 2026-11-04 | minor | Picking work › Taking over: a claim is stale on the coordinator's say-so (`release --of`, or a `released:` comment) or after 24 hours with no events, comments or commits; `claim <n> --take-over` adopts its PR and branch with their commits, logs `release --of` the old holder, comments the release and the claim, and takes `status::blocked` off when everything its hold waits on is closed; `--force` names `--take-over` for a branch with work on it; the coordinator's step 6 hands a stale claim over so (mornycorp/swarm-core#16) |
-| 2026-11-04 | minor | The land step: before a PR merges, `land` retargets onto `main` every open PR whose base is its branch, so GitHub deleting that branch closes none; a PR already closed that way gets its base branch pushed back, is reopened, retargeted and the branch deleted again, or `land` stops with the steps; `s-<pr>` stays until the PR lands (mornycorp/swarm-core#19) |
-| 2026-11-04 | minor | Picking work › Finish and The coordinator's loop: `ready --no-ci` notes `no-ci` on its `submit`, and the gate runs a stack holding such a PR as the **changed** kind (`ci --changed --base origin/main`) instead of the smoke, its note naming the PRs (sc#18) |
-| 2026-11-03 | minor | Watching your PRs and Tracking: `prwatch` says when your PR is sent back (a `sendback`, or a gate failing for the change's cause) and logs your `work --issue <n> --mr <m>` once, so the rework's start is on the timeline; log it yourself if no command did; a question logs nothing (mornycorp/swarm-core#14) |
-| 2026-11-02 | minor | A failed `ready` check's `sub.stop` says why, as the gate's does: `rc=<n>; cause=<cause>; step=<the failing ci step>` (was `rc=1`) |
-| 2026-10-31 | minor | GitHub CI runs once a day on `main`, not on pushes or PRs (owner, 2026-10-31): the coordinator checks the latest daily run each batch, and a red one is `main` red |
-| 2026-10-31 | minor | No refactoring pass at the end of a worker's task, and no **Refactoring** line for the coordinator to check (owner, 2026-10-31); the `refactoring` skill is dropped too, `complexity-analyzer` kept |
-| 2026-10-31 | minor | Claims on one branch: a PR there is yours only when no other claim names it; the first standing claim comment holds the issue; `ready` refuses another agent's (mornycorp/swarm-core#7) |
-| 2026-10-31 | minor | The architecture review's checklist: spec requirements with no work under a gap marked done (lessons.md §6) |
-| 2026-10-30 | minor | The architecture review's checklist: a front end building logic the core owns (lessons.md §5) |
-| 2026-10-30 | minor | `capacity`: no build runs while no `rustc` or `cargo-nextest` does; `SWARM_CORES_PER_BUILD` and `SWARM_GB_PER_BUILD` set a machine's own costs; macOS free memory counts purgeable pages |
-| 2026-10-30 | minor | Names no consumer: the consumers' names and their issue citations dropped, each rule kept |
-| 2026-10-30 | major | GitLab to GitHub (owner, 2026-10-30): the claim is a label and a draft PR (`gh`, `--repo`); `ready` marks a PR ready for review, which starts its checks; `prwatch` (was `mrwatch`) reads merge states (`dirty`, `behind`, `clean`, `blocked`), checks and comments; `land` cancels the head's workflow runs and rebases on the server only a PR that is `behind`; PRs are `#n`; duplicates are closed with `Duplicate of #n` |
-| 2026-10-30 | minor | swarm-foundation renamed swarm-core: the crate, `cargo xtask swarm-core` (was `foundation`), `docs/swarm-core-assets.md`, and `sc#n` for its issues (was `f#n`) |
-| 2026-10-29 | minor | The periodic full gate: a landed `--full` gate whose merges left `main` at its tree is a pass of that commit (`land` adds `main=<sha>` to its stop); due only after merges no landed full gate verified (an hour on), after the drift interval on an unchanged `main` (a day, `Hooks::full_gate_drift_secs`), or when the gate's inputs changed (`Hooks::full_gate_inputs_changed`, `SWARMCEPTION_FULLGATE_DRIFT`) (sc#15) |
-| 2026-10-29 | minor | Picking work › Finish and Watching your MRs: `ready` keeps its gate's log, `.rc` and junit as `<target>/gate-logs/ready-<sha>.*`, and reruns a test-only failure's tests once, each alone, then the steps they skipped, as `ready-<sha>-rerun`; `submit`'s note names them; `--no-rerun`; don't rerun a failed `ready` for its tests (sc#14) |
-| 2026-10-29 | minor | Picking work: `cargo xtask capabilities`, `session.start`'s summary of what the machine lacks and `claim`'s warning; say what you skip for want of one, with its fix (swarm-core#13) |
-| 2026-10-28 | minor | Ending a session (new): `cargo xtask finish` checks nothing is owed, installs the tools in `.git/swarm-tools/` (`install-tools`), removes the agent's clean worktrees and merged branches, then logs `session.stop`; `mrwatch` says when; a worker's step 4 and Tracking › Your session end with it (sc#10) |
-| 2026-10-28 | minor | What the code does for every consumer (sc#5): every gate kind that builds takes the machine lock (`Kind::builds`, the smoke included), and the lock's file, wait, renewal and `lock drop` order; a project's causes `gpu` and `python`; the full gate's `fullgate-outcome:` hand-over; `ready`'s `ready-<sha>` sub-agent and rebased xtask; `stack`'s merged branches; `land`'s retries, cancelled pipelines and merge of `main`; the helper worktree beside yours. The project's own settings named as its own: the repo lock's age, the stack record and the full gate's checkout (rendered from `Project`), the worktree layout, gate times, the ready watch's mode, the merge check's minutes, the next issue's order, the gate kinds' planner; sync twins labelled `sync` and titled `[sync]` |
-| 2026-10-28 | minor | Watching your MRs: after `ready`, push only for a line that asks it; `land` merges only the gated change, and a push while it lands stops it (sc#9) |
+| 2026-11-13 | minor | Trimmed: the dated notes of who decided a rule, and this table's rows before 2026-11-12 (they are in git) |
+| 2026-11-13 | minor | Corrections: the two links to Watching your PRs resolve; `sc#3` to `sc#20` are the earlier tracker's numbers; "both swarms" reads as any number of them |
+| 2026-11-13 | minor | What proves a change (new): a project's `Project::proof`. The ready proof (each PR's `ready` runs everything; the coordinator smokes; what every swarm ran until now) or the batch proof (`ready` runs without the project's `ready_env` tests; the coordinator's gate of a stack that needs it is the full gate, and a landed one verifies `main`). Starting a worker, Picking work › Finish, the coordinator's step 3 and the periodic full gate's passes say what each means (sc#53) |
+| 2026-11-13 | minor | The coordinator's loop › land: `land` assumes `main` requires no up-to-date branches, as `docs/new-swarm.md` sets it up; a PR stacked on one the server rebased then merges as gated (sc#38) |
+| 2026-11-12 | minor | The gate daemon: a bisection's last suspect is gated alone before it is sent back, and nobody is when it passes too; the off switch is read before each gate; `--retry <pr>` forgets what it kept of one PR; a second daemon in a worktree is refused; GitHub's conflict flag is only where to look, and a conflict `stack` resolves is gated; `main` failing on the gating machine files a `main-red` issue; a PR it can't put back to draft is held; three gates in a row that don't run set the switch (sc#45) |
+| 2026-11-12 | minor | The gate daemon (new): `cargo xtask gate --daemon` runs steps 2 and 3 of the coordinator's loop on the gating machine: pauses on its switch or an open `main-red` issue; flags a ready PR that conflicts with `main` once per head; stacks in dependency order with rerere off, dropping a conflict and what is stacked on it; folds newly ready PRs in while the gate waits for room and never kills a gate; lands what didn't change during the gate; drops the PR a failure points at (back to draft, the log's excerpt in a comment) or bisects, keeping its suspects; where the project turns it on (`Hooks::verify_main`) runs a stack's failed tests alone on `main` before blaming a PR. `--status`, `--stop`, `--resume`; what stays with the coordinator. A daemon gate's failure is a send-back only of what its `sendback` names (sc#44) |
+| 2026-11-12 | minor | Where the project turns it on (`Hooks::gate_priority`, off by default: no change), a gate has priority over workers' builds: `gate --wait` waits for room at most 2 minutes, then goes ahead of the running builds (a disk under the floor still waits, then refuses); while a gate holds the machine-wide gate lock, `capacity` reserves a build for it (but for the gate's own check), so helpers and anything asking `capacity` yield, and `ready` waits before each `ci`, before its test-run slot, while there is no room beside it, saying `a gate has priority` (at most 30 minutes) (sc#41) |
+| 2026-11-12 | minor | Staying awake and Starting a worker: `prwatch --ready` puts a PR that is ready but holds no work back to draft with a comment, once per head, and says `redrafted:`; `--no-redraft` only reports; a PR from a fork is only reported; a worker keeps its PR a draft until `ready` (sc#42) |
+| 2026-11-12 | minor | Parallel agents: on a machine where the coordinator gates, workers cap their builds' jobs (`CARGO_BUILD_JOBS`, `capacity`'s new `worker builds:` line, 4 unless the machine sets its own cost of a build), so a gate keeps memory for its own; a measurement window the coordinator calls is the exception. `ready` sets it on its builds where the project turns it on (`Hooks::worker_build_jobs`, off by default) on a `full-gate` machine, unless `CARGO_BUILD_JOBS` is set; `gate` sizes its own as before (sc#40) |
+| 2026-11-12 | minor | Gate reruns, a project's choice (`Hooks::gate_reruns`, off by default; `--rerun`, `--no-rerun` for one run): where on, a failed gate reruns once by itself, a failure only at the tests its failed tests alone and the steps they skipped, else a transient failure the whole gate; as `gate-<n>-rerun`, both results printed (sc#39) |
+| 2026-11-12 | minor | The coordinator's loop, `land`'s step 1: a branch a worker rebased onto a newer `main` since `stack` lands without a re-gate when its own commits' patch-id is the stacked commit's, applied onto what the gate tested they are the gated tree, and the newer `main` changes none of the PR's files; the stacked commit is pushed over it. A changed patch, a conflict or a newer `main` touching the PR's files stops, saying which (sc#37) |
+| 2026-11-12 | minor | Picking work › Taking over: a holder's own `stop` after its last `claim` or `work` frees its claim at once; a red `main` doesn't hold a take-over, whose work goes on on its branch; a local branch with commits origin's lacks is refused, not kept with a warning (sc#34) |
+| 2026-11-12 | minor | Standing rules, a section of their own: product first and tooling when it hurts twice, "wind down" means finish, decide don't ask, a heavy job run by hand waits for an idle gate, a quiet gate log is not a dead gate, stopping a shell on Windows leaves its children, long runs to a log rather than under a monitor (which stops them at its timeout), squash onto the merge base (lessons.md 15). Starting a worker: a different task gets a fresh context; the worker stops and names its next issue, and the coordinator clears its session or starts a fresh worker; a similar follow-on keeps its session. Picking work, step 4: a worker branches every PR from `main`, and stacks on another open PR (`ready --onto`) only when its change needs that PR's code (lessons.md 13). The periodic full gate, a real failure: a timeout repeated in the rerun alone is proof of a slowdown; time one unit against the last green commit, bisect with it, and measure the whole test once on the fix (lessons.md 14) (swarm-core#29) |
+| 2026-11-12 | minor | The architecture review's checklist: the robustness traps (lessons.md 5–12: a child process outside the process module or with no deadline, a second lock in one statement, a file read while drawing, defaults saved over unread state, memory changed before its save, a secret in a result, a discarded `Result`, a test in the real config dir); the two lessons the checklist already cited are 16 and 17 (swarm-core#28) |
+| 2026-11-12 | minor | The periodic full gate: holding the machine lock, it reads again: it steps aside for a `main` another gate verified while it waited, and begins again for a `main` that moved (sc#36) |
 
-Older rows are in the first consumer's history of `docs/swarm.md` and `AGENTS.md`.
+Older rows are in this file's git history in Swarm Core.
