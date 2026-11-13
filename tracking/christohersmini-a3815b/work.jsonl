@@ -58,3 +58,4 @@
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #169","sub":"gate-169","t":"2026-11-13T18:41:59Z"}
 {"event":"claim","issue":164,"mr":170,"t":"2026-11-13T18:42:25Z"}
 {"event":"work","issue":164,"t":"2026-11-13T18:42:28Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-aec5926","t":"2026-11-13T18:47:42Z"}
