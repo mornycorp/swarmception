@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 18: G33, colours from swarm-core's theme, and swarm-core at 57fb6a2; the light look open, #154) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 19: G33 done, the swarm's colours in both looks; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | partial | #152, #154 | 2–4 h |
+| — | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | done | #152, #154 | |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
 | — | [G31 No ghost ticket bars](#g31-no-ghost-ticket-bars) | done | #140, #142, #144 | |
 | — | [G28 Small ends after batch 11](#g28-small-ends-after-batch-11) | done | #113, #134, swarm-core#20, swarm-timeline#222 | |
@@ -429,12 +429,16 @@ marked **Human:** with what is needed.
   working `strong`, waiting `accent`, sent back `error`, stopped `muted`, merges `success`); the
   Workers pane's groups range8 in order; `theme.get` returns the theme as data. Also batch 18:
   swarm-core bumped to 57fb6a2 (#150, PR #151; `Project::proof` set to `Proof::Ready`).
-- **Left:** the light look (#154): the swarm's colours are the dark look's on either look.
-- **Measured:** 414 tests, `cargo nextest run --workspace` (2026-11-13).
+- **Done** (#154, PR #156): both looks. A colour is a `Paint`, the theme's dark and light pair; the
+  UI draws egui's look's (`factory_chip::drawn`, the tooltips' darkening gone), and `theme.set`
+  builds the timeline in the window's look, which the shell sends when it changes.
+- **Measured:** 417 tests, `cargo nextest run --workspace` (2026-11-13); checked by eye on
+  mc-engine with `--light` and `--dark` (`docs/screenshots/light-look-*.png`).
 - **Evidence:** `theme::tests`, `colours::tests::a_tickets_colour_is_range32s_pick_of_its_number`,
   `colours::tests::the_stages_are_the_tokens_named_for_what_they_mean`, engine
-  `the_theme_is_data_a_command_returns`; `docs/screenshots/theme-colours-*.png`.
-- **Estimate:** 2–4 agent-hours for #154.
+  `the_theme_is_data_a_command_returns`, `theme_set_builds_the_timeline_again_in_the_new_look`,
+  `timeline::tests::built_in_the_light_look_every_colour_is_its_light_value`,
+  `factory_pane::the_timeline_follows_the_windows_look`; `docs/screenshots/theme-colours-*.png`.
 
 ## G1 The ruler reads clock time
 
@@ -587,6 +591,7 @@ marked **Human:** with what is needed.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Batch 19: G33 done (#154); no gaps open |
 | 2026-11-13 | minor | Batch 18: G33 partial (#152; #154 open); swarm-core at 57fb6a2 (#150) |
 | 2026-11-06 | minor | Batch 17: G32 done (#147, swarm-timeline#233); no gaps open |
 | 2026-11-06 | minor | Batch 16: G31 done (#140, #142, #144); no gaps open |

@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 18: G33, colours from swarm-core's theme, and swarm-core at 57fb6a2; the light look open, #154) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 19: G33 done, the swarm's colours in both looks; no gaps open) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -29,12 +29,13 @@ step 10).
 The same ranked list as `ROADMAP.md`'s **What's next**: its rank, its bold name, its gap link and
 at most a short clause. Workers pick from the top ([the swarm protocol](swarm-protocol.md#picking-work)).
 
-1. **Colours from swarm-core's theme: the light look** ([G33](gaps.md#g33-colours-from-swarm-cores-theme), #154)
+None: every gap is closed. New work comes from the owner (M1–M3 wait on their pass), or from a review.
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-13 | minor | Batch 19: G33 done; no focus |
 | 2026-11-13 | minor | Batch 18: focus G33 (#154) |
 | 2026-11-06 | minor | Batch 17: G32 done; no focus |
 | 2026-11-06 | minor | Batch 16: G31 done; no focus |
