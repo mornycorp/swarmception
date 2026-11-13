@@ -1,14 +1,15 @@
 //! The one source of the swarm's colours (#15, the owner's): the timeline and the factory both
 //! take them from here, so a ticket and a phase look the same in both. Every one is the
-//! [`theme`]'s (#152, the owner's: swarm-core's recommendations, in place of scheme B, #40), a
-//! [`Paint`]: its colour in each look, dark and light (#154), drawn in the look the window is in.
+//! [`theme`]'s (#152, the owner's: swarm-core's recommendations, in place of scheme B, #40; the
+//! palette the swarm's tools share since swarm-core#100, #158), a [`Paint`]: its colour in each
+//! look, dark and light (#154), drawn in the look the window is in.
 //!
 //! - **A ticket's own colour** ([`ticket_colour`]): its issue number's pick of the theme's
 //!   [`theme::RANGE_32`], the range for identifiers side by side (Glasbey et al.'s set, via
 //!   colorcet), by the FNV-1a hash of the number, so the same issue is the same colour on every
 //!   run, surface and machine. Its bar and its merge are drawn in it.
 //! - **The stages, from the tokens named for what they mean**: claimed [`CLAIMED`] (`warning`),
-//!   working [`WORKING`] (`strong`), waiting for merge [`WAITING`] (`accent`), in the gate
+//!   working [`WORKING`] (`strong`), waiting for merge [`WAITING`] (`link`), in the gate
 //!   [`GATING`] (Swarmception's `gate`), sent back [`SENT_BACK`] (`error`), stopped [`STOPPED`]
 //!   (`muted`), and every merge onto main [`MAIN_MERGE`] (`success`); [`NO_TICKET`] (`muted`) for
 //!   what is no ticket's. A stage of a ticket takes its colour from [`crate::rows::Stage::colour`]
@@ -80,8 +81,10 @@ impl Paint {
 
 /// Claimed: `warning`, something to look at that hasn't failed.
 pub const CLAIMED: Paint = Paint::token(theme::WARNING);
-/// Waiting for merge: `accent`.
-pub const WAITING: Paint = Paint::token(theme::ACCENT);
+/// Waiting for merge: `link`, the shared palette's blue that reads as text (#158). Its `accent`
+/// is a blue too, but one that carries no text (2.72:1 on the dark background), and a stage is
+/// named in words as well as drawn.
+pub const WAITING: Paint = Paint::token(theme::LINK);
 /// Sent back: `error`.
 pub const SENT_BACK: Paint = Paint::token(theme::ERROR);
 /// Stopped: `muted`.
@@ -107,10 +110,10 @@ pub fn ticket_colour(issue: u64) -> Paint {
 }
 
 /// The `n`th colour of a series in order (the Workers pane's model × effort groups): the theme's
-/// [`theme::RANGE_8`] by number.
+/// [`theme::SERIES`] by number, entry `n % 7` (#158: the shared palette's series in place of range8).
 #[must_use]
 pub fn series_colour(n: u64) -> Paint {
-    Paint::at(&theme::RANGE_8, n)
+    Paint::at(&theme::SERIES, n)
 }
 
 /// The colour a bar of `style` is drawn in, `ticket` the ticket it is (none for a merge onto
@@ -189,12 +192,12 @@ mod tests {
     }
 
     /// #152, #154: every stage's colour is a theme token's in each look, the one named for what it
-    /// means, and reads on that look's background; a series is range8's in order.
+    /// means, and reads on that look's background; a series is the theme's series in order.
     #[test]
     fn the_stages_are_the_tokens_named_for_what_they_mean() {
         let named = [
             (CLAIMED, theme::WARNING),
-            (WAITING, theme::ACCENT),
+            (WAITING, theme::LINK),
             (SENT_BACK, theme::ERROR),
             (STOPPED, theme::MUTED),
             (MAIN_MERGE, theme::SUCCESS),
@@ -210,8 +213,8 @@ mod tests {
                 assert!(contrast(colour.of(look), background) >= theme::TEXT_CONTRAST, "{} reads on the {look:?} background", token.name);
             }
         }
-        assert_eq!(series_colour(0), Paint { dark: bytes(theme::RANGE_8.dark.at(0)), light: bytes(theme::RANGE_8.light.at(0)) });
-        assert_eq!(series_colour(9), series_colour(1), "a series wraps round range8");
+        assert_eq!(series_colour(0), Paint { dark: bytes(theme::SERIES.dark.at(0)), light: bytes(theme::SERIES.light.at(0)) });
+        assert_eq!(series_colour(8), series_colour(1), "a series wraps at 7, as the shared palette's");
     }
 
     #[test]

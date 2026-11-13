@@ -192,8 +192,8 @@ const WORKER_ROW: f32 = 21.0;
 const VALUE: f32 = 64.0;
 const SAMPLES: f32 = 34.0;
 
-/// A model × effort's colour: its place in `workers.compare`'s order, the theme's range8 by number
-/// (#152).
+/// A model × effort's colour: its place in `workers.compare`'s order, the theme's series by number
+/// (#152, #158).
 fn group_colour(index: usize, visuals: &egui::Visuals) -> Color32 {
     crate::factory_chip::drawn(series_colour(u64::try_from(index).unwrap_or(u64::MAX)), visuals)
 }

@@ -25,6 +25,7 @@ pub mod menu;
 mod open;
 pub mod saved;
 pub mod shot;
+pub mod theme;
 mod timeline;
 mod workers;
 
