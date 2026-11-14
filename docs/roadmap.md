@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Roadmap
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 21: G34 done, the UI as swarm-core's contract has it, six issues; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** minor (batch 22: G35 done, the window as swarm-core's App UI Substrate has it, seven issues; no gaps open) · **Target:** M3
 
 Swarmception's milestones, the gates between them and the ranked **Current focus**. Detail lives
 in [gaps.md](gaps.md); this page keeps one short sentence a milestone and one line a focus item
@@ -35,6 +35,7 @@ None: every gap is closed. New work comes from the owner (M1–M3 wait on their 
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | minor | Batch 22: G35 done; no focus |
 | 2026-11-13 | minor | Batch 21: G34 done; no focus |
 | 2026-11-13 | minor | Batch 20: focus G34 |
 | 2026-11-13 | minor | Batch 19: G33 done; no focus |
