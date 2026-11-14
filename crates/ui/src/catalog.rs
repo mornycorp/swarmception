@@ -15,6 +15,27 @@ pub const A_SPLIT_IN_THE_DOCK_S_LAYOUT: &str =
 pub const TABS_IN_THE_DOCK_S_LAYOUT_HAVE: &str = "tabs in the dock's layout have no panes: give tabs one pane or more";
 pub const NO_PANE_IS_SHOWN_VIEW_TIMELINE: &str = "No pane is shown: the View menu shows one.";
 pub const FILE: &str = "File";
+pub const WINDOW: &str = "Window";
+pub const SERVICES: &str = "Services";
+pub const HIDE_OTHERS: &str = "Hide Others";
+pub const SHOW_ALL: &str = "Show All";
+pub const MINIMIZE_2: &str = "Minimize";
+pub const ZOOM: &str = "Zoom";
+pub const BRING_ALL_TO_FRONT: &str = "Bring All to Front";
+/// The About panel's line under the name.
+pub const A_SWARM_S_TICKETS_ON_A: &str = "A swarm's tickets on a timeline, from its tracking branch";
+/// The About panel's credits: what the embedded faces' licences ask (the App UI Substrate › Icons).
+pub const ABOUT_CREDITS: &str =
+    "Icons: Font Awesome Free 6.7.2 by Fonticons, Inc. (CC BY 4.0; font SIL OFL 1.1). Type: Roboto (Apache-2.0) and Cascadia Mono (SIL OFL 1.1).";
+pub fn about(product: &dyn Display) -> String {
+    format!("About {product}")
+}
+pub fn hide(product: &dyn Display) -> String {
+    format!("Hide {product}")
+}
+pub fn quit(product: &dyn Display) -> String {
+    format!("Quit {product}")
+}
 pub const VIEW: &str = "View";
 pub const TICKETS: &str = "Tickets";
 pub const RELOAD_THE_TRACKING_BRANCH: &str = "Reload the tracking branch";
@@ -525,6 +546,7 @@ mod tests {
         ("icons.rs", 0, ""),
         ("lib.rs", 1, "the refs' prefix"),
         ("menu.rs", 29, "the menu items' ids and the registry's menu paths"),
+        ("native_menu.rs", 2, "the accelerators' text, as muda reads it: not words"),
         ("open.rs", 0, ""),
         ("pane.rs", 0, ""),
         ("saved.rs", 44, "the state file's notes and errors, made where the file is read: not drawing code"),
