@@ -95,6 +95,9 @@ them in Swarm Core, then `cargo xtask swarm-core bump` and `sync-assets`. The ga
 - `.github/ISSUE_TEMPLATE/task.md`
 - `.github/pull_request_template.md`
 - `docs/app-architecture.md`
+- `docs/app-substrate.html`
+- `docs/app-ui-substrate.html`
+- `docs/app-ui-substrate.md`
 - `docs/lessons.md`
 - `docs/progress-docs.md`
 - `docs/swarm-protocol.md`

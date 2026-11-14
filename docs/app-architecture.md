@@ -3,7 +3,7 @@
      `sync-assets --check` fails on a copy that differs. -->
 # The app architecture contract
 
-> **Last reviewed:** 2026-11-12 · **Last updated:** 2026-11-13 · **Change:** minor (the skeleton's colours are the palette the swarm's tools share; only `backends` touches the outside: the process module and the atomic file writer live there; MCP attached to a running app; the `sources` layer is `backends`) · **Target:** M1
+> **Last reviewed:** 2026-11-12 · **Last updated:** 2026-11-14 · **Change:** minor (the process module starts a child without the control socket's token, and a secret is its owner's alone from its first byte: both were in the skeleton, now in the rules; the conformance run fails `no-panic` on a panic the dispatch caught, and holds a call cancelled before it runs to every check; the App Substrate, this contract explained as a page, moves with it: it names the newest revision it has been read against; what the colours, type and chrome are is the App UI Substrate, a pinned doc beside this one; the skeleton's colours are the palette the swarm's tools share; only `backends` touches the outside: the process module and the atomic file writer live there; MCP attached to a running app; the `sources` layer is `backends`) · **Target:** M1
 
 How Swarmception is shaped, and what keeps it robust. An app built on Swarm Core is **headless
 first**: every action is a typed command in one registry, every surface (the CLI, JSON lines on
@@ -12,6 +12,14 @@ or an agent can run the whole app without a window. The rules below are the same
 this document is pinned: `AGENTS.md` links to it instead of restating it, and a change to it is a
 Swarm Core change and a bump in each app ([swarm-protocol.md](swarm-protocol.md) › The
 coordinator's loop, step 9).
+
+**[The App Substrate](app-substrate.html)** explains this contract as a page, to open in a browser:
+the layers to select, one dispatch, the window as a client, what holds each rule, and the swarm's
+commands. It moves with this contract: it names the newest row of the revision history below that
+it has been read against, and a test (`the_app_substrate_page_has_caught_up_with_the_contract`)
+fails when a change here adds a row, until the page is re-read against the change and its stamp
+moved to the new row, in the same pull request. **[The App UI Substrate](app-ui-substrate.md)** ([as a page](app-ui-substrate.html)) is
+how the window looks.
 
 This is the short, generic contract. The app's own long form is its
 [architecture.md](architecture.md) (its crates, its commands, where its state lives) and its own
@@ -310,9 +318,14 @@ impl Session {
 `call` is the one place that looks the command up (`unknown_command`), checks the params against
 its type (`bad_params`, with the key), checks that it is enabled (its requirements, then its own
 check: `unavailable`, with why not; [Enabled](#enabled-can-it-run-now)), refuses an effect that needs a
-consent the caller hasn't given (`consent_required`), runs it, and turns a panic in it into an
-`internal` error (the lints leave none in the app's own code, [Never crash](#never-crash); a
-dependency or an index can still raise one, and it must not take the surface down). A transport only frames: it reads a request, calls,
+consent the caller hasn't given (`consent_required`), **looks at the call's cancel token** (a call
+cancelled before it runs is `cancelled`, and the command never runs), runs it, and **turns a panic
+in the run into an `internal` error**, on the wire form and the typed one alike (the lints leave
+none in the app's own code, [Never crash](#never-crash); a dependency or an index can still raise
+one, and it must not take the surface down). That error's message starts `panicked: ` and names
+the command, and its remediation is one fixed text, the testkit's `conformance::PANICKED`, so a
+caught panic is told from a plain `internal`. What the panic said stays on the app's stderr, never
+in the error: it may hold a param's value. A transport only frames: it reads a request, calls,
 writes a reply. **Adding a command adds it to every surface**, with no edit to any transport.
 
 - **`serve`** speaks JSON lines on stdio; **the loopback socket** the same frames over TCP on
@@ -336,7 +349,9 @@ writes a reply. **Adding a command adds it to every surface**, with no edit to a
   drops is a JSON-RPC error with the code and a remediation; connecting and each reply have a
   deadline, and a connection is made again at most once a call, never in a loop.
 - **Cancel.** A dropped connection, an idle timeout or the UI's cancel button sets the call's
-  token; a slow `run` polls it and returns `cancelled`.
+  token; a slow `run` polls it and returns `cancelled`. A call whose token is set before it runs
+  (a request queued behind a dropped connection, a cancel that came first) is `cancelled` by the
+  dispatch, and never runs.
 
 ### The JSON-lines frame
 
@@ -376,7 +391,10 @@ and with valid ones built from its params schema (which reach `run`), with conse
 command whose effects need it is `consent_required` without it, and on MCP even with it); it asks
 every command's enabled state on each surface that has the query and holds them to agree, and a
 disabled command's call to fail `unavailable` with its state's reason; it holds a call cancelled
-before it runs to fail `cancelled`; the app's surface test sends
+before it runs (each enabled command, with consent and params that get past its check: its
+example's, else the first made from its schema) to fail `cancelled` and not run, on each surface
+the app can make one through (`App::cancelled`: the session's call, by its token; a request can't
+carry a cancel, so the skeleton makes it there only), naming the command and the surface; the app's surface test sends
 every command the same MCP messages through `mcp --attach` (on a socket started with consent) and
 through `mcp`, and holds the replies to be the same; `scan` holds the transports to the registry
 (no command named in one).
@@ -490,6 +508,10 @@ theme says so beside it. **The theme is data a command returns**
 (`ui.theme`: each token's name, meaning and value per look, each range's entries), so every
 surface can ask it, and a swatch view draws that answer like any other view.
 
+**What the colours, type and chrome are** (each token and range entry in both looks, egui's
+visuals, the contrast the theme keeps short, and the type, density, icons, dock and window an app
+adopts) is [the App UI Substrate](app-ui-substrate.md).
+
 ### Verify visually
 
 A UI change ships with **pictures**, before and after, in the PR's Screenshots section. Where the
@@ -523,7 +545,9 @@ A hostile file, a malformed frame or a hostile param is the normal case, not the
 - **A fix for a crash ships its regression test**, the input that crashed, in the same PR.
 
 **Check:** `clippy` (the deny list in every crate root; `allow-*-in-tests` in `clippy.toml`);
-`conformance` (a pass of adversarial params that must panic nowhere); `review` for arithmetic,
+`conformance` (a pass of adversarial params, and one of valid params that reaches `run`, that must
+panic nowhere: a panic the dispatch caught, an `internal` with the `PANICKED` remediation, fails it
+as an uncaught one does, naming the command, the surface and the params); `review` for arithmetic,
 recursion and allocation bounds.
 
 ## Never hang on another program
@@ -537,6 +561,7 @@ nothing else:
   child never blocks on a full pipe;
 - puts the child in its own **process group**, and kills the group on a timeout, on cancel and on
   drop, so a grandchild never outlives its caller or holds the caller's pipe;
+- starts the child **without the control socket's token** in its environment;
 - reports every failure (not found, timed out, killed, output over the cap) as a typed error
   with a remediation.
 
@@ -571,6 +596,7 @@ Everything the app persists (settings, UI state, caches, journals) is:
 - **owned** by one module that reads and writes it, and no other;
 - written by **the one atomic writer**, in the `backends` layer (a temporary file in the same
   directory, flushed, then renamed), so a crash leaves the old file or the new, never half of one;
+  a secret (a token) is written its owner's alone from its first byte;
 - **saved before memory changes**: the app writes the new state to disk first, and changes its
   memory only when that succeeded, so a failed save never leaves the screen saying what the file
   doesn't;
@@ -604,6 +630,10 @@ comes from one function that a test points at a temp dir.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-14 | minor | Two rules the skeleton already kept, now said: Never hang on another program, the process module starts every child without the control socket's token in its environment; State on disk, the one writer writes a secret (a token) its owner's alone from its first byte (swarm-core#116) |
+| 2026-11-14 | minor | One dispatch: a panic the dispatch caught is an `internal` whose message starts `panicked: ` and whose remediation is the testkit's `conformance::PANICKED`; Never crash's check: `conformance`'s `no-panic` fails on such an `internal` on every surface, valid params and adversarial, as on an uncaught panic, while a plain `internal` doesn't trip it. One dispatch's check: the call cancelled before it runs uses the command's example first, and is held to `no-panic` and `error-shape` as every other call is (swarm-core#110) |
+| 2026-11-14 | minor | [The App Substrate](app-substrate.html), this contract explained as a page beside it. It moves with this contract: it names the newest row here that it has been read against, and `the_app_substrate_page_has_caught_up_with_the_contract` fails when a change adds a row, until the page is re-read and its stamp moved on, in the same pull request (mornycorp/swarm-core#108). |
+| 2026-11-14 | minor | The UI is a client, [Colours from the theme](#colours-from-the-theme-words-from-the-catalog): what the colours, type and chrome are is [the App UI Substrate](app-ui-substrate.md), a pinned doc beside this one (mornycorp/swarm-core#104). |
 | 2026-11-13 | minor | The UI is a client, [Colours from the theme](#colours-from-the-theme-words-from-the-catalog): the skeleton's colours are the palette the swarm's tools share, so an app looks like them: its chrome tokens (surfaces, text, controls and highlights, states, each under a name for what it means), its series (Dark2 dark, Set2 light, `at(n)` as `n % 7` and a grey for none), its markers (Set1 with `#FF7F1C`, then grey) and its darker border for a filled entry; the 16 and 32 ranges are Swarm Core's own beyond them; a value taken from elsewhere that falls short of a contrast minimum is kept and recorded with its measured ratio, or nudged and listed as a divergence, never nudged silently (mornycorp/swarm-core#100). |
 | 2026-11-13 | minor | State on disk: the skeleton's one writer also makes a private file and one that is never written over what is there, so the control socket's token goes through it and no file write is allow-listed; a backend's `Failed` (a deadline, a refusing disk) reaches a caller as `unavailable`, not `internal` (swarm-core#94) |
 | 2026-11-13 | minor | Layers: only `backends` touches the outside. The process module and the one atomic file writer live there (the skeleton's `crates/backends`), so a backend can start a program or write a file through the same two modules; the engine keeps what is stored and when, and turns a backend's error into the command's. The layer is always there; a further backend is the app's choice. The `file-writes` scan reads every crate outside the layer (swarm-core#91) |

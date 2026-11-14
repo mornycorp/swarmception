@@ -39,6 +39,10 @@ pub const TEXT_CONTRAST: f64 = 4.5;
 /// The contrast a fill needs against the background, as a part of the interface (WCAG 2, 1.4.11: 3:1).
 pub const FILL_CONTRAST: f64 = 3.0;
 
+/// The corner radius of windows, menus and widgets, in points: near-square, the same in both looks
+/// (swarm-core's App UI Substrate › Corner radius). `theme.get` gives it as `corner_radius`.
+pub const CORNER_RADIUS: u8 = 2;
+
 /// A colour: 8-bit sRGB.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgb {
@@ -541,6 +545,8 @@ pub struct ThemeData {
     pub tokens: Vec<TokenData>,
     /// The categorical ranges, for identifiers.
     pub ranges: Vec<RangeData>,
+    /// The corner radius of windows, menus and widgets, in points ([`CORNER_RADIUS`]).
+    pub corner_radius: u8,
 }
 
 /// A token, as `theme.get` gives it.
@@ -606,7 +612,7 @@ impl EntryData {
 /// The theme as `theme.get` gives it.
 pub fn data() -> ThemeData {
     let tokens = TOKENS.iter().map(|t| TokenData { name: t.name.into(), meaning: t.meaning.into(), dark: t.dark.to_hex(), light: t.light.to_hex() }).collect();
-    ThemeData { tokens, ranges: RANGES.iter().map(range_data).collect() }
+    ThemeData { tokens, ranges: RANGES.iter().map(range_data).collect(), corner_radius: CORNER_RADIUS }
 }
 
 fn range_data(range: &Range) -> RangeData {
