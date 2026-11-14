@@ -44,8 +44,6 @@ use crate::factory_chip::Motion;
 use crate::factory_paint::{Drawn, Marks, Selected, WallView, paint};
 use crate::factory_stats::StatsStrip;
 use crate::icons;
-use crate::layout::{Chevron, fold_title};
-use crate::pane::Pane;
 use crate::part::Part;
 use crate::timeline::Looking;
 
@@ -271,8 +269,6 @@ pub struct FactoryPane {
     jump: Option<Jump>,
     /// The step that landed last.
     landed: Option<Landed>,
-    /// Its title was clicked last frame: fold it (#68).
-    fold: bool,
     /// The benches off shift were opened out of their fold last frame (#106): a fold opened since
     /// scrolls its first bench into view.
     off_shift: bool,
@@ -288,12 +284,6 @@ struct Play {
 }
 
 impl FactoryPane {
-    /// Whether its title was clicked last frame, to fold it (#68).
-    #[must_use]
-    pub const fn fold_asked(&self) -> bool {
-        self.fold
-    }
-
     /// The scene it shows: what `factory.at` returned for its *t*.
     #[must_use]
     pub const fn scene(&self) -> Option<&FactoryScene> {
@@ -589,8 +579,6 @@ impl FactoryPane {
     /// where *t* comes from, in a small label. No clock: the timeline's playhead is the time.
     fn header(&mut self, ui: &mut egui::Ui, view: &mut FactoryView) {
         let mut buttons = Vec::new();
-        self.fold = fold_title(ui, icons::for_pane(Pane::Factory), catalog::FACTORY, Chevron::Open).clicked();
-        ui.separator();
         let size = egui::vec2(BUTTON, ui.spacing().interact_size.y);
         let play = if view.playing { icons::PAUSE } else { icons::PLAY };
         let response = icons::named(ui.add_sized(size, icons::only(play)), catalog::PLAY_THE_TIMELINE_S_PLAYHEAD_RUNS);

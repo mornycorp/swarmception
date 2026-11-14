@@ -72,6 +72,12 @@ pub fn border(fill: Color32) -> Color32 {
     colour(theme::darker(Rgb::new(fill.r(), fill.g(), fill.b())))
 }
 
+/// `token` in egui's look: what drawing code outside this module asks for a token by.
+#[must_use]
+pub fn token(visuals: &Visuals, token: Token) -> Color32 {
+    colour(token.of(if visuals.dark_mode { Look::Dark } else { Look::Light }))
+}
+
 const fn colour(rgb: Rgb) -> Color32 {
     Color32::from_rgb(rgb.r, rgb.g, rgb.b)
 }

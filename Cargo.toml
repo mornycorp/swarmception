@@ -25,6 +25,10 @@ schemars = "1"
 serde_path_to_error = "0.1"
 egui = "0.37"
 eframe = "0.37"
+# The dock (swarm-core's App UI Substrate › The dock, #177): tabs and splits a person drags and
+# resizes, from rerun-io (MIT OR Apache-2.0), made for egui 0.37. Its own saved state is never
+# loaded: the UI state's layout is the source of truth.
+egui_tiles = { version = "0.18", default-features = false }
 # Screenshots as PNG (#60): already in the lock through egui's text rasterizer (epaint, glifo).
 png = "0.18"
 # The macOS system menu bar (owner-approved, 2026-10-31, #3); no GTK on Linux.

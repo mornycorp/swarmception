@@ -9,9 +9,11 @@ use std::fmt::Display;
 
 // ---- lib ------------------------------------------------------------------------------------
 
-pub const OPEN_THE_DETAILS: &str = "Open the Details";
-pub const DETAILS: &str = "details";
-pub const NO_PANE_IS_SHOWN_VIEW_TIMELINE: &str = "No pane is shown: View ▸ Timeline or Factory shows one.";
+pub const THE_DOCK_S_LAYOUT_IS_TOO_LARGE: &str = "the dock's layout nests deeper than 6 or holds more than 32 tabs, splits and panes: give a smaller one";
+pub const A_SPLIT_IN_THE_DOCK_S_LAYOUT: &str =
+    "a split in the dock's layout has no parts, or a part's share is 0 or over 1000: give each split one part or more, each with a share from 1 to 1000";
+pub const TABS_IN_THE_DOCK_S_LAYOUT_HAVE: &str = "tabs in the dock's layout have no panes: give tabs one pane or more";
+pub const NO_PANE_IS_SHOWN_VIEW_TIMELINE: &str = "No pane is shown: the View menu shows one.";
 pub const FILE: &str = "File";
 pub const VIEW: &str = "View";
 pub const TICKETS: &str = "Tickets";
@@ -439,9 +441,6 @@ pub fn ready_checks_passed_failed_with(a0: &dyn Display, a1: &dyn Display, a2: &
 pub fn active_of_on_shift(a0: &dyn Display, a1: &dyn Display) -> String {
     format!("active {} of {} on shift", a0, a1)
 }
-pub fn workers_model_effort(a0: &dyn Display) -> String {
-    format!("{}  Workers: model × effort", a0)
-}
 pub const NO_WORKERS_TO_COMPARE_YET: &str = "No workers to compare yet.";
 pub const NO_WORKER_WAS_ON_SHIFT_IN: &str = "No worker was on shift in this window.";
 pub const TICKETS_DIFFER_IN_SIZE_AND_KIND: &str =
@@ -483,16 +482,6 @@ pub fn utc_tickets_click_its_session(
 
 // ---- layout ---------------------------------------------------------------------------------
 
-pub fn fold_the_to_its_header(name: &dyn Display) -> String {
-    format!("Fold the {name} to its header")
-}
-pub fn fold_the_to_a_strip(name: &dyn Display) -> String {
-    format!("Fold the {name} to a strip")
-}
-pub fn open_the(name: &dyn Display) -> String {
-    format!("Open the {name}")
-}
-
 // ---- menu -----------------------------------------------------------------------------------
 
 pub const OPEN_RECENT: &str = "Open Recent";
@@ -524,6 +513,7 @@ mod tests {
     const ALLOWED: &[(&str, usize, &str)] = &[
         ("control.rs", 25, "the control protocol: its commands' ids and errors, for agents"),
         ("details.rs", 0, ""),
+        ("dock.rs", 0, ""),
         ("factory.rs", 13, "its steps' ids and the header's button names, which ui.inspect reports"),
         ("factory_chip.rs", 0, ""),
         ("factory_paint.rs", 8, "the stations a chip is at, which ui.inspect reports; a model's and a ready check's prefixes"),
@@ -532,12 +522,11 @@ mod tests {
         ("density.rs", 0, ""),
         ("fonts.rs", 17, "the faces' names and files, the named families' and text styles' keys: ids egui looks them up by"),
         ("icons.rs", 0, ""),
-        ("layout.rs", 0, ""),
-        ("lib.rs", 2, "a band's name, which ui.inspect reports, and the refs' prefix"),
+        ("lib.rs", 1, "the refs' prefix"),
         ("menu.rs", 29, "the menu items' ids and the registry's menu paths"),
         ("open.rs", 0, ""),
         ("pane.rs", 0, ""),
-        ("saved.rs", 43, "the state file's notes and errors, made where the file is read: not drawing code"),
+        ("saved.rs", 44, "the state file's notes and errors, made where the file is read: not drawing code"),
         ("shot.rs", 3, "the image formats' names"),
         ("timeline.rs", 0, ""),
         ("workers.rs", 0, ""),

@@ -15,6 +15,7 @@ mod catalog;
 pub mod control;
 pub mod density;
 mod details;
+pub mod dock;
 mod factory;
 mod factory_chip;
 mod factory_paint;
@@ -22,7 +23,6 @@ mod factory_stats;
 mod factory_tip;
 pub mod fonts;
 pub mod icons;
-pub mod layout;
 pub mod menu;
 mod open;
 pub mod pane;
@@ -43,6 +43,7 @@ use swarmception_engine::{Github, Session};
 
 use crate::pane::Pane;
 use crate::part::Part;
+pub use dock::DockNode;
 use swarmception_domain::details::Subject;
 use swarmception_engine::details_cmds::{DetailsParams, Get as GetDetails};
 use swarmception_engine::engine_cmds::NoParams;
@@ -63,8 +64,7 @@ pub use menu::{MenuAction, MenuState};
 pub use open::{FolderPicker, MenuDrawn, OpenInspect, Picked, Refused};
 pub use timeline::{Hover, Lit, Looking, SETTLE as COLLAPSE_SETTLE, Selection, TOOLBAR as TIMELINE_TOOLBAR, TimeAxis, TimelinePane, TimelineView};
 pub use workers::{
-    Column as WorkersColumn, Place as WorkersPlace, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView,
-    cells as worker_cells,
+    Column as WorkersColumn, RowDrawn as WorkerRowDrawn, RowKind as WorkerRowKind, WorkersDrawn, WorkersPane, WorkersView, cells as worker_cells,
 };
 
 /// [`UiState`]'s shape; an older one still reads. 2: the factory pane and its time; 3: the
@@ -74,8 +74,9 @@ pub use workers::{
 /// factory's `t` is gone, and an older state's is dropped as it reads); 10: folding the timeline's
 /// quiet time (#86, `fold`; an older state's is off); 11: the factory's benches off shift opened
 /// out of their fold (#106, `factory.off_shift`; an older state's are folded); 12: the gates pane
-/// gone (#128: an older state's `gates` is dropped as it reads).
-pub const UI_STATE_VERSION: u32 = 12;
+/// gone (#128: an older state's `gates` is dropped as it reads); 13: the dock (#177, `dock`: an
+/// older state's panes' sizes and folds, and the Workers window's place, are dropped as it reads).
+pub const UI_STATE_VERSION: u32 = 13;
 
 /// Folding the timeline's quiet time (#86): View ▸ Fold Quiet Time, the toolbar's checkbox and
 /// `ui.set`'s `foldQuiet` turn it on; the widget then folds each stretch where no row has
@@ -121,17 +122,6 @@ impl Default for Panes {
     }
 }
 
-/// The panes' sizes, in whole points, their margins included (#53): the details pane's width as
-/// last drawn; the factory's height under the timeline as the person
-/// dragged them (#68: they give way when the timeline needs the room, and come back when it
-/// doesn't). None: the default for the window's size ([`layout::defaults`]).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(default, deny_unknown_fields)]
-pub struct PaneSizes {
-    pub details: Option<u32>,
-    pub factory: Option<u32>,
-}
-
 /// What the shell keeps between frames: plain data, kept across a restart ([`saved`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
@@ -141,10 +131,8 @@ pub struct UiState {
     pub factory: FactoryView,
     /// What the details pane tells the story of.
     pub details: DetailsView,
-    /// The panes' sizes (#53).
-    pub sizes: PaneSizes,
-    /// Which panes are folded (#68): the person's choice, else the window's size decides.
-    pub folded: layout::Folded,
+    /// Where the dock's panes are (#177); none for the default layout ([`DockNode::default_layout`]).
+    pub dock: Option<DockNode>,
     /// What the workers pane compares over, and its sort (#67); where its window is (#76).
     pub workers: WorkersView,
     /// Folding the timeline's quiet time (#86): off by default.
@@ -158,8 +146,7 @@ impl Default for UiState {
             panes: Panes::default(),
             factory: FactoryView::default(),
             details: DetailsView::default(),
-            sizes: PaneSizes::default(),
-            folded: layout::Folded::default(),
+            dock: None,
             workers: WorkersView::default(),
             fold: FoldView::default(),
         }
@@ -196,8 +183,10 @@ pub struct Shell {
     keeper: Option<saved::Keeper>,
     /// The window's size and place on screen, as last drawn (or as restored).
     window_place: Option<saved::WindowPlace>,
-    /// How the panes shared the window last frame (#68).
-    layout: layout::LayoutDrawn,
+    /// The dock's tiles (#177), built from the state's layout.
+    dock: Option<dock::Dock>,
+    /// Each pane the dock drew last frame, and its size.
+    drawn_panes: Vec<PaneDrawn>,
     /// Opening repositories (#69): the folder picker, the recent list, a refusal shown.
     opening: open::Opening,
 }
@@ -236,7 +225,8 @@ impl Shell {
             opened: Vec::new(),
             keeper: None,
             window_place: None,
-            layout: layout::LayoutDrawn::default(),
+            dock: None,
+            drawn_panes: Vec::new(),
             opening: open::Opening::default(),
         };
         if let Some(repo) = repo {
@@ -635,13 +625,13 @@ impl Shell {
             self.step_factory(ui.ctx());
         }
         self.details.sync(&mut self.engine, &self.ui.details);
-        let defaults = layout::defaults(ui.ctx().content_rect().size());
-        self.layout = layout::LayoutDrawn::default();
-        if self.ui.panes.details {
-            self.details_ui(ui, &defaults);
+        if !self.ui.panes.workers {
+            self.workers.leave();
         }
-        egui::CentralPanel::default().show(ui, |ui| self.central(ui, &defaults));
-        self.workers_window(ui.ctx());
+        // The dock under the toolbar (#177), in a gap of `chrome` around and between its panes.
+        let colours = dock::Colours::of(ui.visuals());
+        let gap = egui::Frame::NONE.fill(colours.chrome).inner_margin(egui::Margin::same(dock::GAP_MARGIN));
+        egui::CentralPanel::default().frame(gap).show(ui, |ui| self.dock_ui(ui, colours));
         if let Some(hour) = self.factory.strip().drawn().chosen {
             self.show_hour(hour);
             ui.ctx().request_repaint();
@@ -779,168 +769,66 @@ impl Shell {
         }
     }
 
-    /// The Details pane on the right (#47): resizable, or folded to a strip (#68).
-    fn details_ui(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
-        let folded = self.ui.folded.details.or(defaults.folded.details).unwrap_or(false);
-        let wanted = self.ui.sizes.details.map_or(defaults.details, points_f32);
-        let shown = if folded {
-            let shown = egui::Panel::right(Part::DetailsStrip.id()).resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
-                ui.vertical_centered(|ui| {
-                    let chevron = icons::named(ui.add(icons::only(icons::CHEVRON_LEFT).frame(false)), catalog::OPEN_THE_DETAILS);
-                    let glyph = icons::glyph(ui.ctx(), icons::for_pane(Pane::Details)).strong();
-                    let icon = ui.add(egui::Label::new(glyph).sense(egui::Sense::click())).on_hover_text(catalog::OPEN_THE_DETAILS);
-                    chevron.clicked() || icon.clicked()
-                })
-                .inner
-            });
-            if shown.inner {
-                self.ui.folded.details = Some(false);
-            }
-            shown.response.rect.width()
-        } else {
-            let width = ui.available_width();
-            let shown = egui::Panel::right(Part::Details.id())
-                .resizable(true)
-                .default_size(wanted)
-                .size_range(220.0..=(width - layout::CENTRAL_LEAST_WIDTH).max(220.0))
-                .show(ui, |ui| self.details.ui(ui, &self.ui.details));
-            self.ui.sizes.details = Some(whole_points(shown.response.rect.width()));
-            if self.details.drawn().fold {
-                self.ui.folded.details = Some(true);
-            }
-            shown.response.rect.width()
+    /// The dock (#177): its tiles built from the state's layout when it changed since they were
+    /// (an agent's `ui.set`, a restored launch), the View menu's panes shown, each pane drawn in
+    /// its tile, and what a person dragged or resized set as the state's layout.
+    fn dock_ui(&mut self, ui: &mut egui::Ui, colours: dock::Colours) {
+        let wanted = self.ui.dock.clone().unwrap_or_else(DockNode::default_layout);
+        let mut tiles = match self.dock.take() {
+            Some(tiles) if tiles.built_from(&wanted) => tiles,
+            _ => dock::Dock::of(&wanted),
         };
-        self.layout.details = Some(layout::BandDrawn {
-            name: catalog::DETAILS.into(),
-            size: whole_points(shown),
-            wanted: whole_points(wanted),
-            folded,
-            default_fold: self.ui.folded.details.is_none(),
-        });
+        tiles.show_panes(self.ui.panes);
+        self.drawn_panes.clear();
+        if Pane::ALL.iter().all(|&pane| !dock::shows(self.ui.panes, pane)) {
+            ui.centered_and_justified(|ui| ui.weak(catalog::NO_PANE_IS_SHOWN_VIEW_TIMELINE));
+        } else {
+            let mut focused = tiles.focused();
+            let mut panes = DockPanes { shell: self, colours, focused: &mut focused, ctx: ui.ctx().clone() };
+            tiles.tree_mut().ui(&mut panes, ui);
+            tiles.set_focused(focused);
+        }
+        if let Some(layout) = tiles.changed() {
+            self.ui.dock = Some(layout);
+        }
+        self.dock = Some(tiles);
     }
 
-    /// The workers pane (#67), a window over the others when it shows: `workers.compare` for the
-    /// timeline's window (the whole run when asked, or with no timeline), when the window or the
-    /// data moved on; its × closes it as View ▸ Workers does.
-    fn workers_window(&mut self, ctx: &egui::Context) {
-        if !self.ui.panes.workers {
-            self.workers.leave();
-            return;
+    /// What `pane` draws in its tile, and its size noted for `ui.inspect`.
+    fn pane_ui(&mut self, ui: &mut egui::Ui, pane: Pane) {
+        let size = ui.max_rect().size();
+        self.drawn_panes.push(PaneDrawn { pane, width: whole_points(size.x), height: whole_points(size.y) });
+        match pane {
+            Pane::Timeline => self.timeline.ui(ui, &self.status),
+            Pane::Factory => self.factory.ui(ui, &mut self.ui.factory, &self.status),
+            Pane::Details => self.details.ui(ui, &self.ui.details),
+            Pane::Workers => self.workers_pane(ui),
         }
+    }
+
+    /// The workers pane (#67): `workers.compare` for the timeline's window (the whole run when
+    /// asked, or with no timeline), when the window or the data moved on.
+    fn workers_pane(&mut self, ui: &mut egui::Ui) {
         let windowed = self.ui.panes.timeline && self.timeline.has_data();
         let window = if windowed && !self.ui.workers.whole_run { self.timeline.looking(&mut self.engine).and_then(|l| l.window) } else { None };
         self.workers.sync(&mut self.engine, window);
-        let mut open = true;
         let before = self.ui.workers;
-        self.workers.show(ctx, &mut self.ui.workers, &mut open, windowed, self.ui.details.subject.as_ref());
-        self.ui.panes.workers = open;
+        self.workers.ui(ui, &mut self.ui.workers, windowed, self.ui.details.subject.as_ref());
         if self.ui.workers != before {
-            ctx.request_repaint();
+            ui.ctx().request_repaint();
         }
     }
 
-    /// The central area (#68's rule, [`layout`]): the timeline, under it the bands (the factory),
-    /// each as shown, folded or not, sharing the height by
-    /// [`layout::share`]: the timeline keeps its least while the bands can give way. Without the
-    /// timeline the last open band fills the rest.
-    fn central(&mut self, ui: &mut egui::Ui, defaults: &layout::Defaults) {
-        let panes = self.ui.panes;
-        if !panes.timeline && !panes.factory {
-            ui.centered_and_justified(|ui| ui.weak(catalog::NO_PANE_IS_SHOWN_VIEW_TIMELINE));
-            return;
-        }
-        let folded = self.ui.folded.or(defaults.folded);
-        let mut bands: Vec<BandKind> = BandKind::ALL.into_iter().filter(|kind| kind.shown(panes)).collect();
-        // What fills the rest: the timeline, else the last open band.
-        let filler = if panes.timeline { None } else { bands.iter().rposition(|kind| !kind.folded(folded)).map(|at| bands.remove(at)) };
-        let least = if panes.timeline { self.timeline.least() } else { filler.map_or(0.0, BandKind::least) };
-        let specs: Vec<layout::Band> = bands
-            .iter()
-            .map(|kind| layout::Band {
-                wanted: kind.size(self.ui.sizes).map_or(kind.default(defaults), points_f32),
-                least: kind.least(),
-                folded: kind.folded(folded),
-            })
-            .collect();
-        let heights = layout::share(ui.available_height(), least, &specs);
-        let mut drawn = Vec::new();
-        // From the bottom up: each band a panel at its share, under the one before.
-        for ((kind, spec), height) in bands.iter().zip(&specs).zip(&heights).rev() {
-            let shown = self.band(ui, *kind, *height, spec);
-            drawn.push(layout::BandDrawn {
-                name: kind.name().into(),
-                size: whole_points(shown),
-                wanted: whole_points(spec.wanted),
-                folded: spec.folded,
-                default_fold: kind.chosen(self.ui.folded).is_none(),
-            });
-        }
-        drawn.reverse();
-        self.layout.timeline_least = whole_points(least);
-        if panes.timeline {
-            self.layout.timeline = Some(whole_points(ui.available_height()));
-            self.timeline.ui(ui, &self.status);
-        } else if let Some(kind) = filler {
-            let rest = whole_points(ui.available_height());
-            drawn.push(layout::BandDrawn {
-                name: kind.name().into(),
-                size: rest,
-                wanted: rest,
-                folded: false,
-                default_fold: kind.chosen(self.ui.folded).is_none(),
-            });
-            self.band_contents(ui, kind);
-        }
-        self.layout.bands = drawn;
-    }
-
-    /// Band `kind` as a panel `height` high at the bottom of what is left: its contents, or its
-    /// header alone when folded; open, its top edge drags its height. Its height drawn.
-    fn band(&mut self, ui: &mut egui::Ui, kind: BandKind, height: f32, spec: &layout::Band) -> f32 {
-        let shown = egui::Panel::bottom(Part::Band(kind).id()).resizable(false).exact_size(height).show(ui, |ui| {
-            if spec.folded {
-                ui.horizontal_centered(|ui| {
-                    if layout::fold_title(ui, kind.icon(), kind.title(), layout::Chevron::Folded).clicked() {
-                        kind.set_folded(&mut self.ui.folded, false);
-                    }
-                });
-            } else {
-                self.band_contents(ui, kind);
-            }
-        });
-        let rect = shown.response.rect;
-        if !spec.folded {
-            let edge = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.top() - 3.0), egui::pos2(rect.right(), rect.top() + 3.0));
-            let response = ui.interact(edge, ui.scope_id().with((Part::BandEdge(kind),)), egui::Sense::drag());
-            if response.hovered() || response.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                ui.painter().hline(rect.x_range(), rect.top(), ui.visuals().widgets.hovered.fg_stroke);
-            }
-            if response.dragged() && response.drag_delta().y != 0.0 {
-                let wanted = (rect.height() - response.drag_delta().y).max(spec.least);
-                kind.set_size(&mut self.ui.sizes, Some(whole_points(wanted)));
-            }
-        }
-        rect.height()
-    }
-
-    /// What band `kind` draws open; a click on its title folds it.
-    fn band_contents(&mut self, ui: &mut egui::Ui, kind: BandKind) {
-        let fold = match kind {
-            BandKind::Factory => {
-                self.factory.ui(ui, &mut self.ui.factory, &self.status);
-                self.factory.fold_asked()
-            }
-        };
-        if fold {
-            kind.set_folded(&mut self.ui.folded, true);
-        }
-    }
-
-    /// How the panes shared the window last frame (#68, `ui.inspect`'s `layout`).
+    /// Each pane the dock drew last frame, and its size (`ui.inspect`'s `panes`).
     #[must_use]
-    pub const fn layout(&self) -> &layout::LayoutDrawn {
-        &self.layout
+    pub fn drawn_panes(&self) -> &[PaneDrawn] {
+        &self.drawn_panes
+    }
+
+    /// The layout the dock shows (`ui.inspect`'s `dock`): the state's, or the default.
+    #[must_use]
+    pub fn dock_layout(&self) -> DockNode {
+        self.dock.as_ref().and_then(dock::Dock::layout).or_else(|| self.ui.dock.clone()).unwrap_or_else(DockNode::default_layout)
     }
 
     /// A new subject in the details pane (from the pane, the factory, the timeline, `ui.set` or
@@ -1269,93 +1157,124 @@ impl Shell {
     }
 }
 
-/// A size in whole points, as [`PaneSizes`] keeps it.
-/// A band under the timeline (#68), top to bottom in [`BandKind::ALL`]: a pane that slots in
-/// under the timeline adds itself here, with its least height, default, fold and size, and
-/// [`layout::share`] gives it its room.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum BandKind {
-    Factory,
+/// A pane the dock drew (#177), as `ui.inspect` reports it: which, and its size in whole points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct PaneDrawn {
+    pub pane: Pane,
+    pub width: u32,
+    pub height: u32,
 }
 
-impl BandKind {
-    const ALL: [Self; 1] = [Self::Factory];
+/// How the dock draws (#177): each pane's contents in its frame, its tabs, gaps and drag previews
+/// in the theme's tokens ([`dock::Colours`]).
+struct DockPanes<'a> {
+    shell: &'a mut Shell,
+    colours: dock::Colours,
+    focused: &'a mut Option<Pane>,
+    ctx: egui::Context,
+}
 
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Factory => "factory",
+impl egui_tiles::Behavior<Pane> for DockPanes<'_> {
+    fn pane_ui(&mut self, ui: &mut egui::Ui, _tile: egui_tiles::TileId, pane: &mut Pane) -> egui_tiles::UiResponse {
+        if ui.input(|i| i.pointer.any_pressed()) && ui.rect_contains_pointer(ui.max_rect()) {
+            *self.focused = Some(*pane);
         }
+        let frame = egui::Frame::NONE
+            .fill(self.colours.background)
+            .stroke(egui::Stroke::new(1.0, self.colours.frame))
+            .inner_margin(egui::Margin::same(dock::PANE_MARGIN));
+        frame.show(ui, |ui| {
+            ui.set_min_size(ui.available_size());
+            self.shell.pane_ui(ui, *pane);
+        });
+        egui_tiles::UiResponse::None
     }
 
-    const fn title(self) -> &'static str {
-        match self {
-            Self::Factory => catalog::FACTORY,
-        }
+    fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
+        icons::titled(&self.ctx, icons::for_pane(*pane), pane.title())
     }
 
-    const fn icon(self) -> icons::Icon {
-        match self {
-            Self::Factory => icons::for_pane(Pane::Factory),
+    fn on_tab_button(&mut self, tiles: &mut egui_tiles::Tiles<Pane>, tile: egui_tiles::TileId, response: egui::Response) -> egui::Response {
+        let focused = matches!(tiles.get(tile), Some(egui_tiles::Tile::Pane(pane)) if Some(*pane) == *self.focused);
+        if focused {
+            let rect = response.rect;
+            let line = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 2.0), rect.right_bottom());
+            response.ctx.layer_painter(response.layer_id).rect_filled(line, 0.0, self.colours.accent);
         }
+        response
     }
 
-    const fn shown(self, panes: Panes) -> bool {
-        match self {
-            Self::Factory => panes.factory,
-        }
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        dock::look::tab_bar_height()
     }
 
-    /// The least it shrinks to while open: the factory's header and a floor.
-    const fn least(self) -> f32 {
-        match self {
-            Self::Factory => 140.0,
-        }
+    fn gap_width(&self, _style: &egui::Style) -> f32 {
+        dock::look::gap()
     }
 
-    const fn default(self, defaults: &layout::Defaults) -> f32 {
-        match self {
-            Self::Factory => defaults.factory,
-        }
+    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
+        dock::look::simplification()
     }
 
-    const fn size(self, sizes: PaneSizes) -> Option<u32> {
-        match self {
-            Self::Factory => sizes.factory,
-        }
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        self.colours.header
     }
 
-    const fn set_size(self, sizes: &mut PaneSizes, size: Option<u32>) {
-        match self {
-            Self::Factory => sizes.factory = size,
-        }
+    fn tab_bg_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<Pane>,
+        _tile: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        self.colours.tab_fill(state.active)
     }
 
-    /// The person's choice of fold, if they made one.
-    const fn chosen(self, folded: layout::Folded) -> Option<bool> {
-        match self {
-            Self::Factory => folded.factory,
-        }
+    fn tab_outline_stroke(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<Pane>,
+        _tile: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Stroke {
+        dock::look::tab_outline(&self.colours, state)
     }
 
-    /// Whether it is folded, the choices and defaults merged in `folded`.
-    fn folded(self, folded: layout::Folded) -> bool {
-        self.chosen(folded).unwrap_or(false)
+    fn tab_bar_hline_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        egui::Stroke::new(1.0, self.colours.frame)
     }
 
-    const fn set_folded(self, folded: &mut layout::Folded, fold: bool) {
-        match self {
-            Self::Factory => folded.factory = Some(fold),
-        }
+    fn tab_text_color(
+        &self,
+        _visuals: &egui::Visuals,
+        _tiles: &egui_tiles::Tiles<Pane>,
+        _tile: egui_tiles::TileId,
+        state: &egui_tiles::TabState,
+    ) -> egui::Color32 {
+        self.colours.tab_text(state.active)
+    }
+
+    fn resize_stroke(&self, _style: &egui::Style, state: egui_tiles::ResizeState) -> egui::Stroke {
+        dock::look::resize(&self.colours, state)
+    }
+
+    fn dragged_overlay_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        self.colours.accent.gamma_multiply(0.4)
+    }
+
+    fn drag_preview_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        egui::Stroke::new(1.0, self.colours.accent)
+    }
+
+    fn drag_preview_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        self.colours.accent.gamma_multiply(0.15)
     }
 }
 
+/// A size in whole points.
+#[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss, reason = "clamped to 0..=16384 first")]
 fn whole_points(size: f32) -> u32 {
     if size.is_finite() { size.round().clamp(0.0, 16_384.0) as u32 } else { 0 }
-}
-
-/// A [`PaneSizes`] size as egui takes it.
-const fn points_f32(size: u32) -> f32 {
-    size as f32
 }
 
 /// A registry shortcut as egui's: the platform's command key, Shift or not, the letter.
@@ -1382,26 +1301,19 @@ mod tests {
         assert!(old.panes.details && old.details.subject.is_none(), "the details pane, with nothing selected");
         let selected: UiState = serde_json::from_str(r#"{"version":3,"details":{"subject":{"ticket":{"issue":47}}}}"#).unwrap();
         assert_eq!(selected.details.subject, Some(Subject::Ticket { issue: 47 }));
-        // Version 4: the factory's height kept.
-        let four: UiState = serde_json::from_str(r#"{"version":4,"panes":{"details":false},"sizes":{"factory":300}}"#).unwrap();
-        assert_eq!(four.sizes.factory, Some(300));
         // Version 6, before the workers pane (#67): hidden, over the timeline's window, unsorted.
         let five: UiState = serde_json::from_str(r#"{"version":6,"panes":{"details":false}}"#).unwrap();
         assert_eq!((five.panes.workers, five.workers), (false, WorkersView::default()));
         let sorted = UiState {
             panes: Panes { workers: true, ..Panes::default() },
-            workers: WorkersView { whole_run: true, sort: Some(WorkersColumn::Rate), ascending: false, place: Some(WorkersPlace { x: 40, y: -12 }) },
+            workers: WorkersView { whole_run: true, sort: Some(WorkersColumn::Rate), ascending: false },
             ..UiState::default()
         };
         assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&sorted).unwrap()).unwrap(), sorted);
         // Version 7, before the window's place (#76): at its default place, its sort kept.
         let seven: UiState = serde_json::from_str(r#"{"version":7,"workers":{"whole_run":true,"sort":"landed","ascending":true}}"#).unwrap();
-        assert_eq!(seven.workers, WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: true, place: None });
-        let hidden = UiState {
-            panes: Panes { factory: false, ..Panes::default() },
-            sizes: PaneSizes { factory: Some(180), ..PaneSizes::default() },
-            ..UiState::default()
-        };
+        assert_eq!(seven.workers, WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: true });
+        let hidden = UiState { panes: Panes { factory: false, ..Panes::default() }, dock: Some(DockNode::tab(Pane::Timeline)), ..UiState::default() };
         assert_eq!(serde_json::from_str::<UiState>(&serde_json::to_string(&hidden).unwrap()).unwrap(), hidden);
     }
 

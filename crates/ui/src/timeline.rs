@@ -927,22 +927,6 @@ impl TimelinePane {
         }
     }
 
-    /// The least height the pane keeps (#68, [`crate::layout::timeline_least`]): its toolbar, the
-    /// rulers, the merges rows and six rows under them (all when there are fewer), and the
-    /// scroller; [`crate::layout::TIMELINE_LEAST_UNMEASURED`] before it has data.
-    pub fn least(&mut self) -> f32 {
-        if !self.has_data {
-            return crate::layout::TIMELINE_LEAST_UNMEASURED;
-        }
-        let Ok(layout) = self.widget.session().call::<Layout>(LayoutParams { pane: 100_000.0, scroll: 0.0 }) else {
-            return crate::layout::TIMELINE_LEAST_UNMEASURED;
-        };
-        let first = layout.rows.first().map_or(layout.top, |row| row.y);
-        let trough = (layout.bands.trough.bottom - layout.bands.trough.top).max(0.0);
-        let heights: Vec<f32> = layout.rows.iter().map(|row| row.height).collect();
-        crate::layout::timeline_least(self.toolbar_height + first + trough, &heights)
-    }
-
     /// The rows at least partly on screen last frame, top to bottom (`ui.inspect`'s
     /// `timeline.inView`, #68).
     pub fn rows_in_view(&mut self) -> Vec<String> {

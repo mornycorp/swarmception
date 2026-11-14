@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 use swarmception_domain::RowsSpec;
 
 use crate::timeline::TimelineView;
-use crate::{DetailsView, FactoryView, PaneSizes, Panes, UI_STATE_VERSION, UiState, WorkersView};
+use crate::{DetailsView, DockNode, FactoryView, Panes, UI_STATE_VERSION, UiState, WorkersView};
 
 /// [`AppState`]'s shape. An older file is migrated (fewer sections, each read as this version's);
 /// a newer one is refused and left alone (#165). 2: the rows' collapse
@@ -383,10 +383,10 @@ struct UiSections {
     factory: Option<serde_json::Value>,
     #[serde(default)]
     details: Option<serde_json::Value>,
+    /// The dock's layout (#177, version 13). An older state's panes' sizes and folds (#53, #68)
+    /// aren't read: the dock places the panes now.
     #[serde(default)]
-    sizes: Option<serde_json::Value>,
-    #[serde(default)]
-    folded: Option<serde_json::Value>,
+    dock: Option<serde_json::Value>,
     workers: Option<serde_json::Value>,
     /// Folding the timeline's quiet time (#86, version 10): off in an older state.
     #[serde(default)]
@@ -423,6 +423,28 @@ fn without_gates(mut section: serde_json::Value) -> serde_json::Value {
     section
 }
 
+/// The Workers' section without the place of the window it was (#76, up to version 12 of the
+/// shell's state): it is a pane of the dock now (#177).
+fn without_place(mut section: serde_json::Value) -> serde_json::Value {
+    if let Some(fields) = section.as_object_mut() {
+        fields.remove("place");
+    }
+    section
+}
+
+/// The dock's layout, as [`section`] reads one, and refused as a section that doesn't read when
+/// [`DockNode::check`] refuses it (too deep, too large, an empty split or tabs, a share out of range).
+fn dock_section(value: Option<serde_json::Value>, skipped: &mut Vec<&'static str>) -> Option<DockNode> {
+    let dock: Option<DockNode> = section(value, "dock", skipped);
+    match dock {
+        Some(dock) if dock.check().is_err() => {
+            skipped.push("dock");
+            None
+        }
+        dock => dock,
+    }
+}
+
 /// The state in `text`, saved for `repo`, and a note on what was left out; an error saying why
 /// none of it is read: corrupt, another repository's, or a newer build's (#165: refused, not read
 /// in part). An older version is migrated: each section read as this version's, the shapes it
@@ -445,9 +467,8 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         panes: section::<Panes>(ui.panes.map(without_gates), "panes", &mut skipped),
         factory: section::<FactoryView>(ui.factory.map(without_time), "factory", &mut skipped),
         details: section::<DetailsView>(ui.details, "details", &mut skipped),
-        sizes: section::<PaneSizes>(ui.sizes.map(without_gates), "sizes", &mut skipped),
-        folded: section::<crate::layout::Folded>(ui.folded.map(without_gates), "folded", &mut skipped),
-        workers: section::<WorkersView>(ui.workers, "workers", &mut skipped),
+        dock: dock_section(ui.dock, &mut skipped),
+        workers: section::<WorkersView>(ui.workers.map(without_place), "workers", &mut skipped),
         fold: section::<crate::FoldView>(ui.fold, "fold", &mut skipped),
     });
     let state = AppState {
@@ -720,7 +741,7 @@ mod tests {
         assert_eq!((one.state.unwrap().rows.collapse, one.note, one.left_alone), (swarmception_domain::Collapse::Off, None, false));
         let two = load(r#"{"version": 2, "repo": "/r/swarm", "rows": {"collapse": "window"}}"#);
         assert_eq!(two.state.unwrap().rows.collapse, swarmception_domain::Collapse::Window);
-        assert_eq!((state.ui.sizes, state.window, older.note), (PaneSizes::default(), None, None));
+        assert_eq!((state.ui.dock, state.window, older.note), (None, None, None));
         // Version 8 of the shell's state kept the factory's own time (#85): it reads on without it,
         // its other settings kept, nothing said.
         let eight = load(
@@ -734,7 +755,19 @@ mod tests {
                 "sizes": {"gates": 160, "factory": 300}, "folded": {"gates": true, "factory": true}}}"#,
         );
         let ui = eleven.state.unwrap().ui;
-        assert_eq!((ui.panes.details, ui.sizes.factory, ui.folded.factory, eleven.note), (false, Some(300), Some(true), None));
+        assert_eq!((ui.panes.details, ui.dock, eleven.note), (false, None, None), "the sizes and folds dropped: the dock's default");
+        // Version 12 kept the Workers window's place (#76): dropped, its sort kept, nothing said;
+        // version 13's dock reads, and one the dock refuses is a section that doesn't read.
+        let twelve = load(r#"{"version": 2, "repo": "/r/swarm", "ui": {"version": 12, "workers": {"sort": "rate", "place": {"x": 3, "y": 4}}}}"#);
+        assert_eq!((twelve.state.unwrap().ui.workers.sort, twelve.note), (Some(crate::WorkersColumn::Rate), None));
+        let docked =
+            load(r#"{"version": 2, "repo": "/r/swarm", "ui": {"version": 13, "dock": {"kind": "tabs", "panes": ["factory", "timeline"], "active": 1}}}"#);
+        let dock = DockNode::Tabs { panes: vec![crate::pane::Pane::Factory, crate::pane::Pane::Timeline], active: 1 };
+        assert_eq!((docked.state.unwrap().ui.dock, docked.left_alone), (Some(dock), false));
+        for bad in [r#"{"kind": "tabs", "panes": [], "active": 0}"#, r#"{"kind": "tabs", "panes": ["gates"], "active": 0}"#] {
+            let refused = load(&format!(r#"{{"version": 2, "repo": "/r/swarm", "ui": {{"version": 13, "dock": {bad}}}}}"#));
+            assert!(refused.left_alone && refused.note.as_deref().is_some_and(|n| n.contains("dock")), "{bad}: {:?}", refused.note);
+        }
 
         // A newer one: refused whole, not read in part, and left alone.
         let newer = load(

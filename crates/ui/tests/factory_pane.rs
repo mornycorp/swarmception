@@ -757,7 +757,8 @@ fn stepping_by_key_moment_back_and_forth_names_each_and_moves_the_playhead() {
 
     // A click on the timeline takes the keyboard there: → is the timeline's, not the factory's;
     // the factory shows wherever the timeline's playhead is (#85).
-    click_at(&mut shell, &ctx, egui::pos2(700.0, 150.0));
+    let on_timeline = shell.bar_point(7).expect("#7's bar on the timeline");
+    click_at(&mut shell, &ctx, on_timeline);
     press(&mut shell, &ctx, egui::Key::ArrowRight);
     frame(&mut shell, &ctx);
     assert_eq!(shell.factory().moment(), None, "no step of the factory's");

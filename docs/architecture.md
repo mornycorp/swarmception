@@ -3,7 +3,7 @@
      you paid for (docs/lessons.md). -->
 # Architecture
 
-> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-14 · **Change:** minor (icons from Font Awesome 6's own family, by command and pane, #176; swarm-core e4b251d: how the window looks is its App UI Substrate, the corner radius in `theme.get`, #174; words from the catalog, no colour made in drawing code, #162; typed egui ids, #163; one file writer and one process runner in `source`, `cargo xtask writes`, #164; File's commands from the registry, `engine.states`, #160; `repo.open` checks the folder in the background, #161; a saved state this build can't wholly read is left alone, #165; the swarm's colours in both looks, `Paint` and `theme.set`, #154; colours from swarm-core's theme, `theme.get`, #152; group idle benches and opt-in X row constraint, #147; reconcile main merge evidence and bound stopped/unresolved ticket histories, #142; Alt + click on a ticket's bar shows its end, by the pin to swarm-timeline 7e372fe, #137; the minimap draws the tickets' strips, #134; a sent-back ticket's red corner, merge dots optional, a red dot where given up, #127; the Gates band removed, #128; a stage named everywhere in its strip's colour, `Stage::colour` the one source, and no Gate runs or Ready checks rows, #117; merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
+> **Last reviewed:** 2026-11-02 · **Last updated:** 2026-11-14 · **Change:** minor (the panes in a dock of `egui_tiles`, its layout the UI state's `dock`, #177; icons from Font Awesome 6's own family, by command and pane, #176; swarm-core e4b251d: how the window looks is its App UI Substrate, the corner radius in `theme.get`, #174; words from the catalog, no colour made in drawing code, #162; typed egui ids, #163; one file writer and one process runner in `source`, `cargo xtask writes`, #164; File's commands from the registry, `engine.states`, #160; `repo.open` checks the folder in the background, #161; a saved state this build can't wholly read is left alone, #165; the swarm's colours in both looks, `Paint` and `theme.set`, #154; colours from swarm-core's theme, `theme.get`, #152; group idle benches and opt-in X row constraint, #147; reconcile main merge evidence and bound stopped/unresolved ticket histories, #142; Alt + click on a ticket's bar shows its end, by the pin to swarm-timeline 7e372fe, #137; the minimap draws the tickets' strips, #134; a sent-back ticket's red corner, merge dots optional, a red dot where given up, #127; the Gates band removed, #128; a stage named everywhere in its strip's colour, `Stage::colour` the one source, and no Gate runs or Ready checks rows, #117; merges as markers of no length, an item of no width each, #115; a ticket is one bar in its own colour, its stages a strip along its foot, its send-backs and merge marks, by the pin to swarm-timeline da78ff5 (its glyphs and strips), #110; a gate's failure reads as a send-back, the tracking format's rule as swarm-core's `prwatch` reads it; the Factory's benches in natural order, the fold of those off shift opening on a click; the slow live test steady, #106; each row's lanes sized over the window, the widget's `view.lanes`, and the minimap's fold marks, by the pin to swarm-timeline 3692af8, #97; background reads under load: a last wake when a read is over, tests that wait on it, refs looked up in one git call, #96; ready checks in the Factory's Gate list, a selected run drawn selected after *t*, #95; the Factory's benches with dozens of workers: off shift folded, the rest scrolling, #94; folding the timeline's quiet time: the widget's `view.fold`, the toolbar's checkbox and View ▸ Fold Quiet Time, the Gates band's hours through the folds, #86; the Factory follows the timeline: no clock of its own, a fixed header, the timeline's selection, the strip's own range, #85; gate runs and ready checks as rows on the timeline, #84; a submit straight after a send-back is its rework, #83; a failed `ready` check's cause and step, #77; Collapse to the visible window, #74; `ui.set` reaches the Workers window, MCP returns images, Open… off macOS, #76; one definition of a gate run, the Gates band's hours for both lanes, #75; opening a repository from the app, #69; model and effort compared per worker, #67; the panes share the window, the restored window on screen, #68; a gates pane, #61; the state survives a restart, #53; watching a live swarm, #54; the details pane and the timeline select together, #55; the factory's hover highlights a ticket's bars, #48) · **Target:** M1
 
 Swarmception is built the way every swarm on Swarm Core builds: **an engine of typed commands that
 every front end drives.** The UI, the CLI, the control channel and MCP are thin callers of one
@@ -389,46 +389,39 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   removed); how the gate behaved is `gates.list` and `stats.get` for agents, the factory's
   figures and its Gate list for the person. The factory's floor keeps within its pane, its header wrapping, so a narrower
   pane never cuts off main.
-  The panes share the window (#68) by one rule, `layout`'s plain functions: the timeline keeps
-  its least height (`TimelinePane::least`, `layout::timeline_least`: its toolbar, the rulers, the
-  merges rows and six rows under them, all when fewer, and the scroller); the bands under it
-  (`BandKind::ALL`, top to bottom: the Factory; a pane that slots in under the timeline adds
-  itself there) each ask for the person's height (`PaneSizes`, set only by dragging a band's top
-  edge) or the window's default (`layout::defaults`: the Factory about a third of the height), and
-  when they don't fit over the timeline's least they give way (`layout::share`), each in
-  proportion to what it has over its own least (Factory 140), before the timeline does; they come back when the window grows. Each band folds to
-  its header (28 points) with a click on its title's chevron, the Details to a strip (30 points);
-  folded is the person's choice once made (`UiState::folded`, `layout::Folded`, saved), else the
-  window's size (the Factory under 560 high, the Details under 1000 wide).
-  Without the timeline the last open band fills the rest. `ui.inspect`'s `layout` reports what
-  each got (`LayoutDrawn`: the timeline's height and least, each band's height, what it asked and
-  whether it is folded, by default or by choice), `timeline.inView` the rows on screen, and
-  `ui.set`'s `folded` folds or opens a pane.
-  The workers pane (#67, View ▸ Workers, `--panes …,workers`, off by default) is a window over the
-  others, opening up from the bottom over the bands so the timeline's rows stay in sight, and
-  taking no room in the layout: a comparison is opened, read and put away. It draws what
-  `workers.compare` returns for the timeline's window (or the whole run, its choice; asked again
-  only when the window or the data moves): a row per model × effort (a swatch in its colour, the
-  theme's series by its place), its workers under it (name, start, `open` for a session with no
-  stop), then all workers; each figure with a small bar scaled to its column's largest, in the
-  group's colour, and its samples (`n=…`); a thin one marked `~`, its bar only outlined. A
-  header sorts by its column (again: the other way; none last either way; the first column: the
-  command's order). Hovering a row lights its tickets' bars on the timeline (`Hover::Worker`,
-  `Lit::HoveredWorker`, after a factory hover); clicking a worker makes its session the
-  details' subject. `--hover-worker <name>` puts the pointer on a worker's row. Its window's
-  place (#76: `WorkersView::place`, its top-left corner in whole points; none, its default up
-  from the bottom) is set by `ui.set`'s `workers.place` and moved there once (egui's kept area
-  state moved first, since a window dragged by its title bar puts `current_pos` back), and a
-  drag by the person is kept once they let go (moved, its size the same); `ui.set`'s `workers`
-  also opens or closes it and sets its sort (as a header's first click, `WorkersView::sort_by`)
-  and its window of time; `ui.inspect`'s `workers.rect` is where it was drawn.
+  The panes share the window in a **dock** (#177, swarm-core's App UI Substrate › The dock;
+  G18's bands and strips, #68, before): `dock` places the timeline, the Factory, the Details and
+  the Workers (`pane::Pane`) as `egui_tiles` tiles, tabs and splits a person drags and resizes.
+  The UI state's `dock` (`DockNode`: tabs of panes with the one shown, or a split across or down
+  into parts, each with its share per mille) is the layout's source of truth: each frame the tiles
+  are built from it when it changed (an agent's `ui.set`, a restored launch), drawn, and read
+  back, what a person dragged going to the state; egui_tiles' own state is never saved. A layout
+  deeper than 6, over 32 items, with an empty split or tabs or a share out of 1–1000 is refused
+  (`DockNode::check`), by `ui.set` and in a saved file alike; whatever it holds, each pane is
+  shown once (one left out added, one named twice shown once). The default (`default_layout`)
+  keeps G18's shape: the timeline over the Factory (the Workers a tab beside it), three quarters
+  of the width, the Details at the right. View's panes show and hide their tiles (a container
+  left empty hides with them, a pane shown again comes to the front of its tabs). Its look is the
+  tokens': a 4-point gap in `chrome`, a 22-point tab bar in `header` over a `frame` line, the shown
+  tab `background` outlined in `frame`, the others `muted`, each title its pane's icon and name,
+  the focused pane's tab underlined in `accent`, a pane `background` edged in `frame` with a
+  6-point margin, separators and drag previews `accent`. `ui.inspect`'s `dock` is the layout
+  shown and `panes` each pane drawn with its size; `ui.set`'s `dock` and `defaultDock` set it;
+  `timeline.inView` the rows on screen.
+  The workers pane (#67, View ▸ Workers, `--panes …,workers`, off by default) is a tile of the
+  dock (#177; a window over the others before, placed by `ui.set`, #76), a tab beside the Factory
+  by default. It draws what `workers.compare` returns for the timeline's window (or the whole run,
+  its choice), asked again only when the window or the data moves; `ui.set`'s `workers` opens or
+  closes it and sets its sort (as a header's first click, `WorkersView::sort_by`) and its window
+  of time; `ui.inspect`'s `workers.rect` is its tile.
   `UiState` (the panes shown and their sizes, the factory's follow, play, speed, traced ticket
   and the moments it steps by, what the details are of; version 5: the gates pane, #61; version 6:
   the folded panes, #68; version 7: the workers pane and its `WorkersView`, window or whole run
   and sort, #67; version 8: its window's place, #76; version 9: no factory *t*, #85, an older
   state's `t` dropped as it reads; version 10: `fold`, folding the timeline's quiet time, #86, an
   older state's off; version 11: the benches off shift, #106; version 12: no gates pane, #128, an
-  older state's `gates` dropped as it reads) is serde data. `saved` (#53) keeps the
+  older state's `gates` dropped as it reads; version 13: the dock's layout, #177, an older
+  state's sizes, folds and Workers window's place dropped as it reads) is serde data. `saved` (#53) keeps the
   app's state across a restart: `AppState` (version 1: the `UiState`, the rows spec, the window's
   size and place, Live as chosen (#54), and the timeline's `TimelineView`: the widget's own `state.save` without its
   playhead, the window as clock times, whether it was fitted or ended at the last event, the

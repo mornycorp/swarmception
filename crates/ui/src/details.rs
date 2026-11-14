@@ -26,8 +26,6 @@ use crate::catalog;
 use crate::factory_chip::{drawn, rgb, shade};
 use crate::fonts;
 use crate::icons;
-use crate::layout::{Chevron, fold_title};
-use crate::pane::Pane;
 use crate::part::Part;
 
 /// What the details pane is about: plain data in the shell's state.
@@ -54,8 +52,6 @@ pub struct DetailsDrawn {
     pub back: bool,
     /// A page chosen this frame.
     pub open: Option<Link>,
-    /// Its title was clicked this frame: fold it to a strip (#68).
-    pub fold: bool,
 }
 
 /// The most subjects ← goes back through.
@@ -168,7 +164,6 @@ impl DetailsPane {
             return;
         }
         ui.horizontal(|ui| {
-            self.drawn.fold = fold_title(ui, icons::for_pane(Pane::Details), catalog::DETAILS_2, Chevron::FoldRight).clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let back =
                     icons::named(ui.add_enabled(!self.history.is_empty(), icons::only(icons::ARROW_LEFT).small()), catalog::BACK_TO_WHAT_WAS_SELECTED_BEFORE);

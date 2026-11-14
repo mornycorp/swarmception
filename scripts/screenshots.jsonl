@@ -17,12 +17,12 @@
 {"command":"ui.set","params":{"panes":{"timeline":false,"factory":true,"details":false}}}
 {"command":"ui.screenshot","params":{"path":"shot-factory.png"}}
 # The workers compared (#67), over the timeline's window: a window over the bands.
-{"command":"ui.set","params":{"panes":{"timeline":true,"factory":false,"details":false,"gates":true,"workers":true}}}
+{"command":"ui.set","params":{"panes":{"timeline":true,"factory":false,"details":false,"workers":true}}}
 {"command":"ui.screenshot","params":{"path":"shot-workers.png"}}
-# Its window set by script (#76): the whole run, sorted by landed per active hour, top-left.
-{"command":"ui.set","params":{"workers":{"open":true,"wholeRun":true,"sort":"rate","place":{"x":24,"y":96}}}}
+# Set by script (#76): the whole run, sorted by landed per active hour, in a dock of its own beside the timeline (#177).
+{"command":"ui.set","params":{"workers":{"open":true,"wholeRun":true,"sort":"rate"},"dock":{"kind":"split","across":true,"parts":[{"share":400,"node":{"kind":"tabs","panes":["timeline"],"active":0}},{"share":600,"node":{"kind":"tabs","panes":["workers"],"active":0}}]}}}
 {"command":"ui.screenshot","params":{"path":"shot-workers-set.png"}}
-{"command":"ui.set","params":{"workers":{"open":false,"defaultPlace":true}}}
+{"command":"ui.set","params":{"workers":{"open":false},"defaultDock":true}}
 # A ticket of the change's own: add {"command":"ui.set","params":{"ticket":<n>}} before a shot
 # (its journey traced, its bars selected, its details shown), and `"at"` for a moment.
 # What the window shows, for the PR's notes.

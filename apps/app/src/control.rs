@@ -349,8 +349,8 @@ mod tests {
     }
 
     #[test]
-    fn ui_set_opens_sorts_and_places_the_workers_window_over_the_socket() {
-        use swarmception_ui::{WorkersColumn, WorkersPlace, WorkersView};
+    fn ui_set_opens_sorts_and_docks_the_workers_pane_over_the_socket() {
+        use swarmception_ui::{WorkersColumn, WorkersView};
 
         let dir = repo();
         let ctx = egui::Context::default();
@@ -358,27 +358,33 @@ mod tests {
         let (set, inspect, wrong, closed) = drive(&mut shell, &ctx, |client| {
             let _: Inspect = client.call("ui.loaded", &serde_json::json!({"within": 15})).unwrap();
             let set: Inspect = client
-                .call("ui.set", &serde_json::json!({"workers": {"open": true, "sort": "landed", "wholeRun": true, "place": {"x": 80, "y": 120}}}))
+                .call(
+                    "ui.set",
+                    &serde_json::json!({"workers": {"open": true, "sort": "landed", "wholeRun": true},
+                        "dock": {"kind": "split", "across": false, "parts": [
+                            {"share": 400, "node": {"kind": "tabs", "panes": ["timeline"], "active": 0}},
+                            {"share": 600, "node": {"kind": "tabs", "panes": ["workers", "factory", "details"], "active": 0}}]}}),
+                )
                 .unwrap();
             // Drawn on the frames after.
             std::thread::sleep(Duration::from_millis(300));
             let inspect: Inspect = client.call("ui.inspect", &()).unwrap();
-            let wrong: Result<Inspect, ClientError> = client.call("ui.set", &serde_json::json!({"workers": {"place": {"x": 80, "y": 1_000_000}}}));
+            let wrong: Result<Inspect, ClientError> = client.call("ui.set", &serde_json::json!({"dock": {"kind": "tabs", "panes": [], "active": 0}}));
             let closed: Inspect = client.call("ui.set", &serde_json::json!({"workers": {"open": false}})).unwrap();
             (set, inspect, wrong, closed)
         });
-        let asked = WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: false, place: Some(WorkersPlace { x: 80, y: 120 }) };
+        let asked = WorkersView { whole_run: true, sort: Some(WorkersColumn::Landed), ascending: false };
         assert_eq!((set.state.panes.workers, set.state.workers), (true, asked));
-        // Read back: the state as set, and the window drawn where it was put, its rows what the
+        // Read back: the state as set, and the pane drawn in its tile (#177), its rows what the
         // pane drew.
         assert_eq!(inspect.state.workers, asked);
-        let rect = inspect.workers.rect.expect("the window drawn");
-        assert_eq!((rect.x, rect.y), (80, 120));
+        assert_eq!(Some(&inspect.dock), set.state.dock.as_ref(), "the dock as set");
+        let rect = inspect.workers.rect.expect("the pane drawn");
         assert!(rect.width > 200 && rect.height > 100, "{rect:?}");
         assert!(inspect.workers.rows.iter().any(|row| row.starts_with("mini-aa1111 | worker-1")), "{:?}", inspect.workers.rows);
         assert!(matches!(wrong, Err(ClientError::Protocol(ProtocolError::Engine { .. }))), "{wrong:?}");
         assert!(!closed.state.panes.workers);
-        assert_eq!(closed.state.workers, asked, "closed, its sort and place kept");
+        assert_eq!(closed.state.workers, asked, "closed, its sort kept");
         std::fs::remove_dir_all(dir).ok();
     }
 

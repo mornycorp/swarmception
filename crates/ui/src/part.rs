@@ -10,12 +10,8 @@ pub(crate) enum Part {
     MenuBar,
     Toolbar,
     StatusBar,
-    /// The details pane, and its strip when folded.
-    Details,
-    DetailsStrip,
-    /// A band under the timeline (#68), and the edge that drags its height.
-    Band(crate::BandKind),
-    BandEdge(crate::BandKind),
+    /// The dock's tiles (#177).
+    Dock,
     LiveInterval,
     FactorySpeed,
     FactorySteps,
@@ -31,7 +27,6 @@ pub(crate) enum Part {
     BenchTip,
     HelperTip,
     DetailsEntry,
-    WorkersWindow,
     WorkersHeader,
     OpenRefused,
     OpenPrompt,
@@ -82,6 +77,6 @@ mod tests {
             }
         }
         assert!(found.is_empty(), "ids keyed by a string:\n{}", found.join("\n"));
-        assert_ne!(Part::Band(crate::BandKind::Factory).id(), Part::BandEdge(crate::BandKind::Factory).id());
+        assert_ne!(Part::Dock.id(), Part::Toolbar.id());
     }
 }

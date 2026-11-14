@@ -244,7 +244,7 @@ fn the_fold_opens_on_a_click_scrolls_with_the_rest_and_closes() {
         frame(&mut shell, &ctx);
     }
     let top = shell.factory().drawn().clone();
-    assert_eq!(keys(&top.benches)[..3], workers(&[1, 2, 3]), "scrolled back to the top");
+    assert_eq!(keys(&top.benches)[..2], workers(&[1, 2]), "scrolled back to the top");
     assert!(top.benches_hidden > 0);
 
     // A second click closes it again.
