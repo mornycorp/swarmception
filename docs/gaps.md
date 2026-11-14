@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-14 · **Change:** minor (G35 open: the window as swarm-core's App UI Substrate has it, #174–#180; batch 21: G34 done, the UI as swarm-core's contract has it, six issues; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-14 · **Last updated:** 2026-11-14 · **Change:** minor (batch 22: G35 done, the window as swarm-core's App UI Substrate has it, seven issues; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,7 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
-| 1 | [G35 The window as the App UI Substrate has it](#g35-the-window-as-the-app-ui-substrate-has-it) | open | #174–#180 | 20–32 h |
+| — | [G35 The window as the App UI Substrate has it](#g35-the-window-as-the-app-ui-substrate-has-it) | done | #174–#180 | |
 | — | [G34 The UI as swarm-core's contract has it](#g34-the-ui-as-swarm-cores-contract-has-it) | done | #160–#165 | |
 | — | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | done | #152, #154 | |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
@@ -479,25 +479,31 @@ marked **Human:** with what is needed.
 - **Why:** swarm-core e4b251d pins [the App UI Substrate](app-ui-substrate.md) (swarm-core#104):
   what every app on Swarm Core draws with, so the swarm's tools look and work alike (the owner's
   ask, 2026-11-14: take the rules from swarm-core and make the UI match). The colours already
-  are the shared palette's (G33); the rest isn't.
-- **Open:**
-  - **#174** the bump, the pinned docs, and the theme's corner radius (2 px) in `theme.get` and
+  were the shared palette's (G33).
+- **Done** (batch 22, all seven):
+  - **#174** (PR #181): the bump and pinned docs; the corner radius, 2 px, in `theme.get` and
     egui's visuals.
-  - **#175** type and density: Roboto, Cascadia Mono, Font Awesome 6 in a family of its own, the
-    text styles on a 12 pt body, the `density` metrics.
-  - **#176** icons: Font Awesome 6 names, by command (`BY_COMMAND`) and pane (`for_pane`), drawn
-    as atoms in a 16 pt column.
-  - **#177** the dock: the panes as `egui_tiles` tiles, the layout a typed tree in `UiState`
-    (`ui.set`, `ui.inspect`), replacing G18's bands and strips.
-  - **#178** the window keeps its own place (a file beside the UI state's, checked against the
-    monitors), and an app icon drawn in code.
-  - **#179** the macOS bar as data from the UI crate: the application, Window and Help menus.
-  - **#180** one dispatch: a caught panic is `internal` with the `PANICKED` remediation; a call
-    cancelled before it runs never runs.
-- **Estimate:** 20–32 agent-hours; #177 is most of it.
-- **Evidence:** swarm-core e4b251d's skeleton (`crates/ui/src/fonts.rs`, `density.rs`,
-  `icons.rs`, `dock.rs`, `native_menu.rs`, `icon.rs`; `apps/{{app}}/src/place.rs`,
-  `macos_menu.rs`) beside Swarmception's `crates/ui` and `apps/app`.
+  - **#175** (PR #182): type (Roboto, Cascadia Mono, Font Awesome 6.7.2; the text styles on a
+    12 pt body; `fonts::font_of`) and density (`density`, the menus' styles). `fonts::bound` no
+    longer panics before the first pass (worth a fix in swarm-core's skeleton).
+  - **#176** (PR #183): icons by Font Awesome 6 name, by command (`BY_COMMAND`) and pane
+    (`for_pane`), drawn from their own family as atoms or runs (`icons::job`), menu icons in a
+    16 pt column.
+  - **#177** (PR #184): the dock, `egui_tiles`; the layout a typed tree in `UiState` (version 13),
+    `ui.set`'s `dock`, `ui.inspect` version 19's `dock` and `panes`. Reverses G18's bands, folds
+    and sizes; the Workers a tile.
+  - **#178** (PR #185): the window keeps its own place (`window.json`, the monitors read before it
+    opens, half on a monitor and over 640 × 400 or 1280 × 800 centred), and Swarmception's icon
+    drawn from the palette.
+  - **#179** (PR #186): the macOS bar as plain data (`native_menu`: application menu, File, View,
+    Window), tested everywhere; About's credits.
+  - **#180** (PR #187): a caught panic `internal` with the testkit's `PANICKED`, a remediation on
+    every engine error, a call cancelled before it runs never runs.
+- **Measured:** 469 tests, `cargo nextest run --workspace` (2026-11-14).
+- **Left:** the engine's other error codes (`disabled`, `invalid`, `bad_result`,
+  `params_too_large`) still differ from the skeleton's; not filed, a wire change for the owner.
+- **Evidence:** swarm-core e4b251d's skeleton beside `crates/ui` (`fonts.rs`, `density.rs`,
+  `icons.rs`, `dock.rs`, `native_menu.rs`, `icon.rs`) and `apps/app` (`place.rs`, `mac_menu.rs`).
 
 ## G1 The ruler reads clock time
 
