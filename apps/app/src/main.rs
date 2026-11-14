@@ -527,7 +527,7 @@ fn mac_menus(ctx: &egui::Context, shell: &mut swarmception_ui::Shell, open: Opti
     if open.is_some() {
         return None;
     }
-    match mac_menu::NativeMenu::install(ctx, &shell.menu_state()) {
+    match mac_menu::NativeMenu::install(ctx, shell) {
         Ok(menu) => {
             shell.set_native_menu(true);
             Some(menu)

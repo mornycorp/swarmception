@@ -243,7 +243,7 @@ fn the_registrys_shortcuts_run_their_commands_in_the_window() {
     let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0));
     let press = egui::Event::Key { key: egui::Key::R, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND };
     let input = egui::RawInput { screen_rect: Some(screen), events: vec![press], ..Default::default() };
-    let _ = ctx.run_ui(input, |ui| shell.ui(ui));
+    ctx.run_ui(input, |ui| shell.ui(ui)).textures_delta.clear();
     assert_eq!(shell.engine().job(), Some(swarmception_engine::session::Job::Read), "⌘R reloads");
     settle(&mut shell, &ctx);
     for dir in [a, state] {

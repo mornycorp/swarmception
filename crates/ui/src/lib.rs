@@ -25,6 +25,7 @@ pub mod fonts;
 pub mod icon;
 pub mod icons;
 pub mod menu;
+pub mod native_menu;
 mod open;
 pub mod pane;
 mod part;
