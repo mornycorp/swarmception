@@ -196,7 +196,8 @@ impl StatsStrip {
         let quiet = short(stats.quiet_after_seconds);
         let how =
             catalog::tickets_landed_per_active_hour(&stats.landed, &(hours(stats.active_seconds)), &(hours(stats.on_shift_seconds)), &stats.quiet_gaps, &quiet);
-        ui.label(egui::RichText::new(&headline).size(22.0).strong().color(drawn(PASSED, ui.visuals()))).on_hover_text(&how);
+        ui.label(egui::RichText::new(&headline).font(crate::fonts::font_of(ui.ctx(), &egui::TextStyle::Heading)).color(drawn(PASSED, ui.visuals())))
+            .on_hover_text(&how);
         let landed = catalog::landed_active_h(&stats.landed, &(hours(stats.active_seconds)));
         ui.vertical(|ui| {
             ui.add_space(2.0);

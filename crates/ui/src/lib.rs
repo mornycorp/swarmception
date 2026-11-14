@@ -13,6 +13,7 @@
 
 mod catalog;
 pub mod control;
+pub mod density;
 mod details;
 mod factory;
 mod factory_chip;
@@ -980,7 +981,9 @@ impl Shell {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let state = self.menu_state();
-        egui::MenuBar::new().ui(ui, |ui| {
+        // The App UI Substrate's menu metrics (#175): titles 20 pt apart, entries touching.
+        let menus = egui::containers::menu::MenuConfig::new().style(density::menu_style);
+        egui::MenuBar::new().style(density::menu_bar_style).config(menus).ui(ui, |ui| {
             let file = ui.menu_button(catalog::FILE, |ui| self.menu_items(ui, state, &MenuAction::file_items()));
             self.note_menu(Some(file.response.rect), None);
             ui.menu_button(catalog::VIEW, |ui| self.menu_items(ui, state, &MenuAction::VIEW));

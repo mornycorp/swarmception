@@ -546,9 +546,9 @@ impl<'a> Floor<'a> {
     fn card(&self, rect: Rect, title: &str, count: &str) -> Rect {
         self.painter.rect(rect, 6.0, self.pal.card, Stroke::new(1.0, self.pal.edge), StrokeKind::Inside);
         let top = rect.left_top() + vec2(8.0, 6.0);
-        let title_rect = self.painter.text(top, Align2::LEFT_TOP, title, FontId::proportional(11.0), self.pal.weak);
+        let title_rect = self.painter.text(top, Align2::LEFT_TOP, title, FontId::proportional(crate::fonts::SMALL_SIZE), self.pal.weak);
         let width = rect.right() - title_rect.right() - 14.0;
-        fit(&self.painter, pos2(rect.right() - 8.0, top.y), Align2::RIGHT_TOP, count, (FontId::proportional(11.0), self.pal.text), width);
+        fit(&self.painter, pos2(rect.right() - 8.0, top.y), Align2::RIGHT_TOP, count, (FontId::proportional(crate::fonts::SMALL_SIZE), self.pal.text), width);
         Rect::from_min_max(pos2(rect.left() + 6.0, rect.top() + 22.0), pos2(rect.right() - 6.0, rect.bottom() - 6.0))
     }
 

@@ -1,5 +1,6 @@
-//! Font Awesome 5's solid glyphs the UI uses, by codepoint ([`crate::fonts`] installs the face
-//! as a fallback of every family, so these draw in any text).
+//! Font Awesome's solid glyphs the UI uses, by codepoint ([`crate::fonts`] installs Font Awesome
+//! 6.7.2's face as the text families' last fallback until #176, so these draw in any text; each
+//! keeps its Font Awesome 5 codepoint, which Font Awesome 6 still maps).
 
 pub const RELOAD: &str = "\u{f2f1}";
 pub const FETCH: &str = "\u{f381}";
@@ -46,3 +47,60 @@ pub const LIVE: &str = "\u{f519}";
 pub const CHEVRON_DOWN: &str = "\u{f078}";
 pub const CHEVRON_RIGHT: &str = "\u{f054}";
 pub const CHEVRON_LEFT: &str = "\u{f053}";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every glyph is in the embedded Font Awesome 6 face, by its own character map (#175).
+    #[test]
+    fn every_icon_is_in_the_embedded_face() {
+        let all = [
+            RELOAD,
+            FETCH,
+            WORKERS,
+            TICKETS,
+            FLAT,
+            COLLAPSE,
+            FOLD,
+            MERGE_MARKS,
+            COLLAPSE_WINDOW,
+            FIT,
+            TIMELINE,
+            BRANCH,
+            CLOCK,
+            WARNING,
+            SPINNER,
+            FOLDER,
+            RECENT,
+            CLEAR,
+            QUIT,
+            FACTORY,
+            PLAY,
+            PAUSE,
+            FOLLOW,
+            CHECK,
+            CROSS,
+            FLASK,
+            COG,
+            START,
+            END,
+            TAG,
+            ISSUES,
+            INFO,
+            BACK,
+            EXTERNAL,
+            LIVE,
+            CHEVRON_DOWN,
+            CHEVRON_RIGHT,
+            CHEVRON_LEFT,
+        ];
+        let ctx = egui::Context::default();
+        crate::theme::apply(&ctx);
+        ctx.run_ui(egui::RawInput::default(), |_| {}).textures_delta.clear();
+        let has = |c: char| ctx.fonts_mut(|f| f.characters(&crate::fonts::icons()).contains_key(&c));
+        let missing: Vec<String> = all.iter().flat_map(|icon| icon.chars()).filter(|&c| !has(c)).map(|c| format!("U+{:04X}", u32::from(c))).collect();
+        assert!(missing.is_empty(), "not in fa-solid-900.ttf: {missing:?}");
+        assert!(!has('\u{1e9e}'), "a character it lacks is not found");
+    }
+}

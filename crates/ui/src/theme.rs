@@ -49,12 +49,19 @@ pub fn visuals(look: Look) -> Visuals {
     v
 }
 
-/// Styles `ctx` in the theme: each of egui's looks gets [`visuals`] for it, and egui keeps choosing
-/// between them (the system's, or `--dark` / `--light`). Called once, when the window starts.
+/// Styles `ctx` in the theme: it installs the faces ([`crate::fonts`]), and each of egui's looks gets
+/// [`visuals`] for it, the text styles and the density ([`crate::density`], #175), and egui keeps
+/// choosing between them (the system's, or `--dark` / `--light`). Called once, when the window
+/// starts; the named families bind on the next pass ([`crate::fonts::bound`]).
 pub fn apply(ctx: &egui::Context) {
+    ctx.set_fonts(crate::fonts::definitions());
     for (appearance, look) in [(egui::Theme::Dark, Look::Dark), (egui::Theme::Light, Look::Light)] {
         let visuals = visuals(look);
-        ctx.style_mut_of(appearance, |style| style.visuals = visuals);
+        ctx.style_mut_of(appearance, |style| {
+            style.visuals = visuals;
+            style.text_styles = crate::fonts::text_styles();
+            style.spacing = crate::density::spacing();
+        });
     }
 }
 
