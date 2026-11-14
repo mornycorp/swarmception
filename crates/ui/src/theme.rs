@@ -4,7 +4,7 @@
 //! background are the swarm's other tools' colours, not egui's greys. Everything that reads egui's
 //! visuals (the Factory's `Palette`, the timeline widget's `Theme::from_visuals`) follows.
 
-use egui::{Color32, Stroke, Visuals};
+use egui::{Color32, CornerRadius, Stroke, Visuals};
 use swarmception_domain::theme::{self, Look, Rgb, Token};
 
 /// egui's visuals in `look`: egui's own look for it, its colours the theme's tokens.
@@ -28,6 +28,13 @@ pub fn visuals(look: Look) -> Visuals {
     v.error_fg_color = token(theme::ERROR);
     v.override_text_color = None;
     v.weak_text_color = Some(token(theme::MUTED));
+    // Near-square windows, menus and controls (the App UI Substrate › Corner radius).
+    let radius = CornerRadius::same(theme::CORNER_RADIUS);
+    v.window_corner_radius = radius;
+    v.menu_corner_radius = radius;
+    for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.active, &mut v.widgets.open] {
+        w.corner_radius = radius;
+    }
     for w in [&mut v.widgets.noninteractive, &mut v.widgets.inactive, &mut v.widgets.hovered, &mut v.widgets.open] {
         w.fg_stroke.color = token(theme::TEXT);
     }
@@ -67,7 +74,8 @@ mod tests {
     use super::*;
 
     /// **egui draws in the theme** (#158): once applied, each of egui's looks has the tokens for
-    /// its surfaces, text, selection, widgets and states.
+    /// its surfaces, text, selection, widgets and states, and the corner radius on windows, menus
+    /// and every widget state (#174).
     #[test]
     fn egui_draws_with_the_tokens_once_applied() {
         let ctx = egui::Context::default();
@@ -96,6 +104,10 @@ mod tests {
             for (name, egui, ours) in drawn {
                 assert_eq!(egui, ours, "{look:?} {name}");
             }
+            let radius = CornerRadius::same(theme::CORNER_RADIUS);
+            let widgets = [&v.widgets.noninteractive, &v.widgets.inactive, &v.widgets.hovered, &v.widgets.active, &v.widgets.open];
+            assert_eq!((v.window_corner_radius, v.menu_corner_radius), (radius, radius), "{look:?} windows and menus");
+            assert!(widgets.iter().all(|w| w.corner_radius == radius), "{look:?} every widget state");
         }
     }
 

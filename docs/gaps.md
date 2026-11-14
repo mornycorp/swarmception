@@ -2,7 +2,7 @@
      own now. Keep it to docs/progress-docs.md's rules; nothing checks it against Swarm Core. -->
 # Gaps
 
-> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-13 · **Change:** minor (batch 21: G34 done, the UI as swarm-core's contract has it, six issues; no gaps open) · **Target:** M3
+> **Last reviewed:** 2026-11-13 · **Last updated:** 2026-11-14 · **Change:** minor (G35 open: the window as swarm-core's App UI Substrate has it, #174–#180; batch 21: G34 done, the UI as swarm-core's contract has it, six issues; no gaps open) · **Target:** M3
 
 Every known shortfall of Swarmception, ranked: **the work list, and the only home for progress
 detail** ([progress-docs.md](progress-docs.md) rule 8). The coordinator folds each batch's merged
@@ -19,6 +19,7 @@ marked **Human:** with what is needed.
 
 | Rank | Gap | Status | Issues | Estimate |
 |---|---|---|---|---|
+| 1 | [G35 The window as the App UI Substrate has it](#g35-the-window-as-the-app-ui-substrate-has-it) | open | #174–#180 | 20–32 h |
 | — | [G34 The UI as swarm-core's contract has it](#g34-the-ui-as-swarm-cores-contract-has-it) | done | #160–#165 | |
 | — | [G33 Colours from swarm-core's theme](#g33-colours-from-swarm-cores-theme) | done | #152, #154 | |
 | — | [G32 Idle benches together, and dragging across rows](#g32-idle-benches-together-and-dragging-across-rows) | done | #147, swarm-timeline#233 | |
@@ -472,6 +473,32 @@ marked **Human:** with what is needed.
 - **Measured:** 437 tests, `cargo nextest run --workspace` (2026-11-13); `ci` is 7 steps.
 - **Evidence:** swarm-core d4df5a2's skeleton (`apps/{{app}}/src/window.rs`, `ui_state.rs`,
   `crates/ui/src/draw.rs`, `shell.rs`, `jobs.rs`) beside Swarmception's `crates/ui` and `apps/app`.
+
+## G35 The window as the App UI Substrate has it
+
+- **Why:** swarm-core e4b251d pins [the App UI Substrate](app-ui-substrate.md) (swarm-core#104):
+  what every app on Swarm Core draws with, so the swarm's tools look and work alike (the owner's
+  ask, 2026-11-14: take the rules from swarm-core and make the UI match). The colours already
+  are the shared palette's (G33); the rest isn't.
+- **Open:**
+  - **#174** the bump, the pinned docs, and the theme's corner radius (2 px) in `theme.get` and
+    egui's visuals.
+  - **#175** type and density: Roboto, Cascadia Mono, Font Awesome 6 in a family of its own, the
+    text styles on a 12 pt body, the `density` metrics.
+  - **#176** icons: Font Awesome 6 names, by command (`BY_COMMAND`) and pane (`for_pane`), drawn
+    as atoms in a 16 pt column.
+  - **#177** the dock: the panes as `egui_tiles` tiles, the layout a typed tree in `UiState`
+    (`ui.set`, `ui.inspect`), replacing G18's bands and strips.
+  - **#178** the window keeps its own place (a file beside the UI state's, checked against the
+    monitors), and an app icon drawn in code.
+  - **#179** the macOS bar as data from the UI crate: the application, Window and Help menus.
+  - **#180** one dispatch: a caught panic is `internal` with the `PANICKED` remediation; a call
+    cancelled before it runs never runs.
+- **Estimate:** 20–32 agent-hours; #177 is most of it.
+- **Evidence:** swarm-core e4b251d's skeleton (`crates/ui/src/fonts.rs`, `density.rs`,
+  `icons.rs`, `dock.rs`, `native_menu.rs`, `icon.rs`; `apps/{{app}}/src/place.rs`,
+  `macos_menu.rs`) beside Swarmception's `crates/ui` and `apps/app`.
+
 ## G1 The ruler reads clock time
 
 - **Done** (#2, PR #8; swarm-timeline#180): the scrub ruler is a Clock ruler on first load,
