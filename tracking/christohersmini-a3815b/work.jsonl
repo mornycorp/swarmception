@@ -120,3 +120,4 @@
 {"event":"work","issue":179,"t":"2026-11-14T21:56:45Z"}
 {"event":"submit","issue":178,"mr":185,"t":"2026-11-14T21:56:50Z"}
 {"event":"sub.start","name":"gate","note":"#185; capacity=3 free=10.3; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-185","t":"2026-11-14T21:56:58Z"}
+{"event":"merge","issue":178,"mr":185,"sub":"gate-185","t":"2026-11-14T21:57:22Z"}
