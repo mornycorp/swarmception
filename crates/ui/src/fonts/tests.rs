@@ -76,12 +76,12 @@ fn a_styles_font_waits_for_its_family() {
     });
 }
 
-/// Until every icon is drawn from its own family (#176), Font Awesome is the text families' last
-/// fallback, so an icon written inside text still draws.
+/// Text never draws from Font Awesome, nor an icon from a text face (#176): it is in the icons'
+/// family alone.
 #[test]
-fn font_awesome_is_texts_last_fallback_for_now() {
+fn font_awesome_is_in_no_text_family() {
     let fonts = definitions();
     for family in [FontFamily::Proportional, light(), medium(), bold(), FontFamily::Monospace] {
-        assert_eq!(fonts.families.get(&family).and_then(|f| f.last()).map(String::as_str), Some(FONT_AWESOME), "{family:?}");
+        assert!(!fonts.families.get(&family).is_some_and(|f| f.iter().any(|face| face == FONT_AWESOME)), "{family:?}");
     }
 }

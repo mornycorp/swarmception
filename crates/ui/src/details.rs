@@ -27,6 +27,7 @@ use crate::factory_chip::{drawn, rgb, shade};
 use crate::fonts;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
+use crate::pane::Pane;
 use crate::part::Part;
 
 /// What the details pane is about: plain data in the shell's state.
@@ -167,10 +168,10 @@ impl DetailsPane {
             return;
         }
         ui.horizontal(|ui| {
-            self.drawn.fold = fold_title(ui, icons::INFO, catalog::DETAILS_2, Chevron::FoldRight).clicked();
+            self.drawn.fold = fold_title(ui, icons::for_pane(Pane::Details), catalog::DETAILS_2, Chevron::FoldRight).clicked();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let back =
-                    ui.add_enabled(!self.history.is_empty(), egui::Button::new(icons::BACK).small()).on_hover_text(catalog::BACK_TO_WHAT_WAS_SELECTED_BEFORE);
+                    icons::named(ui.add_enabled(!self.history.is_empty(), icons::only(icons::ARROW_LEFT).small()), catalog::BACK_TO_WHAT_WAS_SELECTED_BEFORE);
                 self.drawn.back = back.clicked();
             });
         });
@@ -184,13 +185,13 @@ impl DetailsPane {
                 });
             }
             (Some(_), _, Some(error)) => {
-                ui.colored_label(ui.visuals().warn_fg_color, format!("{}  {error}", icons::WARNING));
+                ui.label(icons::titled_in(ui.ctx(), icons::TRIANGLE_EXCLAMATION, error, ui.visuals().warn_fg_color));
             }
             (Some(_), Some(details), None) => {
                 egui::ScrollArea::vertical().auto_shrink(false).animated(false).show(ui, |ui| self.story(ui, &details));
             }
             (Some(_), None, None) => {
-                ui.weak(catalog::reading(&icons::SPINNER));
+                ui.label(icons::text_in(ui.ctx(), &catalog::reading(&icons::SPINNER), ui.visuals().weak_text_color()));
             }
         }
     }
@@ -255,8 +256,9 @@ impl DetailsPane {
         if !d.pages.is_empty() {
             ui.horizontal_wrapped(|ui| {
                 for page in &d.pages {
-                    let text = format!("{}  {}", icons::EXTERNAL, page.label);
-                    let mut link = ui.link(RichText::new(text).small());
+                    let text = format!("{}  {}", icons::UP_RIGHT_FROM_SQUARE, page.label);
+                    let small = fonts::font_of(ui.ctx(), &egui::TextStyle::Small);
+                    let mut link = ui.link(icons::job(ui.ctx(), &text, small, Color32::PLACEHOLDER));
                     if let Some(url) = &page.url {
                         link = link.on_hover_text(url);
                     }
@@ -384,7 +386,7 @@ fn label_pill(ui: &mut egui::Ui, label: &str) {
     let visuals = ui.visuals().clone();
     let mut job = LayoutJob::default();
     let format = TextFormat { font_id: fonts::font_of(ui.ctx(), &egui::TextStyle::Small), color: visuals.text_color(), ..TextFormat::default() };
-    job.append(&format!("{}  {label}", icons::TAG), 0.0, format);
+    icons::append(ui.ctx(), &mut job, &format!("{}  {label}", icons::TAG), format.font_id.clone(), format.color);
     pill(ui, job, Color32::TRANSPARENT, visuals.widgets.noninteractive.bg_stroke);
 }
 

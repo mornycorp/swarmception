@@ -120,13 +120,6 @@ pub fn definitions() -> FontDefinitions {
     fonts.families.insert(bold(), first(ROBOTO_BOLD, &text));
     fonts.families.insert(FontFamily::Monospace, first(CASCADIA_MONO, &code));
     fonts.families.insert(icons(), vec![FONT_AWESOME.to_owned()]);
-    // Until every icon is drawn from its own family (#176), the window still writes some inside
-    // text: Font Awesome stays the last fallback of the text families, behind egui's own faces.
-    for family in [FontFamily::Proportional, light(), medium(), bold(), FontFamily::Monospace] {
-        if let Some(faces) = fonts.families.get_mut(&family) {
-            faces.push(FONT_AWESOME.to_owned());
-        }
-    }
     fonts
 }
 

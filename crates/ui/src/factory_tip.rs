@@ -55,9 +55,10 @@ const PHRASES: &[(&str, Paint)] = &[
     ("paused", CLAIMED),
     ("began", WORKING),
     ("rc=0", PASSED),
-    (icons::CHECK, PASSED),
-    (icons::CROSS, SENT_BACK),
 ];
+
+/// The marks a line's icons give (a run's ✔ and ✖), coloured as their words are.
+const MARKS: [(icons::Icon, Paint); 2] = [(icons::CHECK, PASSED), (icons::XMARK, SENT_BACK)];
 
 /// Whether `c` continues a word.
 fn wordy(c: Option<char>) -> bool {
@@ -127,7 +128,8 @@ pub fn tones(line: &str) -> Vec<(&str, Tone)> {
             let phrase = PHRASES
                 .iter()
                 .find(|(p, _)| rest.starts_with(p) && !wordy(rest.get(p.len()..).and_then(|r| r.chars().next())))
-                .map(|(p, colour)| (p.len(), Tone::Colour(*colour)));
+                .map(|(p, colour)| (p.len(), Tone::Colour(*colour)))
+                .or_else(|| MARKS.iter().find(|(mark, _)| rest.starts_with(*mark)).map(|(mark, colour)| (mark.len_utf8(), Tone::Colour(*colour))));
             let number = !matches!(before, Some('#' | '!' | '.' | '=' | '-' | ':' | '/'));
             phrase.or_else(|| time_len(rest).map(|n| (n, Tone::Time))).or_else(|| number.then(|| duration_len(rest)).flatten().map(|n| (n, Tone::Duration)))
         };
@@ -149,9 +151,10 @@ pub fn tones(line: &str) -> Vec<(&str, Tone)> {
     out
 }
 
-/// The tooltip's `lines` as one coloured text, in `font`.
+/// The tooltip's `lines` as one coloured text, in `font`, an icon in it in `glyphs`
+/// ([`icons::family`], #176).
 #[must_use]
-pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId) -> LayoutJob {
+pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId, glyphs: &egui::FontFamily) -> LayoutJob {
     let mut job = LayoutJob::default();
     let format = |color: Color32| TextFormat { font_id: font.clone(), color, ..TextFormat::default() };
     for (n, line) in lines.iter().enumerate() {
@@ -159,7 +162,7 @@ pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId) -> LayoutJo
             job.append("\n", 0.0, format(visuals.text_color()));
         }
         if n == 0 {
-            job.append(line, 0.0, format(visuals.strong_text_color()));
+            append(&mut job, line, &format(visuals.strong_text_color()), glyphs);
             continue;
         }
         for (piece, tone) in tones(line) {
@@ -173,10 +176,18 @@ pub fn job(lines: &[String], visuals: &egui::Visuals, font: &FontId) -> LayoutJo
             if tone == Tone::Duration {
                 format.underline = egui::Stroke::new(1.0, color.gamma_multiply(0.4));
             }
-            job.append(piece, 0.0, format);
+            append(&mut job, piece, &format, glyphs);
         }
     }
     job
+}
+
+/// `text` in `format`, an icon in it a run in `glyphs` (#176).
+fn append(job: &mut LayoutJob, text: &str, format: &TextFormat, glyphs: &egui::FontFamily) {
+    let glyph = TextFormat { font_id: FontId::new(format.font_id.size, glyphs.clone()), ..format.clone() };
+    for (run, is_icon) in icons::runs(text) {
+        job.append(run, 0.0, if is_icon { glyph.clone() } else { format.clone() });
+    }
 }
 
 /// `response` with `lines` as its tooltip, in colour.
@@ -186,7 +197,7 @@ pub fn show(response: egui::Response, lines: &[String]) -> egui::Response {
     }
     response.on_hover_ui(|ui| {
         let font = egui::TextStyle::Body.resolve(ui.style());
-        let mut job = job(lines, ui.visuals(), &font);
+        let mut job = job(lines, ui.visuals(), &font, &icons::family(ui.ctx()));
         // Wrapped at a tooltip's width, as egui's own text tooltips are.
         job.wrap.max_width = ui.spacing().tooltip_width;
         ui.label(job);
@@ -243,7 +254,7 @@ mod tests {
     fn the_first_line_is_strong_and_the_job_holds_every_line() {
         let visuals = egui::Visuals::dark();
         let lines = ["#7 · PR #8".to_owned(), "in the gate for 2m".to_owned()];
-        let job = job(&lines, &visuals, &FontId::proportional(13.0));
+        let job = job(&lines, &visuals, &FontId::proportional(13.0), &egui::FontFamily::Proportional);
         assert_eq!(job.text, "#7 · PR #8\nin the gate for 2m");
         assert_eq!(job.sections[0].format.color, visuals.strong_text_color());
         let gating = |job: &LayoutJob, colour| {
@@ -251,7 +262,7 @@ mod tests {
         };
         assert!(gating(&job, crate::factory_chip::rgb(GATING.dark)));
         let light = egui::Visuals::light();
-        let job = super::job(&lines, &light, &FontId::proportional(13.0));
+        let job = super::job(&lines, &light, &FontId::proportional(13.0), &egui::FontFamily::Proportional);
         assert!(gating(&job, crate::factory_chip::rgb(GATING.light)), "the theme's light gate on a light look (#154)");
     }
 }

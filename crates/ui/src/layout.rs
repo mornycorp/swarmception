@@ -171,14 +171,14 @@ pub struct LayoutDrawn {
 
 /// A pane's title that folds it: a chevron (down open, right folded, or left for a pane folded
 /// to the right), its icon and its name, strong; a click on it toggles the fold.
-pub fn fold_title(ui: &mut egui::Ui, icon: &str, name: &str, chevron: Chevron) -> egui::Response {
+pub fn fold_title(ui: &mut egui::Ui, icon: icons::Icon, name: &str, chevron: Chevron) -> egui::Response {
     let glyph = match chevron {
         Chevron::Open => icons::CHEVRON_DOWN,
         Chevron::Folded => icons::CHEVRON_RIGHT,
         Chevron::FoldRight => icons::CHEVRON_RIGHT,
         Chevron::Left => icons::CHEVRON_LEFT,
     };
-    let text = egui::RichText::new(format!("{glyph}  {icon}  {name}")).strong();
+    let text = icons::text_in(ui.ctx(), &format!("{glyph}  {icon}  {name}"), ui.visuals().strong_text_color());
     let tip = match chevron {
         Chevron::Open => catalog::fold_the_to_its_header(&name),
         Chevron::FoldRight => catalog::fold_the_to_a_strip(&name),

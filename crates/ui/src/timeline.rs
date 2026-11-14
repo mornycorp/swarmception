@@ -1108,10 +1108,10 @@ impl TimelinePane {
             let text = match (&status.repo, &status.job, &status.error) {
                 (None, _, _) => catalog::NO_REPOSITORY_IS_OPEN_START_WITH.to_owned(),
                 (_, Some(_), _) => catalog::reading_the_tracking_branch_2(&icons::SPINNER),
-                (_, None, Some(error)) => format!("{}  {error}", icons::WARNING),
+                (_, None, Some(error)) => format!("{}  {error}", icons::TRIANGLE_EXCLAMATION),
                 (Some(_), None, None) => catalog::THE_TRACKING_BRANCH_HOLDS_NO_EVENTS.to_owned(),
             };
-            ui.centered_and_justified(|ui| ui.label(text));
+            ui.centered_and_justified(|ui| ui.label(icons::text(ui.ctx(), &text)));
             return;
         }
         let top = ui.cursor().top();

@@ -13,6 +13,8 @@
 //! quiet time and Fit (the widget's view) and Live (`live.set`'s on).
 
 use crate::catalog;
+use crate::icons;
+use crate::pane::Pane;
 use swarmception_domain::{Collapse, Grouping};
 use swarmception_engine::command::Shortcut;
 use swarmception_engine::commands;
@@ -208,35 +210,29 @@ impl MenuAction {
         }
     }
 
-    /// Its Font Awesome glyph, for the in-window menu: the window's look, a command's by its id
-    /// (none for a command it has no glyph for).
+    /// Its icon, for the in-window menu (#176): a command's by its id ([`icons::for_command`]), a
+    /// pane's by the pane ([`icons::for_pane`]), the window's own state toggles' here; none for a
+    /// command with no icon, whose item keeps the empty column.
     #[must_use]
-    pub fn icon(self) -> &'static str {
-        use crate::icons;
-        match self {
-            Self::Command(id) => match id {
-                "repo.open" => icons::FOLDER,
-                "repo.clearRecent" => icons::CLEAR,
-                "repo.reload" => icons::RELOAD,
-                "repo.fetch" => icons::FETCH,
-                _ => "",
-            },
-            Self::OpenRecent(_) => icons::FOLDER,
-            Self::Recent => icons::RECENT,
-            Self::Quit => icons::QUIT,
-            Self::Timeline => icons::TIMELINE,
-            Self::Factory => icons::FACTORY,
-            Self::Details => icons::INFO,
-            Self::Workers => icons::WORKERS,
-            Self::Grouping(Grouping::Flat) => icons::FLAT,
-            Self::Grouping(Grouping::Workers) => icons::WORKERS,
-            Self::Collapse(Collapse::Empty | Collapse::Off) => icons::COLLAPSE,
-            Self::Collapse(Collapse::Window) => icons::COLLAPSE_WINDOW,
-            Self::FoldQuiet => icons::FOLD,
-            Self::MergeMarks => icons::MERGE_MARKS,
-            Self::Fit => icons::FIT,
-            Self::Live => icons::LIVE,
-        }
+    pub fn icon(self) -> Option<icons::Icon> {
+        Some(match self {
+            Self::Command(id) => return icons::for_command(id),
+            Self::OpenRecent(_) => icons::FOLDER_OPEN,
+            Self::Recent => icons::CLOCK_ROTATE_LEFT,
+            Self::Quit => icons::RIGHT_FROM_BRACKET,
+            Self::Timeline => icons::for_pane(Pane::Timeline),
+            Self::Factory => icons::for_pane(Pane::Factory),
+            Self::Details => icons::for_pane(Pane::Details),
+            Self::Workers => icons::for_pane(Pane::Workers),
+            Self::Grouping(Grouping::Flat) => icons::LIST,
+            Self::Grouping(Grouping::Workers) => icons::USERS,
+            Self::Collapse(Collapse::Empty | Collapse::Off) => icons::DOWN_LEFT_AND_UP_RIGHT_TO_CENTER,
+            Self::Collapse(Collapse::Window) => icons::CROP_SIMPLE,
+            Self::FoldQuiet => icons::MINIMIZE,
+            Self::MergeMarks => icons::CIRCLE_CHECK,
+            Self::Fit => icons::MAXIMIZE,
+            Self::Live => icons::TOWER_BROADCAST,
+        })
     }
 
     /// Whether choosing it closes the menu: a check item leaves it open.

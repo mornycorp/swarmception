@@ -278,7 +278,7 @@ impl Shell {
                 MenuAction::OpenRecent(n) => self.recent_label(n).unwrap_or_default(),
                 other => other.label().to_owned(),
             };
-            let button = ui.add_enabled(state.enabled(action), egui::Button::new(format!("{}  {label}", action.icon())));
+            let button = ui.add_enabled(state.enabled(action), egui::Button::new((icons::cell(action.icon()), label)));
             let path = match action {
                 MenuAction::OpenRecent(n) => self.opening.recent.get(usize::from(n)).map(|r| r.path.clone()),
                 _ => None,
@@ -299,7 +299,7 @@ impl Shell {
         if let Some(refused) = self.opening.refused.clone() {
             let still = self.status.repo.clone();
             let (mut close, mut again) = (false, false);
-            egui::Window::new(catalog::can_t_open_that_folder(&icons::WARNING))
+            egui::Window::new(icons::text(ctx, &catalog::can_t_open_that_folder(&icons::TRIANGLE_EXCLAMATION)))
                 .id(Part::OpenRefused.id())
                 .collapsible(false)
                 .resizable(false)
@@ -319,7 +319,7 @@ impl Shell {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         close = ui.button(catalog::OK).clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
-                        again = ui.button(catalog::open(&icons::FOLDER)).clicked();
+                        again = ui.button(icons::text(ui.ctx(), &catalog::open(&icons::FOLDER_OPEN))).clicked();
                     });
                 });
             if close || again {
@@ -331,7 +331,7 @@ impl Shell {
         }
         let Some(mut text) = self.opening.prompt.clone() else { return };
         let (mut open, mut cancel) = (false, false);
-        egui::Window::new(catalog::open_a_repository(&icons::FOLDER))
+        egui::Window::new(icons::text(ctx, &catalog::open_a_repository(&icons::FOLDER_OPEN)))
             .id(Part::OpenPrompt.id())
             .collapsible(false)
             .resizable(false)

@@ -25,6 +25,7 @@ pub mod icons;
 pub mod layout;
 pub mod menu;
 mod open;
+pub mod pane;
 mod part;
 pub mod saved;
 pub mod shot;
@@ -40,6 +41,7 @@ use swarmception_domain::timeline::Link;
 use swarmception_domain::{Collapse, Grouping, RowsSpec};
 use swarmception_engine::{Github, Session};
 
+use crate::pane::Pane;
 use crate::part::Part;
 use swarmception_domain::details::Subject;
 use swarmception_engine::details_cmds::{DetailsParams, Get as GetDetails};
@@ -784,10 +786,9 @@ impl Shell {
         let shown = if folded {
             let shown = egui::Panel::right(Part::DetailsStrip.id()).resizable(false).exact_size(layout::FOLDED_STRIP).show(ui, |ui| {
                 ui.vertical_centered(|ui| {
-                    let chevron = ui.add(egui::Button::new(icons::CHEVRON_LEFT).frame(false)).on_hover_text(catalog::OPEN_THE_DETAILS);
-                    let icon = ui
-                        .add(egui::Label::new(egui::RichText::new(icons::INFO).strong()).sense(egui::Sense::click()))
-                        .on_hover_text(catalog::OPEN_THE_DETAILS);
+                    let chevron = icons::named(ui.add(icons::only(icons::CHEVRON_LEFT).frame(false)), catalog::OPEN_THE_DETAILS);
+                    let glyph = icons::glyph(ui.ctx(), icons::for_pane(Pane::Details)).strong();
+                    let icon = ui.add(egui::Label::new(glyph).sense(egui::Sense::click())).on_hover_text(catalog::OPEN_THE_DETAILS);
                     chevron.clicked() || icon.clicked()
                 })
                 .inner
@@ -1000,7 +1001,7 @@ impl Shell {
                 ui.label(catalog::TICKETS);
             }
             if action == MenuAction::Recent {
-                let shown = ui.menu_button(format!("{}  {}", action.icon(), action.label()), |ui| self.recent_menu(ui, state));
+                let shown = ui.menu_button((icons::cell(action.icon()), action.label()), |ui| self.recent_menu(ui, state));
                 self.note_menu(None, Some(shown.response.rect));
                 continue;
             }
@@ -1018,7 +1019,8 @@ impl Shell {
     /// button with its shortcut for the rest; a command greyed out says why (the engine's own
     /// check, #160).
     fn menu_item(&self, ui: &mut egui::Ui, state: MenuState, action: MenuAction) -> egui::Response {
-        let label = format!("{}  {}", action.icon(), action.label());
+        // The icon in its fixed column, or the column empty, so the labels line up (#176).
+        let label = (icons::cell(action.icon()), action.label());
         let enabled = state.enabled(action);
         let response = match state.checked(action) {
             Some(checked) if matches!(action, MenuAction::Grouping(_)) => ui.add_enabled(enabled, egui::RadioButton::new(checked, label)),
@@ -1054,42 +1056,48 @@ impl Shell {
     fn toolbar(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let can = self.status.repo.is_some() && !self.loading();
-            if ui.add_enabled(can, icon_button(icons::RELOAD)).on_hover_text(catalog::RELOAD_THE_TRACKING_BRANCH).clicked() {
+            if icons::named(ui.add_enabled(can, icons::only(icons::ROTATE)), catalog::RELOAD_THE_TRACKING_BRANCH).clicked() {
                 self.reload();
             }
-            if ui.add_enabled(can, icon_button(icons::FETCH)).on_hover_text(catalog::FETCH_THE_REMOTE_S_TRACKING_BRANCH).clicked() {
+            if icons::named(ui.add_enabled(can, icons::only(icons::CLOUD_ARROW_DOWN)), catalog::FETCH_THE_REMOTE_S_TRACKING_BRANCH).clicked() {
                 self.fetch();
             }
             self.live_toggle(ui);
             ui.separator();
             let mut spec = self.spec;
-            ui.selectable_value(&mut spec.grouping, Grouping::Flat, icons::FLAT).on_hover_text(catalog::TICKETS_PACKED_ONTO_SHARED_ROWS_IN);
-            ui.selectable_value(&mut spec.grouping, Grouping::Workers, icons::WORKERS).on_hover_text(catalog::TICKETS_BY_WORKER_MACHINE_WORKER_ITS);
+            for (grouping, icon, hover) in [
+                (Grouping::Flat, icons::LIST, catalog::TICKETS_PACKED_ONTO_SHARED_ROWS_IN),
+                (Grouping::Workers, icons::USERS, catalog::TICKETS_BY_WORKER_MACHINE_WORKER_ITS),
+            ] {
+                if icons::named(ui.add(egui::Button::selectable(spec.grouping == grouping, icons::atom(icon))), hover).clicked() {
+                    spec.grouping = grouping;
+                }
+            }
             ui.separator();
-            let mut collapse = |ui: &mut egui::Ui, mode: Collapse, icon: &str, hover: &str| {
+            let mut collapse = |ui: &mut egui::Ui, mode: Collapse, icon: icons::Icon, hover: &str| {
                 let on = spec.collapse == mode;
-                if ui.selectable_label(on, icon).on_hover_text(hover).clicked() {
+                if icons::named(ui.add(egui::Button::selectable(on, icons::atom(icon))), hover).clicked() {
                     spec.collapse = if on { Collapse::Off } else { mode };
                 }
             };
-            collapse(ui, Collapse::Empty, icons::COLLAPSE, catalog::COLLAPSE_LEAVE_OUT_ROWS_WITH_NO);
-            collapse(ui, Collapse::Window, icons::COLLAPSE_WINDOW, catalog::COLLAPSE_TO_THE_WINDOW_LEAVE_OUT);
+            collapse(ui, Collapse::Empty, icons::DOWN_LEFT_AND_UP_RIGHT_TO_CENTER, catalog::COLLAPSE_LEAVE_OUT_ROWS_WITH_NO);
+            collapse(ui, Collapse::Window, icons::CROP_SIMPLE, catalog::COLLAPSE_TO_THE_WINDOW_LEAVE_OUT);
             if spec != self.spec {
                 self.set_rows(SetRowsParams { grouping: Some(spec.grouping), collapse: Some(spec.collapse), merge_marks: Some(spec.merge_marks) });
             }
             let mut fold = self.ui.fold.on;
             let minutes = self.ui.fold.after_seconds.unwrap_or(swarmception_domain::stats::QUIET) / 60;
             let hover = catalog::fold_quiet_time_each_stretch(&minutes);
-            if ui.checkbox(&mut fold, catalog::fold_quiet_time(&icons::FOLD)).on_hover_text(hover).changed() {
+            if ui.add(egui::Checkbox::new(&mut fold, icons::text(ui.ctx(), &catalog::fold_quiet_time(&icons::MINIMIZE)))).on_hover_text(hover).changed() {
                 self.set_fold(fold);
             }
             // The zoom in / out / fit buttons are the timeline widget's own toolbar's (#35).
             if let Some(path) = &self.status.opening {
                 ui.separator();
-                ui.label(catalog::opening(&icons::SPINNER, &path));
+                ui.label(icons::text(ui.ctx(), &catalog::opening(&icons::SPINNER, &path)));
             } else if self.loading() {
                 ui.separator();
-                ui.label(catalog::reading_the_tracking_branch(&icons::SPINNER));
+                ui.label(icons::text(ui.ctx(), &catalog::reading_the_tracking_branch(&icons::SPINNER)));
             }
         });
     }
@@ -1100,19 +1108,22 @@ impl Shell {
             self.saved_note(ui);
             let s = &self.status;
             match &s.repo {
-                Some(repo) => ui.label(format!("{}  {repo}", icons::FOLDER)),
+                Some(repo) => ui.label(icons::titled(ui.ctx(), icons::FOLDER_OPEN, repo)),
                 None => ui.weak(catalog::NO_REPOSITORY_FILE_OPEN_O_OPENS),
             };
             if let (Some(reference), Some(commit)) = (&s.reference, &s.commit) {
                 ui.separator();
                 let short = commit.get(..8).unwrap_or(commit);
-                ui.label(format!("{}  {} @ {short}", icons::BRANCH, reference.trim_start_matches("refs/")));
+                ui.label(icons::text(ui.ctx(), &format!("{}  {} @ {short}", icons::CODE_BRANCH, reference.trim_start_matches("refs/"))));
                 ui.separator();
-                ui.label(catalog::tickets_merged_merges_to_main(&icons::TICKETS, &s.tickets, &s.merged, &s.main_merges, &s.workers, &s.events));
+                ui.label(icons::text(
+                    ui.ctx(),
+                    &catalog::tickets_merged_merges_to_main(&icons::TICKET_SIMPLE, &s.tickets, &s.merged, &s.main_merges, &s.workers, &s.events),
+                ));
             }
             if let Some(text) = self.timeline.clock_text(&mut self.engine) {
                 ui.separator();
-                ui.label(format!("{}  {text}", icons::CLOCK));
+                ui.label(icons::titled(ui.ctx(), icons::CLOCK, &text));
             }
             self.live_note(ui);
             self.issues_note(ui);
@@ -1120,11 +1131,12 @@ impl Shell {
             let problem = self.error.as_ref().or(s.error.as_ref());
             if let Some(problem) = problem {
                 ui.separator();
-                ui.colored_label(ui.visuals().error_fg_color, format!("{}  {problem}", icons::WARNING));
+                ui.label(icons::titled_in(ui.ctx(), icons::TRIANGLE_EXCLAMATION, problem, ui.visuals().error_fg_color));
             } else if s.line_errors > 0 {
                 ui.separator();
                 let lines: Vec<String> = s.errors.iter().map(|e| catalog::line(&e.instance, &e.line, &e.message)).collect();
-                ui.colored_label(ui.visuals().warn_fg_color, catalog::lines_didn_t_read(&icons::WARNING, &s.line_errors)).on_hover_text(lines.join("\n"));
+                ui.label(icons::text_in(ui.ctx(), &catalog::lines_didn_t_read(&icons::TRIANGLE_EXCLAMATION, &s.line_errors), ui.visuals().warn_fg_color))
+                    .on_hover_text(lines.join("\n"));
             }
         });
     }
@@ -1150,7 +1162,11 @@ impl Shell {
     fn live_toggle(&mut self, ui: &mut egui::Ui) {
         let mut on = self.live.on;
         let hover = catalog::live_fetch_the_remote_s(&(interval_text(self.live.interval_seconds)));
-        if ui.add_enabled(self.status.repo.is_some(), egui::Button::selectable(on, catalog::live(&icons::LIVE))).on_hover_text(hover).clicked() {
+        if ui
+            .add_enabled(self.status.repo.is_some(), egui::Button::selectable(on, icons::text(ui.ctx(), &catalog::live(&icons::TOWER_BROADCAST))))
+            .on_hover_text(hover)
+            .clicked()
+        {
             on = !on;
             self.set_live(SetLiveParams { on: Some(on), interval_seconds: None });
         }
@@ -1194,10 +1210,11 @@ impl Shell {
                     .map(|(t, s)| catalog::retry_at(&(time_of_day(swarmception_model::Timestamp(t.0.saturating_add(i64::try_from(s).unwrap_or(0)))))));
                 hover.push(error.clone());
                 let failed = if live.failures > 1 { catalog::check_failed(&live.failures) } else { catalog::CHECK_FAILED.to_owned() };
-                ui.colored_label(ui.visuals().warn_fg_color, catalog::live_2(&icons::LIVE, &(retry.unwrap_or_default()), &icons::WARNING, &failed))
+                let text = catalog::live_2(&icons::TOWER_BROADCAST, &(retry.unwrap_or_default()), &icons::TRIANGLE_EXCLAMATION, &failed);
+                ui.label(icons::text_in(ui.ctx(), &text, ui.visuals().warn_fg_color))
             }
-            (_, true) => ui.label(catalog::live_3(&icons::LIVE, &checked)),
-            (_, false) => ui.weak(catalog::paused(&icons::LIVE, &checked)),
+            (_, true) => ui.label(icons::text(ui.ctx(), &catalog::live_3(&icons::TOWER_BROADCAST, &checked))),
+            (_, false) => ui.label(icons::text_in(ui.ctx(), &catalog::paused(&icons::TOWER_BROADCAST, &checked), ui.visuals().weak_text_color())),
         };
         label.on_hover_text(hover.join("\n"));
     }
@@ -1210,7 +1227,7 @@ impl Shell {
         let short = if short.len() < note.len() { format!("{short}…") } else { short };
         let file = self.saved().file.unwrap_or_default();
         let full = catalog::click_to_dismiss(&note, &file);
-        let text = egui::RichText::new(format!("{}  {short}", icons::WARNING)).color(ui.visuals().warn_fg_color);
+        let text = icons::titled_in(ui.ctx(), icons::TRIANGLE_EXCLAMATION, &short, ui.visuals().warn_fg_color);
         if ui.add(egui::Label::new(text).sense(egui::Sense::click())).on_hover_text(full).clicked()
             && let Some(keeper) = &mut self.keeper
         {
@@ -1233,9 +1250,9 @@ impl Shell {
             None => "",
         };
         let mut text = match (&issues.github, issues.issues) {
-            (Some(repo), 0) if issues.source.is_none() => format!("{}  {repo}", icons::ISSUES),
-            (Some(repo), n) => catalog::issues_and_prs(&icons::ISSUES, &repo, &n, &from),
-            (None, _) => catalog::no_issues(&icons::ISSUES),
+            (Some(repo), 0) if issues.source.is_none() => format!("{}  {repo}", icons::CIRCLE_EXCLAMATION),
+            (Some(repo), n) => catalog::issues_and_prs(&icons::CIRCLE_EXCLAMATION, &repo, &n, &from),
+            (None, _) => catalog::no_issues(&icons::CIRCLE_EXCLAMATION),
         };
         if issues.fetching {
             text.push_str(catalog::FETCHING);
@@ -1243,8 +1260,8 @@ impl Shell {
         let hover = issues.fetched.map(|t| catalog::fetched(&t)).into_iter().chain(issues.cache.iter().map(|c| catalog::cached_in(&c)));
         let hover: Vec<String> = hover.chain(issues.error.iter().cloned()).collect();
         let label = match &issues.error {
-            Some(_) => ui.colored_label(ui.visuals().warn_fg_color, format!("{text} {}", icons::WARNING)),
-            None => ui.label(text),
+            Some(_) => ui.label(icons::text_in(ui.ctx(), &format!("{text} {}", icons::TRIANGLE_EXCLAMATION), ui.visuals().warn_fg_color)),
+            None => ui.label(icons::text(ui.ctx(), &text)),
         };
         if !hover.is_empty() {
             label.on_hover_text(hover.join("\n"));
@@ -1276,9 +1293,9 @@ impl BandKind {
         }
     }
 
-    const fn icon(self) -> &'static str {
+    const fn icon(self) -> icons::Icon {
         match self {
-            Self::Factory => icons::FACTORY,
+            Self::Factory => icons::for_pane(Pane::Factory),
         }
     }
 
@@ -1339,10 +1356,6 @@ fn whole_points(size: f32) -> u32 {
 /// A [`PaneSizes`] size as egui takes it.
 const fn points_f32(size: u32) -> f32 {
     size as f32
-}
-
-fn icon_button(icon: &str) -> egui::Button<'_> {
-    egui::Button::new(egui::RichText::new(icon).size(15.0))
 }
 
 /// A registry shortcut as egui's: the platform's command key, Shift or not, the letter.
