@@ -15,6 +15,10 @@ swarmception-model = { workspace = true }
 swarmception-automation = { workspace = true }
 swarmception-source = { workspace = true }
 serde_json = { workspace = true }
+serde = { workspace = true }
+# The event loop the window runs on (`place::Launch`, #178): eframe's own winit, its features set by
+# eframe, so the monitors are read before the window opens and its saved place is checked on them.
+winit = { version = "0.30", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = { workspace = true }

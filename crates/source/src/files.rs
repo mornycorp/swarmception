@@ -28,6 +28,27 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     write(path, bytes, true)
 }
 
+/// The text of the file at `path`, read whole when it is at most `most` bytes: none when there is
+/// no file. A file read as hostile input (the window's place, #178): one too large or not UTF-8 is
+/// an error, never read in part.
+///
+/// # Errors
+///
+/// The file is over `most` bytes, isn't UTF-8, or couldn't be read.
+pub fn read_capped_text(path: &Path, most: u64) -> io::Result<Option<String>> {
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(&mut io::Read::take(file, most.saturating_add(1)), &mut bytes)?;
+    if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > most {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, format!("it is over {most} bytes")));
+    }
+    String::from_utf8(bytes).map(Some).map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "it is not UTF-8 text"))
+}
+
 fn write(path: &Path, bytes: &[u8], private: bool) -> io::Result<()> {
     let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
     if let Some(parent) = parent {
@@ -65,6 +86,22 @@ fn beside(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    /// A file read as hostile input: none when it isn't there, whole when it fits, an error when
+    /// it is over its cap or isn't text.
+    #[test]
+    fn a_capped_read_is_whole_or_refused() {
+        let dir = std::env::temp_dir().join(format!("swarmception-files-capped-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("w.json");
+        assert_eq!(read_capped_text(&file, 10).unwrap(), None, "no file");
+        write_atomic(&file, b"0123456789").unwrap();
+        assert_eq!(read_capped_text(&file, 10).unwrap().as_deref(), Some("0123456789"));
+        assert!(read_capped_text(&file, 9).is_err(), "over its cap");
+        write_atomic(&file, &[0xff, 0xfe]).unwrap();
+        assert!(read_capped_text(&file, 10).is_err(), "not text");
+        std::fs::remove_dir_all(dir).ok();
+    }
+
     use super::*;
 
     fn scratch(what: &str) -> PathBuf {

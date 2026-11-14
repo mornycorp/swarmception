@@ -22,6 +22,7 @@ mod factory_paint;
 mod factory_stats;
 mod factory_tip;
 pub mod fonts;
+pub mod icon;
 pub mod icons;
 pub mod menu;
 mod open;
@@ -181,8 +182,6 @@ pub struct Shell {
     opened: Vec<String>,
     /// Keeps the state in its file across a restart (#53); none: neither read nor written.
     keeper: Option<saved::Keeper>,
-    /// The window's size and place on screen, as last drawn (or as restored).
-    window_place: Option<saved::WindowPlace>,
     /// The dock's tiles (#177), built from the state's layout.
     dock: Option<dock::Dock>,
     /// Each pane the dock drew last frame, and its size.
@@ -224,7 +223,6 @@ impl Shell {
             native_menu: false,
             opened: Vec::new(),
             keeper: None,
-            window_place: None,
             dock: None,
             drawn_panes: Vec::new(),
             opening: open::Opening::default(),
@@ -273,7 +271,6 @@ impl Shell {
         if let Some(view) = &state.timeline {
             self.timeline.restore_view(view.clone());
         }
-        self.window_place = state.window;
         self.restore_live(state.live);
     }
 
@@ -298,7 +295,6 @@ impl Shell {
         Some(saved::AppState {
             ui,
             rows: self.spec,
-            window: self.window_place,
             timeline: self.timeline.view_state(&mut self.engine),
             live: self.engine.call::<GetLive>(NoParams {}).map_or_else(
                 |_| saved::LiveChoice::default(),
@@ -326,28 +322,12 @@ impl Shell {
         self.keeper.as_ref().map(saved::Keeper::inspect).unwrap_or_default()
     }
 
-    /// The window's size and place to save, as the app reads them from its viewport.
-    fn note_window(&mut self, ctx: &egui::Context) {
-        let place = ctx.input(|i| {
-            let v = i.viewport();
-            if v.minimized == Some(true) || v.fullscreen == Some(true) {
-                return None;
-            }
-            let (inner, outer) = (v.inner_rect?, v.outer_rect?);
-            Some(saved::WindowPlace { x: outer.min.x, y: outer.min.y, width: inner.width(), height: inner.height() })
-        });
-        if place.is_some() {
-            self.window_place = place;
-        }
-    }
-
     /// Hands this frame's state to the keeper, which writes it once it holds still; a frame is
     /// asked for when a write waits.
     fn keep(&mut self, ctx: &egui::Context) {
         if self.keeper.is_none() {
             return;
         }
-        self.note_window(ctx);
         let Some(state) = self.app_state() else { return };
         let now = ctx.input(|i| i.time);
         if let Some(wait) = self.keeper.as_mut().and_then(|keeper| keeper.observe(state, now)) {

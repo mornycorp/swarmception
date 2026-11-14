@@ -521,6 +521,7 @@ mod tests {
         ("factory_tip.rs", 28, "the words a tooltip colours, matched in its text, and the units it reads"),
         ("density.rs", 0, ""),
         ("fonts.rs", 17, "the faces' names and files, the named families' and text styles' keys: ids egui looks them up by"),
+        ("icon.rs", 0, ""),
         ("icons.rs", 0, ""),
         ("lib.rs", 1, "the refs' prefix"),
         ("menu.rs", 29, "the menu items' ids and the registry's menu paths"),
