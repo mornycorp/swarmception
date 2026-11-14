@@ -122,3 +122,4 @@
 {"event":"sub.start","name":"gate","note":"#185; capacity=3 free=10.3; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-185","t":"2026-11-14T21:56:58Z"}
 {"event":"merge","issue":178,"mr":185,"sub":"gate-185","t":"2026-11-14T21:57:22Z"}
 {"event":"sub.stop","note":"rc=0; kind=smoke; merged #185","sub":"gate-185","t":"2026-11-14T21:57:28Z"}
+{"event":"sub.start","name":"ready","note":"ci --changed before submitting","sub":"ready-c9d1bd6","t":"2026-11-14T22:02:18Z"}
