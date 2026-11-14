@@ -51,7 +51,9 @@ fn the_engines_commands_run_over_the_socket() {
     assert_eq!(spec.grouping, Grouping::Workers);
     // No repository: disabled, and why.
     let error = problem(client.call("repo.reload", &()));
-    assert_eq!(error, ProtocolError::Engine { error: EngineError::Disabled { command: "repo.reload".into(), reason: Unavailable::NoRepo } });
+    assert_eq!(error, ProtocolError::from(EngineError::Disabled { command: "repo.reload".into(), reason: Unavailable::NoRepo }));
+    let ProtocolError::Engine { remediation, .. } = &error else { panic!("{error:?}") };
+    assert_eq!(remediation, "open a repository first (repo.open)", "every failure says what to do");
 }
 
 #[test]
@@ -68,7 +70,7 @@ fn bad_requests_are_typed_errors_and_never_end_the_server() {
     assert_eq!(read(client.send_line(r#"{"v":1,"token":"nope","id":2,"command":"rows.get"}"#).unwrap()), ProtocolError::BadToken);
     let long = "x".repeat(MAX_LINE + 10);
     assert_eq!(read(client.send_line(&long).unwrap()), ProtocolError::TooLong { limit: MAX_LINE });
-    assert!(matches!(problem(client.call("nope.nope", &())), ProtocolError::Engine { error: EngineError::UnknownCommand { .. } }));
+    assert!(matches!(problem(client.call("nope.nope", &())), ProtocolError::Engine { error: EngineError::UnknownCommand { .. }, .. }));
     // The window's commands have no window here.
     assert_eq!(problem(client.call("ui.inspect", &())), ProtocolError::NoUi);
     assert_eq!(problem(client.call("timeline.view.fit", &())), ProtocolError::NoUi);
@@ -81,7 +83,7 @@ fn bad_requests_are_typed_errors_and_never_end_the_server() {
         serde_json::from_str(&format!("{}{}", "[".repeat(64), "]".repeat(64))).unwrap(),
     ];
     for params in hostile {
-        assert!(matches!(problem(client.call("rows.set", &params)), ProtocolError::Engine { error: EngineError::BadParams { .. } }), "{params}");
+        assert!(matches!(problem(client.call("rows.set", &params)), ProtocolError::Engine { error: EngineError::BadParams { .. }, .. }), "{params}");
     }
     // Still serving.
     let _: RowsSpec = client.call("rows.get", &()).unwrap();
@@ -132,7 +134,8 @@ fn every_command_with_hostile_params_is_an_answer_not_a_crash() {
         for params in &hostile {
             let result: Result<serde_json::Value, ClientError> = client.call(&command.id, params);
             assert!(!matches!(result, Err(ClientError::Io(_) | ClientError::BadReply(_))), "{} {params}: {result:?}", command.id);
-            assert!(!matches!(result, Err(ClientError::Protocol(ProtocolError::Engine { error: EngineError::Panicked { .. } }))), "{} {params}", command.id);
+            let caught = matches!(&result, Err(ClientError::Protocol(ProtocolError::Engine { error: EngineError::Internal { .. }, remediation })) if remediation == swarmception_engine::error::PANICKED);
+            assert!(!caught, "{} {params}: a panic the dispatch caught", command.id);
         }
     }
 }

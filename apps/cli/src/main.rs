@@ -69,7 +69,7 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
         Err(Failure::Engine(error)) => {
-            eprintln!("swarmception-cli: {}: {error}", error.code());
+            eprintln!("swarmception-cli: {}: {error}\nfix: {}", error.code(), error.remediation());
             ExitCode::FAILURE
         }
         Err(Failure::Protocol(error)) => {

@@ -161,18 +161,27 @@ impl Command for Open {
 
     fn run(session: &mut Session, params: OpenParams) -> Result<StatusResult, EngineError> {
         session.refused = None;
+        // A check still waiting for its thread is cancelled (#180): this open takes its place, and
+        // its thread starts no git for a folder nobody wants now.
+        if let Some((_, _, cancel)) = session.probing.take() {
+            cancel.cancel();
+        }
         let Some(waker) = session.waker() else {
-            session.probing = None;
             let top = check(&params.path)?;
             return open_checked(session, top);
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let path = params.path.clone();
+        let cancel = crate::command::Cancel::new();
+        let theirs = cancel.clone();
         std::thread::spawn(move || {
+            if theirs.is_cancelled() {
+                return;
+            }
             let _ = sender.send(check(&path));
             waker();
         });
-        session.probing = Some((params.path, receiver));
+        session.probing = Some((params.path, receiver, cancel));
         Ok(status(session))
     }
 }
@@ -336,5 +345,25 @@ impl Command for Status {
 
     fn run(session: &mut Session, _params: NoParams) -> Result<StatusResult, EngineError> {
         Ok(status(session))
+    }
+}
+
+#[cfg(test)]
+mod open_tests {
+    use super::*;
+
+    /// A second `repo.open` while the first's check waits cancels the first (#180): its thread runs
+    /// no git for a folder nobody wants now, and only the second's answer is waited for.
+    #[test]
+    fn a_new_open_cancels_the_check_it_takes_the_place_of() {
+        let mut session = Session::with_waker(std::sync::Arc::new(|| {}));
+        let open = |session: &mut Session, path: &str| session.call::<Open>(OpenParams { path: path.into() }).unwrap();
+        open(&mut session, "/no/such/first");
+        let first = session.probing.as_ref().map(|(_, _, cancel)| cancel.clone()).expect("checking in the background");
+        assert!(!first.is_cancelled());
+        open(&mut session, "/no/such/second");
+        assert!(first.is_cancelled(), "the first check cancelled");
+        assert_eq!(session.opening(), Some("/no/such/second"));
+        assert!(session.probing.as_ref().is_some_and(|(_, _, cancel)| !cancel.is_cancelled()), "the second's goes on");
     }
 }

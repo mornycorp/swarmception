@@ -1,11 +1,19 @@
-//! The engine's errors, each with a stable code for transport replies, and the why as data: a
-//! command that can't run now is [`EngineError::Disabled`] with an [`Unavailable`], a refused
-//! value [`EngineError::Invalid`] with a [`Refusal`].
+//! The engine's errors, each with a stable code for transport replies, a remediation (what to do
+//! about it, [`EngineError::remediation`]), and the why as data: a command that can't run now is
+//! [`EngineError::Disabled`] with an [`Unavailable`], a refused value [`EngineError::Invalid`] with
+//! a [`Refusal`]. A panic the dispatch caught is [`EngineError::Internal`] whose message starts
+//! `panicked: ` and whose remediation is [`PANICKED`] (#180, swarm-core's docs/app-architecture.md
+//! › One dispatch); a call cancelled before it ran is [`EngineError::Cancelled`].
 
 use std::fmt;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+
+/// The remediation of a panic the dispatch caught: swarm-core's testkit's `conformance::PANICKED`,
+/// word for word, so a caught panic is told from a plain `internal` on every surface.
+pub const PANICKED: &str =
+    "the command panicked, a bug in the app and not in the call: report it with what the app's stderr says; the app goes on, and other calls still work";
 
 /// Why a command can't run now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -86,13 +94,65 @@ impl fmt::Display for Refusal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "code", rename_all = "camelCase")]
 pub enum EngineError {
-    UnknownCommand { command: String },
-    BadParams { message: String },
-    ParamsTooLarge { bytes: usize, limit: usize },
-    Disabled { command: String, reason: Unavailable },
-    Invalid { refusal: Refusal },
-    Panicked { command: String },
-    BadResult { message: String },
+    UnknownCommand {
+        command: String,
+    },
+    BadParams {
+        message: String,
+    },
+    ParamsTooLarge {
+        bytes: usize,
+        limit: usize,
+    },
+    Disabled {
+        command: String,
+        reason: Unavailable,
+    },
+    Invalid {
+        refusal: Refusal,
+    },
+    /// Something went wrong inside: a panic the dispatch caught (its message `panicked: ` and the
+    /// command, its remediation [`PANICKED`]; what the panic said is on stderr, never here).
+    Internal {
+        message: String,
+        remediation: String,
+    },
+    /// The call was cancelled before it ran, so it never ran (#180).
+    Cancelled {
+        command: String,
+    },
+    BadResult {
+        message: String,
+    },
+}
+
+impl EngineError {
+    /// A panic the dispatch caught in `command` (its check or its run).
+    #[must_use]
+    pub fn panicked(command: &str) -> Self {
+        Self::Internal { message: format!("panicked: `{command}` failed inside (a bug); the session is still usable"), remediation: PANICKED.to_owned() }
+    }
+
+    /// What to do about it: every error has one (swarm-core's contract, error-shape).
+    #[must_use]
+    pub fn remediation(&self) -> String {
+        match self {
+            Self::UnknownCommand { .. } => "ask engine.commands for the commands there are".to_owned(),
+            Self::BadParams { .. } => "give the params the command's schema asks for (engine.commands lists it)".to_owned(),
+            Self::ParamsTooLarge { limit, .. } => format!("send params under {limit} bytes"),
+            Self::Disabled { reason, .. } => match reason {
+                Unavailable::NoRepo => "open a repository first (repo.open)".to_owned(),
+                Unavailable::Loading => "wait for the read to finish (repo.status), then ask again".to_owned(),
+                Unavailable::NoData => "open a swarm's clone whose tracking branch has events".to_owned(),
+                Unavailable::NoGithub => "open a clone whose origin is on GitHub".to_owned(),
+                Unavailable::NothingRecent => "open a repository first: it is then recent".to_owned(),
+            },
+            Self::Invalid { .. } => "change what was asked for, as the message says, and ask again".to_owned(),
+            Self::Internal { remediation, .. } => remediation.clone(),
+            Self::Cancelled { .. } => "ask again if it is still wanted".to_owned(),
+            Self::BadResult { .. } => PANICKED.to_owned(),
+        }
+    }
 }
 
 impl EngineError {
@@ -105,7 +165,8 @@ impl EngineError {
             Self::ParamsTooLarge { .. } => "params_too_large",
             Self::Disabled { .. } => "disabled",
             Self::Invalid { .. } => "invalid",
-            Self::Panicked { .. } => "panicked",
+            Self::Internal { .. } => "internal",
+            Self::Cancelled { .. } => "cancelled",
             Self::BadResult { .. } => "bad_result",
         }
     }
@@ -125,7 +186,8 @@ impl fmt::Display for EngineError {
             Self::ParamsTooLarge { bytes, limit } => write!(f, "params of {bytes} bytes, over {limit}"),
             Self::Disabled { command, reason } => write!(f, "`{command}` can't run: {reason}"),
             Self::Invalid { refusal } => write!(f, "{refusal}"),
-            Self::Panicked { command } => write!(f, "`{command}` failed inside (a bug); the session is still usable"),
+            Self::Internal { message, .. } => write!(f, "{message}"),
+            Self::Cancelled { command } => write!(f, "`{command}` was cancelled before it ran"),
             Self::BadResult { message } => write!(f, "the result didn't serialize: {message}"),
         }
     }

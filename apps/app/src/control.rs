@@ -162,7 +162,7 @@ fn inspect(shell: &mut Shell) -> Result<String, ProtocolError> {
 /// The shell's error as the protocol carries it.
 fn protocol_error(error: ShellError) -> ProtocolError {
     match error {
-        ShellError::Engine(error) => ProtocolError::Engine { error },
+        ShellError::Engine(error) => ProtocolError::from(error),
         ShellError::Widget(error) => ProtocolError::Widget { error },
     }
 }
@@ -292,7 +292,7 @@ mod tests {
             (refused, opened)
         });
         match refused {
-            Err(ClientError::Protocol(ProtocolError::Engine { error })) => assert!(error.to_string().contains("is not in a git repository"), "{error}"),
+            Err(ClientError::Protocol(ProtocolError::Engine { error, .. })) => assert!(error.to_string().contains("is not in a git repository"), "{error}"),
             other => panic!("{other:?}"),
         }
         let top = std::fs::canonicalize(&dir).unwrap().display().to_string();

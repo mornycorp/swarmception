@@ -182,18 +182,155 @@ fn execute<C: Command>(session: &mut Session, params: &str) -> Result<String, En
     serde_json::to_string(&result).map_err(|e| EngineError::BadResult { message: e.to_string() })
 }
 
+/// A call's cancel token (#180, swarm-core's docs/app-architecture.md › One dispatch): whoever
+/// holds a clone can cancel it. A call whose token is set before it runs is
+/// [`EngineError::Cancelled`] and never runs; work a command hands to a thread looks at it before
+/// it starts (the background folder check, [`crate::repo_cmds::Open`]).
+#[derive(Debug, Clone, Default)]
+pub struct Cancel(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+impl Cancel {
+    /// A token not yet cancelled.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Cancels it, for every clone.
+    pub fn cancel(&self) {
+        self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Whether it was cancelled.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
 /// Checks `C` is enabled and runs it with typed params, catching a panic in either; a command
 /// that isn't read-only moves the session's revision on when it succeeds.
 ///
 /// # Errors
 ///
-/// [`EngineError::Disabled`], [`EngineError::Panicked`], or the command's own error.
+/// [`EngineError::Disabled`], [`EngineError::Internal`] for a caught panic, or the command's own
+/// error.
 pub fn call<C: Command>(session: &mut Session, params: C::Params) -> Result<C::Result, EngineError> {
-    let enabled = catch_unwind(AssertUnwindSafe(|| C::enabled(session))).map_err(|_| EngineError::Panicked { command: C::ID.to_owned() })?;
+    call_cancellable::<C>(session, params, &Cancel::new())
+}
+
+/// [`call`], with a cancel token: one set before the command runs is [`EngineError::Cancelled`],
+/// and the command never runs.
+///
+/// # Errors
+///
+/// As [`call`], and [`EngineError::Cancelled`].
+pub fn call_cancellable<C: Command>(session: &mut Session, params: C::Params, cancel: &Cancel) -> Result<C::Result, EngineError> {
+    let enabled = catch_unwind(AssertUnwindSafe(|| C::enabled(session))).map_err(|_| EngineError::panicked(C::ID))?;
     enabled.map_err(|reason| EngineError::Disabled { command: C::ID.to_owned(), reason })?;
-    let result = catch_unwind(AssertUnwindSafe(|| C::run(session, params))).map_err(|_| EngineError::Panicked { command: C::ID.to_owned() })?;
+    if cancel.is_cancelled() {
+        return Err(EngineError::Cancelled { command: C::ID.to_owned() });
+    }
+    let result = catch_unwind(AssertUnwindSafe(|| C::run(session, params))).map_err(|_| EngineError::panicked(C::ID))?;
     if result.is_ok() && !C::READ_ONLY {
         session.touch();
     }
     result
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static RAN: AtomicUsize = AtomicUsize::new(0);
+
+    /// A command that panics, or counts its runs.
+    struct Boom;
+
+    #[derive(serde::Deserialize, schemars::JsonSchema)]
+    struct BoomParams {
+        #[serde(default)]
+        panic: bool,
+    }
+
+    impl Command for Boom {
+        const ID: &'static str = "test.boom";
+        const LABEL: &'static str = "Boom";
+        const READ_ONLY: bool = true;
+        type Params = BoomParams;
+        type Result = u32;
+
+        fn run(_session: &mut Session, params: BoomParams) -> Result<u32, EngineError> {
+            RAN.fetch_add(1, Ordering::SeqCst);
+            if params.panic {
+                panic!("a secret param");
+            }
+            Ok(1)
+        }
+    }
+
+    /// A panic in a command's run is `internal`, its message `panicked: ` and the command, its
+    /// remediation [`crate::error::PANICKED`], with nothing the panic said in it; the session goes
+    /// on. On the wire the typed error carries the same.
+    #[test]
+    fn a_caught_panic_is_internal_with_the_contracts_remediation() {
+        let mut session = Session::new();
+        let error = call::<Boom>(&mut session, BoomParams { panic: true }).unwrap_err();
+        assert_eq!(error.code(), "internal");
+        assert!(error.to_string().starts_with("panicked: `test.boom`"), "{error}");
+        assert!(!error.to_string().contains("secret"), "what the panic said stays on stderr");
+        assert_eq!(error.remediation(), crate::error::PANICKED);
+        let wire = serde_json::to_value(&error).unwrap();
+        assert_eq!((wire["code"].as_str(), wire["remediation"].as_str()), (Some("internal"), Some(crate::error::PANICKED)));
+        assert_eq!(call::<Boom>(&mut session, BoomParams { panic: false }).unwrap(), 1, "the session still works");
+    }
+
+    static COUNTED: AtomicUsize = AtomicUsize::new(0);
+
+    /// A command that counts its runs, for this test alone.
+    struct Counted;
+
+    impl Command for Counted {
+        const ID: &'static str = "test.counted";
+        const LABEL: &'static str = "Counted";
+        const READ_ONLY: bool = true;
+        type Params = BoomParams;
+        type Result = usize;
+
+        fn run(_session: &mut Session, _params: BoomParams) -> Result<usize, EngineError> {
+            Ok(COUNTED.fetch_add(1, Ordering::SeqCst) + 1)
+        }
+    }
+
+    /// A call whose token is set before it runs is `cancelled`, and the command never runs.
+    #[test]
+    fn a_call_cancelled_before_it_runs_never_runs() {
+        let mut session = Session::new();
+        let cancel = Cancel::new();
+        assert_eq!(session.call_cancellable::<Counted>(BoomParams { panic: false }, &cancel).unwrap(), 1);
+        cancel.clone().cancel();
+        assert!(cancel.is_cancelled(), "a clone cancels it for every holder");
+        let error = session.call_cancellable::<Counted>(BoomParams { panic: false }, &cancel).unwrap_err();
+        assert_eq!((error.code(), error.remediation().as_str()), ("cancelled", "ask again if it is still wanted"));
+        assert_eq!(COUNTED.load(Ordering::SeqCst), 1, "it never ran");
+    }
+
+    /// Every error has a remediation.
+    #[test]
+    fn every_error_says_what_to_do() {
+        let errors = [
+            EngineError::UnknownCommand { command: "x".into() },
+            EngineError::BadParams { message: "m".into() },
+            EngineError::ParamsTooLarge { bytes: 9, limit: 8 },
+            EngineError::Disabled { command: "x".into(), reason: crate::error::Unavailable::NoRepo },
+            EngineError::Invalid { refusal: crate::error::Refusal::NotFound { what: "ticket #9".into() } },
+            EngineError::panicked("x"),
+            EngineError::Cancelled { command: "x".into() },
+            EngineError::BadResult { message: "m".into() },
+        ];
+        for error in errors {
+            assert!(!error.remediation().is_empty(), "{error:?}");
+        }
+    }
 }

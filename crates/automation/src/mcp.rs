@@ -314,6 +314,7 @@ fn error(id: &serde_json::Value, code: i64, message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use swarmception_engine::EngineError;
 
     #[test]
     fn every_command_id_round_trips_through_its_tool_name() {
@@ -353,6 +354,36 @@ mod tests {
                 _ => Err(ProtocolError::Ui { message: "no".into() }),
             }
         }
+    }
+
+    /// A panic the dispatch caught reads as the contract's on MCP (#180): `internal`, its message
+    /// `panicked: ` and the command, its remediation the testkit's `PANICKED`; a cancelled call is
+    /// `cancelled`; each with its remediation.
+    #[test]
+    fn a_caught_panic_and_a_cancel_read_as_the_contracts() {
+        struct Failing;
+        impl Handler for Failing {
+            fn handle(&mut self, command: &str, _params: &str) -> Result<String, ProtocolError> {
+                Err(match command {
+                    "x.cancel" => EngineError::Cancelled { command: command.into() },
+                    _ => EngineError::panicked(command),
+                }
+                .into())
+            }
+        }
+        let call = |name: &str| call_tool(&mut Failing, &CallParams { name: name.into(), arguments: None }, 1024);
+        let panicked = call("x_boom");
+        assert!(panicked.is_error);
+        let Content::Text { text } = &panicked.content[0] else { panic!("text") };
+        let wire: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(wire["error"]["code"], "internal", "{text}");
+        assert!(wire["error"]["message"].as_str().unwrap().starts_with("panicked: `x.boom`"), "{text}");
+        assert_eq!(wire["remediation"], swarmception_engine::error::PANICKED);
+        assert_eq!(wire["error"]["remediation"], swarmception_engine::error::PANICKED, "on the typed error too");
+        let cancelled = call("x_cancel");
+        let Content::Text { text } = &cancelled.content[0] else { panic!("text") };
+        let wire: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!((wire["error"]["code"].as_str(), wire["remediation"].as_str()), (Some("cancelled"), Some("ask again if it is still wanted")));
     }
 
     #[test]
