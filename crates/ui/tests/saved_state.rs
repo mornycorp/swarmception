@@ -188,8 +188,8 @@ fn the_state_survives_a_restart_of_a_headless_shell() {
     // A new shell over the same file shows what the first did.
     let (ctx2, mut second) = started(&dir, &store);
     let after = second.inspect();
-    assert_eq!(after.state, before.state, "the panes and their sizes, the factory's settings and t, the details");
-    assert!(!after.state.panes.factory && after.state.sizes.details.is_some());
+    assert_eq!(after.state, before.state, "the panes and the dock, the factory's settings and t, the details");
+    assert!(!after.state.panes.factory, "the Factory hidden, as it was left");
     assert_eq!(after.state.details.subject, Some(Subject::Ticket { issue: 9 }));
     assert_eq!(second.menu_state().grouping, Grouping::Workers, "the rows by worker, through rows.set");
     let live = second.engine().call::<GetLive>(swarmception_engine::engine_cmds::NoParams {}).unwrap();

@@ -21,4 +21,15 @@ pub enum Pane {
 impl Pane {
     /// Every pane, in the View menu's order.
     pub const ALL: [Self; 4] = [Self::Timeline, Self::Factory, Self::Details, Self::Workers];
+
+    /// Its name: its View menu item's, its tab's title.
+    #[must_use]
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Timeline => crate::catalog::TIMELINE,
+            Self::Factory => crate::catalog::FACTORY,
+            Self::Details => crate::catalog::DETAILS_2,
+            Self::Workers => crate::catalog::WORKERS,
+        }
+    }
 }
