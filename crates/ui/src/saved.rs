@@ -28,8 +28,9 @@ use crate::{DetailsView, DockNode, FactoryView, Panes, UI_STATE_VERSION, UiState
 /// [`AppState`]'s shape. An older file is migrated (fewer sections, each read as this version's);
 /// a newer one is refused and left alone (#165). 2: the rows' collapse
 /// a mode's name (`off`, `empty`, `window`, #74), where 1 wrote `true` or `false`, which still
-/// read as `empty` and `off`.
-pub const APP_STATE_VERSION: u32 = 2;
+/// read as `empty` and `off`. 3: no `window` (#178: the window's size and place are the app's, in
+/// [`StateStore::window_file`]; an older file's is dropped as it reads).
+pub const APP_STATE_VERSION: u32 = 3;
 
 /// The environment variable that names the directory the state is kept in, over the
 /// platform's (an agent's or a test's scratch directory, so the owner's state is left alone).
@@ -55,8 +56,6 @@ pub struct AppState {
     pub ui: UiState,
     /// The tickets flat or by worker, collapsed how (#74: to the window too).
     pub rows: RowsSpec,
-    /// The window's size and place on screen.
-    pub window: Option<WindowPlace>,
     /// The timeline's view: the widget's own saved state and the window as clock times.
     pub timeline: Option<TimelineView>,
     /// Live (#54) as the person left it.
@@ -84,87 +83,9 @@ impl AppState {
             repo: repo.display().to_string(),
             ui: UiState::default(),
             rows: RowsSpec::default(),
-            window: None,
             timeline: None,
             live: LiveChoice::default(),
         }
-    }
-}
-
-/// The window on screen, in points: its outer top-left corner and its inner size.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WindowPlace {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl WindowPlace {
-    /// The size and place, when they are ones a window can take: finite, at least `min` and at
-    /// most 16384 points across, its corner within ±32768 points.
-    #[must_use]
-    pub fn sane(self, min: (f32, f32)) -> Option<Self> {
-        let size = |v: f32, least: f32| v.is_finite() && (least..=16_384.0).contains(&v);
-        let place = |v: f32| v.is_finite() && (-32_768.0..=32_768.0).contains(&v);
-        (size(self.width, min.0) && size(self.height, min.1) && place(self.x) && place(self.y)).then_some(self)
-    }
-
-    /// The window on screen (#68, G17): as it is when the monitors cover it; else, partly or
-    /// wholly off them (a monitor since unplugged), moved onto the monitor it overlaps most, or
-    /// the nearest when it overlaps none, shrunk to fit it and held inside it, its title bar
-    /// ([`TITLE_BAR`]) counted. With no monitor known, as it is.
-    #[must_use]
-    pub fn onto(self, monitors: &[Monitor]) -> Self {
-        let window = Monitor { x: self.x, y: self.y, width: self.width, height: self.height + TITLE_BAR };
-        let covered: f32 = monitors.iter().map(|m| m.overlap(&window)).sum();
-        if monitors.is_empty() || covered >= window.area() - 1.0 {
-            return self;
-        }
-        let best = monitors.iter().copied().max_by(|a, b| {
-            let (oa, ob) = (a.overlap(&window), b.overlap(&window));
-            oa.total_cmp(&ob).then_with(|| b.gap(&window).total_cmp(&a.gap(&window)))
-        });
-        let Some(m) = best else { return self };
-        let width = self.width.min(m.width);
-        let height = self.height.min((m.height - TITLE_BAR).max(1.0));
-        let x = self.x.clamp(m.x, (m.x + m.width - width).max(m.x));
-        let y = self.y.clamp(m.y, (m.y + m.height - height - TITLE_BAR).max(m.y));
-        Self { x, y, width, height }
-    }
-}
-
-/// The height a window's title bar adds over its inner size, as [`WindowPlace::onto`] counts it.
-pub const TITLE_BAR: f32 = 28.0;
-
-/// A monitor's area, in points, in the coordinates the window's place is in (as winit tells
-/// them: its position and size over its scale factor).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Monitor {
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
-}
-
-impl Monitor {
-    fn area(&self) -> f32 {
-        self.width.max(0.0) * self.height.max(0.0)
-    }
-
-    /// The area it shares with `other`.
-    fn overlap(&self, other: &Self) -> f32 {
-        let w = (self.x + self.width).min(other.x + other.width) - self.x.max(other.x);
-        let h = (self.y + self.height).min(other.y + other.height) - self.y.max(other.y);
-        w.max(0.0) * h.max(0.0)
-    }
-
-    /// How far it is from `other`: 0 when they touch or overlap.
-    fn gap(&self, other: &Self) -> f32 {
-        let dx = (self.x - (other.x + other.width)).max(other.x - (self.x + self.width)).max(0.0);
-        let dy = (self.y - (other.y + other.height)).max(other.y - (self.y + self.height)).max(0.0);
-        dx.hypot(dy)
     }
 }
 
@@ -270,6 +191,13 @@ impl StateStore {
         Ok(file)
     }
 
+    /// The app-wide file of the window's size and place (#178): `window.json`, beside the
+    /// repositories' own states; the app reads and writes it (`place`), as hostile input.
+    #[must_use]
+    pub fn window_file(&self) -> PathBuf {
+        self.dir.join("window.json")
+    }
+
     /// The app-wide file of the repositories opened last (#69): `recent.json`, beside the
     /// repositories' own states.
     #[must_use]
@@ -366,8 +294,6 @@ struct Sections {
     ui: Option<serde_json::Value>,
     #[serde(default)]
     rows: Option<serde_json::Value>,
-    #[serde(default)]
-    window: Option<serde_json::Value>,
     #[serde(default)]
     timeline: Option<serde_json::Value>,
     #[serde(default)]
@@ -476,7 +402,6 @@ fn read(text: &str, repo: &Path) -> Result<(AppState, Option<String>), String> {
         repo: key,
         ui,
         rows: section(sections.rows, "rows", &mut skipped),
-        window: section(sections.window, "window", &mut skipped),
         timeline: section(sections.timeline, "timeline", &mut skipped),
         live: section(sections.live, "live", &mut skipped),
     };
@@ -661,7 +586,6 @@ mod tests {
         let mut state = AppState::new(repo);
         state.ui.panes.factory = false;
         state.rows.grouping = swarmception_domain::Grouping::Workers;
-        state.window = Some(WindowPlace { x: 40.0, y: 60.0, width: 1200.0, height: 800.0 });
         let file = store.save(&state).unwrap();
         assert_eq!(file, store.file(repo));
         assert!(file.starts_with(dir.join("state")) && file.file_name().unwrap().to_string_lossy().starts_with("mc-engine-"), "{}", file.display());
@@ -741,7 +665,11 @@ mod tests {
         assert_eq!((one.state.unwrap().rows.collapse, one.note, one.left_alone), (swarmception_domain::Collapse::Off, None, false));
         let two = load(r#"{"version": 2, "repo": "/r/swarm", "rows": {"collapse": "window"}}"#);
         assert_eq!(two.state.unwrap().rows.collapse, swarmception_domain::Collapse::Window);
-        assert_eq!((state.ui.dock, state.window, older.note), (None, None, None));
+        assert_eq!((state.ui.dock, older.note), (None, None));
+        // Version 2 kept the window's place (#178: the app's own file now): dropped, nothing said.
+        let placed = load(r#"{"version": 2, "repo": "/r/swarm", "window": {"x": 1, "y": 2, "width": 900, "height": 600}}"#);
+        assert_eq!((placed.note, placed.left_alone), (None, false));
+        assert_eq!(StateStore::new(PathBuf::from("/s")).window_file(), PathBuf::from("/s/window.json"));
         // Version 8 of the shell's state kept the factory's own time (#85): it reads on without it,
         // its other settings kept, nothing said.
         let eight = load(
@@ -776,14 +704,15 @@ mod tests {
         );
         assert_eq!((newer.state.as_ref(), newer.left_alone), (None, true));
         let note = newer.note.unwrap();
-        assert!(note.contains("is a newer Swarmception's (version 9; this one reads 2)") && note.contains("starting afresh"), "{note}");
+        assert!(note.contains("is a newer Swarmception's (version 9; this one reads 3)") && note.contains("starting afresh"), "{note}");
         // This version's, a section that doesn't read: the rest kept, the file left alone.
-        let part = load(r#"{"version": 2, "repo": "/r/swarm", "ui": {"panes": {"details": false}, "factory": {"speed": "fortnight"}}, "window": "maximised"}"#);
+        let part =
+            load(r#"{"version": 3, "repo": "/r/swarm", "ui": {"panes": {"details": false}, "factory": {"speed": "fortnight"}}, "rows": {"grouping": 7}}"#);
         let state = part.state.unwrap();
         assert!(!state.ui.panes.details && part.left_alone);
-        assert_eq!((state.ui.factory, state.window), (FactoryView::default(), None));
+        assert_eq!((state.ui.factory, state.rows), (FactoryView::default(), RowsSpec::default()));
         let note = part.note.unwrap();
-        assert!(note.contains("factory, window didn't read") && note.contains("left as it is"), "{note}");
+        assert!(note.contains("factory, rows didn't read") && note.contains("left as it is"), "{note}");
         // Too big to be one.
         let big = load(&" ".repeat(usize::try_from(MAX_FILE).unwrap() + 1));
         assert!(big.state.is_none() && big.note.unwrap().contains("over"));
@@ -841,45 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn a_window_off_every_monitor_comes_onto_the_nearest() {
-        // A laptop's screen, and an external one to its right (since unplugged, or not).
-        let laptop = Monitor { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 };
-        let external = Monitor { x: 1440.0, y: -200.0, width: 2560.0, height: 1440.0 };
-        let on_external = WindowPlace { x: 2000.0, y: 100.0, width: 1400.0, height: 860.0 };
-        // Both there: it stays, on one monitor or across the two.
-        assert_eq!(on_external.onto(&[laptop, external]), on_external);
-        let across = WindowPlace { x: 1000.0, y: 50.0, width: 1000.0, height: 700.0 };
-        assert_eq!(across.onto(&[laptop, external]), across, "covered by the two");
-        // The external one unplugged: onto the laptop's, shrunk to fit, inside it.
-        let moved = on_external.onto(&[laptop]);
-        assert_eq!(moved, WindowPlace { x: 40.0, y: 12.0, width: 1400.0, height: 860.0 });
-        let big = WindowPlace { x: 1500.0, y: 0.0, width: 2400.0, height: 1300.0 };
-        assert_eq!(big.onto(&[laptop]), WindowPlace { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 - TITLE_BAR });
-        // Partly off: pulled in wholly, on the monitor it overlaps most.
-        let partly = WindowPlace { x: 1200.0, y: 600.0, width: 800.0, height: 600.0 };
-        assert_eq!(partly.onto(&[laptop]), WindowPlace { x: 640.0, y: 272.0, width: 800.0, height: 600.0 });
-        // Off every monitor: onto the nearest.
-        let far_left = WindowPlace { x: -5000.0, y: 300.0, width: 800.0, height: 600.0 };
-        assert_eq!(far_left.onto(&[external, laptop]), WindowPlace { x: 0.0, y: 272.0, ..far_left });
-        let far_right = WindowPlace { x: 9000.0, y: 300.0, ..far_left };
-        assert_eq!(far_right.onto(&[laptop, external]), WindowPlace { x: 4000.0 - 800.0, y: 300.0, ..far_left });
-        // No monitor known: as it is.
-        assert_eq!(far_left.onto(&[]), far_left);
-    }
-
-    #[test]
-    fn window_places_and_repo_keys() {
-        let place = WindowPlace { x: 10.0, y: 20.0, width: 1400.0, height: 860.0 };
-        assert_eq!(place.sane((480.0, 320.0)), Some(place));
-        for bad in [
-            WindowPlace { width: 100.0, ..place },
-            WindowPlace { height: f32::NAN, ..place },
-            WindowPlace { x: f32::INFINITY, ..place },
-            WindowPlace { y: -1.0e6, ..place },
-            WindowPlace { width: 1.0e6, ..place },
-        ] {
-            assert_eq!(bad.sane((480.0, 320.0)), None, "{bad:?}");
-        }
+    fn repo_keys() {
         // A directory inside a repository is keyed by the repository.
         let dir = scratch("key");
         std::fs::create_dir_all(dir.join(".git")).unwrap();

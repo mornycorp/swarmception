@@ -258,10 +258,8 @@ impl Shell {
         let store = keeper.store().clone();
         let key = saved::repo_key(repo);
         let loaded = store.load(&key);
-        // The window stays where it is: its place isn't another repository's to move.
-        let place = self.window_place;
+        // The window stays where it is: its place is the app's (#178), not a repository's.
         self.keep_state(store, &key, Some(&loaded));
-        self.window_place = place.or(self.window_place);
     }
 
     /// Open Recent's submenu in the window's own menu bar: each repository, then Clear Menu.

@@ -48,6 +48,7 @@ mod mac_menu;
 // Built and tested everywhere; run off macOS only.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 mod picker;
+mod place;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -277,12 +278,16 @@ fn main() -> ExitCode {
     mac_menu::no_window_tabs();
     let repo = options.repo.clone().or_else(|| std::env::current_dir().ok());
     let keep = keeping(&options, repo.as_deref());
-    let (viewport, place) = viewport(&options, &keep);
-    let native = eframe::NativeOptions { viewport, ..Default::default() };
+    // The window's size and place are the app's, not a repository's (#178): read before the window
+    // opens, checked on the monitors the event loop finds, written when it closes.
+    let window_file = keep.store().map(StateStore::window_file).filter(|_| options.size.is_none());
+    let saved_place = window_file.as_deref().and_then(place::load);
+    let monitors = place::monitors();
+    let tracker = place::Tracker::new(window_file, saved_place);
+    let viewport = viewport(&options, &keep);
+    let window_builder = options.size.is_none().then(|| place::hook(saved_place, Arc::clone(&monitors)));
+    let native = eframe::NativeOptions { viewport, persist_window: false, window_builder, ..Default::default() };
     let start = move |cc: &eframe::CreationContext<'_>| -> Result<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>> {
-        if let Some(place) = place {
-            onto_monitors(cc, place);
-        }
         style(&cc.egui_ctx, &options);
         let mut shell = swarmception_ui::Shell::new(&cc.egui_ctx, repo.as_deref());
         // The saved state first, so the command line's choices go over it.
@@ -304,11 +309,12 @@ fn main() -> ExitCode {
             hover_fold: options.hover_fold,
             pointer: None,
             control,
+            tracker,
             #[cfg(target_os = "macos")]
             menu,
         }))
     };
-    match eframe::run_native("Swarmception", native, Box::new(start)) {
+    match place::Launch::run("Swarmception", native, monitors, Box::new(start)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("swarmception: {e}");
@@ -317,26 +323,21 @@ fn main() -> ExitCode {
     }
 }
 
-/// The window: its size and place as it was left (unless `--size` says otherwise), and that
-/// place; the saved state's note said on stderr.
-fn viewport(options: &Options, keep: &Keep) -> (egui::ViewportBuilder, Option<saved::WindowPlace>) {
+/// The window: the product's name, Swarmception's own icon, its smallest size, and `--size`'s
+/// when asked (else the place hook sizes and places it, #178); the saved state's note said on
+/// stderr.
+fn viewport(options: &Options, keep: &Keep) -> egui::ViewportBuilder {
     if let Keep::Kept(_, _, loaded) = keep
         && let Some(note) = &loaded.note
     {
         eprintln!("swarmception: {note} ({})", loaded.file.display());
     }
-    // The window as it was left, unless `--size` says otherwise.
-    let place = match keep {
-        Keep::Kept(_, _, loaded) if options.size.is_none() => loaded.state.as_ref().and_then(|s| s.window).and_then(|w| w.sane(MIN_SIZE)),
-        _ => None,
-    };
-    let (width, height) = options.size.or(place.map(|p| (p.width, p.height))).unwrap_or((1_400.0, 860.0));
-    let mut viewport =
-        egui::ViewportBuilder::default().with_title("Swarmception").with_inner_size([width, height]).with_min_inner_size([MIN_SIZE.0, MIN_SIZE.1]);
-    if let Some(place) = place {
-        viewport = viewport.with_position([place.x, place.y]);
-    }
-    (viewport, place)
+    let (width, height) = options.size.unwrap_or((place::DEFAULT_SIZE.x, place::DEFAULT_SIZE.y));
+    egui::ViewportBuilder::default()
+        .with_title("Swarmception")
+        .with_icon(swarmception_ui::icon::icon_data())
+        .with_inner_size([width, height])
+        .with_min_inner_size(place::MIN_SIZE)
 }
 
 /// egui styled in the theme (its faces, text styles, density and tokens), the look and the UI's
@@ -355,36 +356,6 @@ fn style(ctx: &egui::Context, options: &Options) {
     }
 }
 
-/// A window restored at `place` (#68, G17), moved onto the monitors winit tells of when it is
-/// partly or wholly off them (a monitor since unplugged): onto the one it overlaps most, else the
-/// nearest, shrunk to fit (`saved::WindowPlace::onto`); the primary one when winit lists none.
-fn onto_monitors(cc: &eframe::CreationContext<'_>, place: saved::WindowPlace) {
-    let Some(window) = cc.winit_window() else { return };
-    // winit's monitors in points: their pixels over their scale factors.
-    let mut monitors: Vec<saved::Monitor> = window
-        .available_monitors()
-        .map(|m| {
-            let (position, size) = (m.position().to_logical::<f32>(m.scale_factor()), m.size().to_logical::<f32>(m.scale_factor()));
-            saved::Monitor { x: position.x, y: position.y, width: size.width, height: size.height }
-        })
-        .collect();
-    if monitors.is_empty() {
-        monitors.extend(window.primary_monitor().map(|m| {
-            let (position, size) = (m.position().to_logical::<f32>(m.scale_factor()), m.size().to_logical::<f32>(m.scale_factor()));
-            saved::Monitor { x: position.x, y: position.y, width: size.width, height: size.height }
-        }));
-    }
-    let moved = place.onto(&monitors);
-    if moved != place {
-        eprintln!("swarmception: the window was left off the screen: moved onto a monitor");
-        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(moved.width, moved.height)));
-        cc.egui_ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(moved.x, moved.y)));
-    }
-}
-
-/// The window's smallest inner size.
-const MIN_SIZE: (f32, f32) = (480.0, 320.0);
-
 /// How a run keeps its state across a restart (#53).
 #[derive(Debug, PartialEq)]
 enum Keep {
@@ -397,6 +368,14 @@ enum Keep {
 }
 
 impl Keep {
+    /// Where the state is kept, when it is.
+    const fn store(&self) -> Option<&StateStore> {
+        match self {
+            Self::Off => None,
+            Self::Fresh(store, _) | Self::Kept(store, _, _) => Some(store),
+        }
+    }
+
     /// Has `shell` keep the state as this says: restored from what was read, then written.
     fn give(self, shell: &mut swarmception_ui::Shell) {
         match self {
@@ -480,6 +459,8 @@ struct App {
     pointer: Option<egui::Pos2>,
     /// `--control`: the control channel's requests.
     control: Option<control::Control>,
+    /// The window's size and place, followed each frame and written when it closes (#178).
+    tracker: place::Tracker,
     #[cfg(target_os = "macos")]
     menu: Option<mac_menu::NativeMenu>,
 }
@@ -509,6 +490,7 @@ impl eframe::App for App {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.tracker.observe(ui.ctx());
         #[cfg(target_os = "macos")]
         if let Some(menu) = &mut self.menu {
             menu.run_clicks(&mut self.shell, ui.ctx());
@@ -527,8 +509,10 @@ impl eframe::App for App {
         }
     }
 
-    /// On quit (File ▸ Quit, the window closed, ⌘Q), the state once more (#53).
+    /// On quit (File ▸ Quit, the window closed, ⌘Q), the state once more (#53), and the window's
+    /// size and place (#178).
     fn on_exit(&mut self) {
+        self.tracker.save();
         if let Err(e) = self.shell.save_state() {
             eprintln!("swarmception: {e}");
         }
