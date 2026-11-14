@@ -383,7 +383,8 @@ fn bench_sizes(cell: Rect, compact: bool) -> &'static [Size] {
 fn pieces(painter: &egui::Painter, pos: Pos2, anchor: Align2, parts: &[(String, Color32)], font: FontId, width: f32) -> Rect {
     let mut job = egui::text::LayoutJob::default();
     for (text, colour) in parts {
-        job.append(text, 0.0, egui::TextFormat { font_id: font.clone(), color: *colour, ..egui::TextFormat::default() });
+        // An icon in a part is drawn from the icons' own family (#176).
+        icons::append(painter.ctx(), &mut job, text, font.clone(), *colour);
     }
     job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(1.0));
     let galley = painter.layout_job(job);
@@ -404,12 +405,12 @@ const fn bench_colour(status: BenchStatus) -> Paint {
 }
 
 /// A run's mark in the gate's list: a cog while it runs, ✔, ✖, or ? with no result.
-const fn outcome_mark(outcome: Outcome) -> &'static str {
+const fn outcome_mark(outcome: Outcome) -> char {
     match outcome {
-        Outcome::Running => icons::COG,
+        Outcome::Running => icons::GEAR,
         Outcome::Passed => icons::CHECK,
-        Outcome::Failed => icons::CROSS,
-        Outcome::Unknown => "?",
+        Outcome::Failed => icons::XMARK,
+        Outcome::Unknown => '?',
     }
 }
 
@@ -502,7 +503,8 @@ fn columns(rect: Rect) -> [Rect; 5] {
 /// `style`: the font and the colour.
 fn fit(painter: &egui::Painter, pos: Pos2, anchor: Align2, text: &str, style: (FontId, Color32), width: f32) -> Rect {
     let (font, colour) = style;
-    let mut job = egui::text::LayoutJob::simple_singleline(text.to_owned(), font, colour);
+    // An icon in the line is drawn from the icons' own family (#176).
+    let mut job = icons::job(painter.ctx(), text, font, colour);
     job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(1.0));
     let galley = painter.layout_job(job);
     let rect = anchor.anchor_size(pos, galley.size());
@@ -754,7 +756,7 @@ impl<'a> Floor<'a> {
         response.on_hover_ui(|ui| {
             egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 let font = egui::TextStyle::Body.resolve(ui.style());
-                let mut job = factory_tip::job(&idle.tooltip, ui.visuals(), &font);
+                let mut job = factory_tip::job(&idle.tooltip, ui.visuals(), &font, &icons::family(ui.ctx()));
                 job.wrap.max_width = ui.spacing().tooltip_width;
                 ui.label(job);
             });
@@ -960,8 +962,8 @@ impl<'a> Floor<'a> {
         let mark = match helper.outcome {
             Outcome::Running => icons::FLASK,
             Outcome::Passed => icons::CHECK,
-            Outcome::Failed => icons::CROSS,
-            Outcome::Unknown => "?",
+            Outcome::Failed => icons::XMARK,
+            Outcome::Unknown => '?',
         };
         let text = format!("{mark} {} {}", helper.name, short(helper.age));
         let at = pos2((name.right() + 8.0).min(right - 40.0), name.center().y);
@@ -1012,7 +1014,7 @@ impl<'a> Floor<'a> {
         let counts = [
             (format!("{} {}", icons::CHECK, gate.passed), self.pal.paint(PASSED)),
             ("   ".to_owned(), self.pal.text),
-            (format!("{} {}", icons::CROSS, gate.failed), if gate.failed > 0 { self.pal.paint(SENT_BACK) } else { self.pal.weak }),
+            (format!("{} {}", icons::XMARK, gate.failed), if gate.failed > 0 { self.pal.paint(SENT_BACK) } else { self.pal.weak }),
             (if gate.no_result > 0 { format!("   ? {}", gate.no_result) } else { String::new() }, self.pal.paint(STOPPED)),
         ];
         pieces(&self.painter, pos2(column.right() - 8.0, column.top() + 6.0), Align2::RIGHT_TOP, &counts, Self::font(11.0), room.width() * 0.6);
@@ -1083,7 +1085,8 @@ impl<'a> Floor<'a> {
     /// The mark of a worker's `ready` check in the gate's list (#95), in its second column; a gate
     /// run has none there.
     fn ready_mark(&self, line: Rect) {
-        self.painter.text(line.left_center() + vec2(18.0, 0.0), Align2::LEFT_CENTER, icons::FLASK, Self::font(10.0), self.pal.weak);
+        let font = icons::font(self.ui.ctx(), 10.0);
+        self.painter.text(line.left_center() + vec2(18.0, 0.0), Align2::LEFT_CENTER, icons::FLASK, font, self.pal.weak);
     }
 
     /// What a run's line says: the run (a ready check by its worker, #95), the tickets it gated or
@@ -1133,7 +1136,9 @@ impl<'a> Floor<'a> {
             self.ready_mark(line);
         }
         let font = Self::font(11.0);
-        self.painter.text(line.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER, outcome_mark(run.outcome), font.clone(), colour);
+        let mark = outcome_mark(run.outcome);
+        let mark_font = if icons::is_icon(mark) { icons::font(self.ui.ctx(), font.size) } else { font.clone() };
+        self.painter.text(line.left_center() + vec2(3.0, 0.0), Align2::LEFT_CENTER, mark, mark_font, colour);
         let age = self.painter.text(line.right_center() - vec2(3.0, 0.0), Align2::RIGHT_CENTER, short(run.age), font.clone(), self.pal.weak);
         let width = age.left() - line.left() - 36.0;
         pieces(&self.painter, line.left_center() + vec2(32.0, 0.0), Align2::LEFT_CENTER, &self.run_words(run), font, width);

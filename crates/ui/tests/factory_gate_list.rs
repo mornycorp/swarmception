@@ -141,7 +141,7 @@ fn the_gate_list_holds_the_ready_checks_in_time_order_with_its_runs() {
     // A check reads as its worker's, its ticket and its cause; a run by its id.
     assert!(texts.iter().any(|text| text == "worker-1  #7  test"), "{texts:?}");
     assert!(texts.iter().any(|text| text == "gate-pr8  #7"), "{texts:?}");
-    assert!(texts.iter().any(|text| text == swarmception_ui::icons::FLASK), "the ready checks' mark: {texts:?}");
+    assert!(texts.iter().any(|text| *text == swarmception_ui::icons::FLASK.to_string()), "the ready checks' mark: {texts:?}");
 
     // While the second runs, it is first, running.
     shell.set_factory_at(at("2026-10-31T03:25:30Z"));

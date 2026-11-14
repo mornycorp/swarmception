@@ -402,7 +402,7 @@ impl WorkersPane {
         // sight, where a hovered worker's tickets light up.
         let default = pos2(screen.left() + ((screen.width() - width).max(32.0) / 2.0), screen.bottom() - 36.0);
         let id = Part::WorkersWindow.id();
-        let window = egui::Window::new(catalog::workers_model_effort(&icons::WORKERS))
+        let window = egui::Window::new(icons::text(ctx, &catalog::workers_model_effort(&icons::for_pane(crate::pane::Pane::Workers))))
             .id(id)
             .open(open)
             .resizable(true)
@@ -451,7 +451,7 @@ impl WorkersPane {
         self.top(ui, view, windowed);
         let Some(compared) = self.compared.clone() else {
             match &self.error {
-                Some(error) => ui.colored_label(ui.visuals().warn_fg_color, format!("{}  {error}", icons::WARNING)),
+                Some(error) => ui.label(icons::titled_in(ui.ctx(), icons::TRIANGLE_EXCLAMATION, error, ui.visuals().warn_fg_color)),
                 None => ui.weak(catalog::NO_WORKERS_TO_COMPARE_YET),
             };
             return;

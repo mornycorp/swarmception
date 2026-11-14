@@ -45,6 +45,7 @@ use crate::factory_paint::{Drawn, Marks, Selected, WallView, paint};
 use crate::factory_stats::StatsStrip;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
+use crate::pane::Pane;
 use crate::part::Part;
 use crate::timeline::Looking;
 
@@ -554,7 +555,7 @@ impl FactoryPane {
                 (_, Some(_)) => catalog::reading_the_tracking_branch_2(&icons::SPINNER),
                 _ => self.error.clone().unwrap_or_else(|| catalog::THE_TRACKING_BRANCH_HOLDS_NO_EVENTS.to_owned()),
             };
-            ui.centered_and_justified(|ui| ui.label(text));
+            ui.centered_and_justified(|ui| ui.label(icons::text(ui.ctx(), &text)));
             self.rect = None;
             return;
         };
@@ -588,11 +589,11 @@ impl FactoryPane {
     /// where *t* comes from, in a small label. No clock: the timeline's playhead is the time.
     fn header(&mut self, ui: &mut egui::Ui, view: &mut FactoryView) {
         let mut buttons = Vec::new();
-        self.fold = fold_title(ui, icons::FACTORY, catalog::FACTORY, Chevron::Open).clicked();
+        self.fold = fold_title(ui, icons::for_pane(Pane::Factory), catalog::FACTORY, Chevron::Open).clicked();
         ui.separator();
         let size = egui::vec2(BUTTON, ui.spacing().interact_size.y);
         let play = if view.playing { icons::PAUSE } else { icons::PLAY };
-        let response = ui.add_sized(size, egui::Button::new(play)).on_hover_text(catalog::PLAY_THE_TIMELINE_S_PLAYHEAD_RUNS);
+        let response = icons::named(ui.add_sized(size, icons::only(play)), catalog::PLAY_THE_TIMELINE_S_PLAYHEAD_RUNS);
         if response.clicked() {
             view.playing = !view.playing;
             view.follow |= view.playing;
@@ -608,12 +609,12 @@ impl FactoryPane {
         buttons.push(("speed", speed));
         ui.separator();
         let steps = view.steps.label();
-        let back = ui.add_sized(size, egui::Button::new(icons::START)).on_hover_text(catalog::the_timeline_s_playhead_back(&steps));
+        let back = icons::named(ui.add_sized(size, icons::only(icons::BACKWARD_STEP)), &catalog::the_timeline_s_playhead_back(&steps));
         if back.clicked() {
             self.ask(if ui.input(|i| i.modifiers.shift) { Jump::First } else { Jump::Step(Direction::Previous) });
         }
         buttons.push(("back", back.rect));
-        let on = ui.add_sized(size, egui::Button::new(icons::END)).on_hover_text(catalog::the_timeline_s_playhead_on(&steps));
+        let on = icons::named(ui.add_sized(size, icons::only(icons::FORWARD_STEP)), &catalog::the_timeline_s_playhead_on(&steps));
         if on.clicked() {
             self.ask(if ui.input(|i| i.modifiers.shift) { Jump::Last } else { Jump::Step(Direction::Next) });
         }
@@ -627,7 +628,9 @@ impl FactoryPane {
         });
         buttons.push(("steps", by));
         ui.separator();
-        let follow = ui.toggle_value(&mut view.follow, catalog::follow_the_timeline(&icons::FOLLOW)).on_hover_text(catalog::THE_FACTORY_SHOWS_THE_TIMELINE_S);
+        let follow = ui
+            .toggle_value(&mut view.follow, icons::text(ui.ctx(), &catalog::follow_the_timeline(&icons::LINK)))
+            .on_hover_text(catalog::THE_FACTORY_SHOWS_THE_TIMELINE_S);
         buttons.push(("follow", follow.rect));
         ui.separator();
         let text = self.header_words(ui);
