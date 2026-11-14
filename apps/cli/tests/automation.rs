@@ -55,7 +55,7 @@ fn serve_speaks_the_control_protocol_headless() {
     assert_eq!(refused(client.call("ui.inspect", &())), ProtocolError::NoUi);
     assert!(matches!(
         refused(client.call("rows.set", &serde_json::json!({"grouping": "tree"}))),
-        ProtocolError::Engine { error: EngineError::BadParams { .. } }
+        ProtocolError::Engine { error: EngineError::BadParams { .. }, .. }
     ));
     let mut stranger = Client::connect(listening.address, "guess", Duration::from_secs(10)).unwrap();
     assert_eq!(refused(stranger.call("engine.commands", &())), ProtocolError::BadToken);
@@ -150,9 +150,9 @@ fn mcp_serves_the_engines_commands_as_tools() {
     assert!(get.result.unwrap().text().contains("\"workers\""), "one session across calls");
     // A command's error is the tool's error, typed as the protocol's: here the engine's.
     let bad = tool_error(mcp.send(r#"{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"rows_set","arguments":{"grouping":"tree"}}}"#));
-    assert!(matches!(bad, ProtocolError::Engine { error: EngineError::BadParams { .. } }));
+    assert!(matches!(bad, ProtocolError::Engine { error: EngineError::BadParams { .. }, .. }));
     let unknown = tool_error(mcp.send(r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"no_such"}}"#));
-    assert!(matches!(unknown, ProtocolError::Engine { error: EngineError::UnknownCommand { .. } }));
+    assert!(matches!(unknown, ProtocolError::Engine { error: EngineError::UnknownCommand { .. }, .. }));
     let window = tool_error(mcp.send(r#"{"jsonrpc":"2.0","id":10,"method":"tools/call","params":{"name":"ui_inspect"}}"#));
     assert_eq!(window, ProtocolError::NoUi, "a window's tool, headless");
     // Bad lines and methods are JSON-RPC errors, and the server goes on.

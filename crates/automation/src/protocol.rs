@@ -57,9 +57,14 @@ pub enum ProtocolError {
     Unavailable { message: String },
     /// The server holds as many connections as it takes: close one, or try again later.
     Busy { most: usize },
-    /// The engine's own error: an unknown command, bad params, disabled, a refusal. A `ui.*`
-    /// command's bad params are this too.
-    Engine { error: EngineError },
+    /// The engine's own error: an unknown command, bad params, disabled, a refusal, a caught
+    /// panic (`internal`), a call cancelled before it ran. A `ui.*` command's bad params are this
+    /// too. `remediation` is what to do about it (#180: every failure has one), the error's own.
+    Engine {
+        error: EngineError,
+        #[serde(default)]
+        remediation: String,
+    },
     /// The timeline widget's error, for a `timeline.<id>` command.
     Widget { error: timeline_engine::EngineError },
     /// The window couldn't do it: a screenshot that couldn't be saved, say.
@@ -102,7 +107,7 @@ impl std::fmt::Display for ProtocolError {
             Self::NoUi => write!(f, "no window here: ui.* and timeline.<id> need the app's --control"),
             Self::Unavailable { message } | Self::Ui { message } => write!(f, "{message}"),
             Self::Busy { most } => write!(f, "busy: {most} connections already"),
-            Self::Engine { error } => write!(f, "{}: {error}", error.code()),
+            Self::Engine { error, remediation } => write!(f, "{}: {error} (fix: {remediation})", error.code()),
             Self::Widget { error } => write!(f, "the timeline widget: {}: {error}", error.code()),
             Self::ImageTooLarge { path, bytes, most } => write!(f, "{path} is {bytes} bytes, over the {most} an image answer carries: read the file"),
             Self::ImageUnreadable { path, message } => write!(f, "can't read {path} back as a PNG: {message}"),
@@ -114,7 +119,8 @@ impl std::error::Error for ProtocolError {}
 
 impl From<EngineError> for ProtocolError {
     fn from(error: EngineError) -> Self {
-        Self::Engine { error }
+        let remediation = error.remediation();
+        Self::Engine { error, remediation }
     }
 }
 
@@ -209,10 +215,7 @@ mod tests {
         assert_eq!(error(r#"{"v":2,"token":"tok","id":1,"command":"echo"}"#), ProtocolError::WrongVersion { got: 2, speaks: 1 });
         assert_eq!(error(r#"{"v":1,"token":"tak","id":1,"command":"echo"}"#), ProtocolError::BadToken);
         assert_eq!(error(r#"{"v":1,"token":"to","id":1,"command":"echo"}"#), ProtocolError::BadToken);
-        assert_eq!(
-            error(r#"{"v":1,"token":"tok","id":1,"command":"x.y"}"#),
-            ProtocolError::Engine { error: EngineError::UnknownCommand { command: "x.y".into() } }
-        );
+        assert_eq!(error(r#"{"v":1,"token":"tok","id":1,"command":"x.y"}"#), ProtocolError::from(EngineError::UnknownCommand { command: "x.y".into() }));
     }
 
     #[test]
@@ -233,7 +236,7 @@ mod tests {
             ProtocolError::Busy { most: 8 },
             ProtocolError::Ui { message: "m".into() },
             ProtocolError::Widget { error: timeline_engine::EngineError::UnknownCommand { id: "a.b".into() } },
-            ProtocolError::Engine { error: EngineError::BadParams { message: "m".into() } },
+            ProtocolError::from(EngineError::BadParams { message: "m".into() }),
             ProtocolError::ImageTooLarge { path: "/a.png".into(), bytes: 9, most: 8 },
             ProtocolError::ImageUnreadable { path: "/a.png".into(), message: "not a PNG".into() },
         ];

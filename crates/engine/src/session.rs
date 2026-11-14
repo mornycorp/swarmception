@@ -28,6 +28,10 @@ use crate::live::{self, LiveCost, LiveState, millis};
 /// Called when a background read lands, so a front end that draws only on input draws again.
 pub type Waker = Arc<dyn Fn() + Send + Sync>;
 
+/// `repo.open`'s check in the background (#161): the folder, where its answer comes, and its
+/// cancel token (#180), set when another open takes its place.
+pub(crate) type Probe = (String, Receiver<Result<PathBuf, Refusal>>, crate::command::Cancel);
+
 /// What a background read is doing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -95,7 +99,7 @@ pub struct Session {
     /// Moved on by every repository opened (#69): a front end switches its state to the new one.
     opens: u64,
     /// `repo.open`'s check going on in the background (#161): the path asked for, and its answer.
-    pub(crate) probing: Option<(String, Receiver<Result<PathBuf, Refusal>>)>,
+    pub(crate) probing: Option<Probe>,
     /// The last `repo.open` refused in the background, until the next is asked for (#161).
     pub(crate) refused: Option<crate::repo_cmds::OpenRefused>,
 }
@@ -188,6 +192,16 @@ impl Session {
         crate::command::call::<C>(self, params)
     }
 
+    /// Runs `C` with typed params and a cancel token (#180): one set before it runs is
+    /// [`EngineError::Cancelled`], and it never runs.
+    ///
+    /// # Errors
+    ///
+    /// The command's errors, and [`EngineError::Cancelled`].
+    pub fn call_cancellable<C: Command>(&mut self, params: C::Params, cancel: &crate::command::Cancel) -> Result<C::Result, EngineError> {
+        crate::command::call_cancellable::<C>(self, params, cancel)
+    }
+
     /// The look the timeline's colours are built in (#154).
     #[must_use]
     pub const fn look(&self) -> Look {
@@ -227,7 +241,7 @@ impl Session {
     /// The folder `repo.open` is checking in the background, if any (#161).
     #[must_use]
     pub fn opening(&self) -> Option<&str> {
-        self.probing.as_ref().map(|(path, _)| path.as_str())
+        self.probing.as_ref().map(|(path, _, _)| path.as_str())
     }
 
     /// The last `repo.open` refused in the background, until the next is asked for (#161).
@@ -238,7 +252,7 @@ impl Session {
 
     /// Takes in `repo.open`'s check when it landed: the repository opened, or the refusal kept.
     fn poll_probe(&mut self) -> bool {
-        let Some((path, receiver)) = &self.probing else { return false };
+        let Some((path, receiver, _)) = &self.probing else { return false };
         let answer = match receiver.try_recv() {
             Ok(answer) => answer,
             Err(TryRecvError::Empty) => return false,
