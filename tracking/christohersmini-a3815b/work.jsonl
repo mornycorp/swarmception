@@ -96,3 +96,4 @@
 {"event":"sub.start","name":"gate","note":"#182; capacity=3 free=10.1; kind=smoke (the project plans no gate kind: unsure)","sub":"gate-182","t":"2026-11-14T21:24:28Z"}
 {"event":"claim","issue":176,"mr":183,"t":"2026-11-14T21:24:39Z"}
 {"event":"work","issue":176,"t":"2026-11-14T21:24:42Z"}
+{"event":"merge","issue":175,"mr":182,"sub":"gate-182","t":"2026-11-14T21:24:49Z"}
