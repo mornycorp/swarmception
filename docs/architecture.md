@@ -266,8 +266,8 @@ on top and nothing depends on them. `cargo xtask layers` enforces it from the ta
   own bar; the menu module names no command. The window's own items stay hand-placed, each for a
   reason: Open Recent's list (the repositories `repo.recent` lists), Quit, and View's check
   items, which show and set state (the panes, `rows.set`'s fields, the widget's fold and fit,
-  `live.set`'s on) rather than run an action; the toolbar (Font Awesome 5's solid face,
-  `assets/`), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
+  `live.set`'s on) rather than run an action; the toolbar (Font Awesome 6.7.2's solid face,
+  `crates/ui/assets/fonts/`, #175), the status bar, and the panes. The timeline pane owns swarm-timeline's widget
   (`timeline-egui`): it loads the engine's timeline when the rows move on, keeping the view
   (#54): a window at the timeline's end follows the new end at its width (the whole swarm shown
   stays the whole swarm), any other stays put; the selection and focus carried to the same bars

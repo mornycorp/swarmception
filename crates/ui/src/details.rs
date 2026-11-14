@@ -24,6 +24,7 @@ use swarmception_engine::stats_cmds::At as When;
 
 use crate::catalog;
 use crate::factory_chip::{drawn, rgb, shade};
+use crate::fonts;
 use crate::icons;
 use crate::layout::{Chevron, fold_title};
 use crate::part::Part;
@@ -236,12 +237,12 @@ impl DetailsPane {
     fn header(&mut self, ui: &mut egui::Ui, d: &Details) {
         ui.horizontal(|ui| {
             chip(ui, &d.mark, d.colour, 15.0);
-            ui.add(egui::Label::new(RichText::new(&d.title).strong().size(16.0)).wrap());
+            ui.add(egui::Label::new(RichText::new(&d.title).font(fonts::font_of(ui.ctx(), &fonts::h2()))).wrap());
         });
         self.drawn.mark = Some(d.mark.clone());
         self.drawn.title = Some(d.title.clone());
         for line in &d.lines {
-            ui.label(line_job(line, ui.visuals(), &FontId::proportional(12.5), None));
+            ui.label(line_job(line, ui.visuals(), &FontId::proportional(fonts::BODY_SIZE), None));
         }
         if !d.labels.is_empty() {
             ui.horizontal_wrapped(|ui| {
@@ -304,7 +305,7 @@ impl DetailsPane {
             // In a frame, not a row: a row's labels don't wrap, and would widen the pane.
             let indent = egui::Margin { left: NOTE_INDENT, ..egui::Margin::ZERO };
             egui::Frame::new().inner_margin(indent).show(ui, |ui| {
-                let job = line_job(note, ui.visuals(), &FontId::proportional(11.5), Some(ui.visuals().weak_text_color()));
+                let job = line_job(note, ui.visuals(), &fonts::font_of(ui.ctx(), &egui::TextStyle::Small), Some(ui.visuals().weak_text_color()));
                 ui.add(egui::Label::new(job).wrap());
             });
         }
@@ -366,7 +367,12 @@ pub(crate) fn fact_pill(ui: &mut egui::Ui, label: &str, value: &str, colour: Opt
     let visuals = ui.visuals().clone();
     let value_colour = colour.unwrap_or_else(|| visuals.strong_text_color());
     let mut job = LayoutJob::default();
-    let small = TextFormat { font_id: FontId::proportional(10.5), color: visuals.weak_text_color(), valign: egui::Align::Center, ..TextFormat::default() };
+    let small = TextFormat {
+        font_id: fonts::font_of(ui.ctx(), &egui::TextStyle::Small),
+        color: visuals.weak_text_color(),
+        valign: egui::Align::Center,
+        ..TextFormat::default()
+    };
     job.append(label, 0.0, small);
     let strong = TextFormat { font_id: egui::TextStyle::Body.resolve(ui.style()), color: value_colour, valign: egui::Align::Center, ..TextFormat::default() };
     job.append(value, 5.0, strong);
@@ -377,7 +383,7 @@ pub(crate) fn fact_pill(ui: &mut egui::Ui, label: &str, value: &str, colour: Opt
 fn label_pill(ui: &mut egui::Ui, label: &str) {
     let visuals = ui.visuals().clone();
     let mut job = LayoutJob::default();
-    let format = TextFormat { font_id: FontId::proportional(10.5), color: visuals.text_color(), ..TextFormat::default() };
+    let format = TextFormat { font_id: fonts::font_of(ui.ctx(), &egui::TextStyle::Small), color: visuals.text_color(), ..TextFormat::default() };
     job.append(&format!("{}  {label}", icons::TAG), 0.0, format);
     pill(ui, job, Color32::TRANSPARENT, visuals.widgets.noninteractive.bg_stroke);
 }
