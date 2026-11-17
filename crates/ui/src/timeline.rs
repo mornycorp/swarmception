@@ -388,7 +388,7 @@ impl TimelinePane {
         let stretches_first = found.bars.iter().filter(|b| b.track != merged).chain(found.bars.iter().filter(|b| b.track == merged));
         stretches_first.into_iter().find_map(|bar| {
             let row = layout.rows.iter().find(|r| r.key == bar.track)?;
-            let drawn = session.call::<Bars>(BarsParams { tracks: Some(vec![bar.track.clone()]), label_char_width: None }).ok()?;
+            let drawn = session.call::<Bars>(BarsParams { tracks: Some(vec![bar.track.clone()]), label_char_width: None, label_advances: None }).ok()?;
             let range = drawn.tracks.first()?.ranges.iter().find(|r| r.range == bar.range)?;
             let x = rect.left() + layout.label_width + range.x + range.width.min(400.0) / 2.0;
             Some(egui::pos2(x, rect.top() + row.y + row.height / 2.0)).filter(|p| rect.contains(*p))
@@ -945,7 +945,9 @@ impl TimelinePane {
     fn drawn_any(&mut self, bars: &[BarRef]) -> bool {
         let mut tracks: Vec<String> = bars.iter().map(|bar| bar.track.clone()).collect();
         tracks.dedup();
-        let Ok(drawn) = self.widget.session().call::<Bars>(BarsParams { tracks: Some(tracks), label_char_width: None }) else { return false };
+        let Ok(drawn) = self.widget.session().call::<Bars>(BarsParams { tracks: Some(tracks), label_char_width: None, label_advances: None }) else {
+            return false;
+        };
         bars.iter().any(|bar| {
             drawn
                 .tracks

@@ -207,7 +207,7 @@ fn bar_labels_and_tooltips_read_durations_in_hours_and_minutes() {
     let session = pane.widget().session();
     session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
     let layout = session.call::<Layout>(LayoutParams { pane: 600.0, scroll: 0.0 }).unwrap();
-    let bars = session.call::<Bars>(BarsParams { tracks: None, label_char_width: Some(7.0) }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: None, label_char_width: Some(7.0), label_advances: None }).unwrap();
     let labels: Vec<&str> = bars.tracks.iter().flat_map(|t| t.labels.iter().map(|l| l.text.as_str())).collect();
     assert!(labels.iter().any(|l| l.ends_with("(1 h 58 min)")), "{labels:?}");
     assert!(!labels.iter().any(|l| l.contains(",") && l.ends_with(" s)")), "no seconds by the thousand: {labels:?}");
@@ -299,7 +299,7 @@ fn a_tickets_one_bar_draws_its_stages_as_its_strip() {
     assert_eq!(bar.segments.iter().map(|s| s.stage).collect::<Vec<_>>(), [Stage::Claimed]);
     let session = pane.widget().session();
     session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
-    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![key.clone()]), label_char_width: Some(7.0) }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![key.clone()]), label_char_width: Some(7.0), label_advances: None }).unwrap();
     let track = &bars.tracks[0];
     let at = track.ranges.iter().position(|r| r.range == place).unwrap();
     let strip = track.strips.iter().find(|s| s.bar == at).expect("its strip");
@@ -362,7 +362,7 @@ fn a_merge_markers_tooltip_has_no_duration_line() {
     // Hovered at the middle of its 3 px marker.
     let session = pane.widget().session();
     session.call::<SetState>(SetStateParams { width: Some(1_600.0), ..SetStateParams::default() }).unwrap();
-    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![MERGED_KEY.to_owned()]), label_char_width: Some(7.0) }).unwrap();
+    let bars = session.call::<Bars>(BarsParams { tracks: Some(vec![MERGED_KEY.to_owned()]), label_char_width: Some(7.0), label_advances: None }).unwrap();
     let bar = bars.tracks[0].ranges.iter().find(|b| b.range == 0 && b.count == 1).expect("the merge's marker");
     assert!(bar.packed && bar.width >= 3.0, "drawn as a marker: {bar:?}");
     let layout = session.call::<Layout>(LayoutParams { pane: 600.0, scroll: 0.0 }).unwrap();
